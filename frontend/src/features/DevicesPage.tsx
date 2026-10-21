@@ -72,6 +72,9 @@ import {
   DeviceActionCluster,
   type DeviceOnboardingFlow,
 } from "./FeatureActionClusters";
+// The fleet half of the "intelligence design" system: hairline glass cards, the pixel display
+// face and the metric strip, scoped to the Devices workspace.
+import "./intelligence-fleet.css";
 
 export type { DeviceOnboardingFlow } from "./FeatureActionClusters";
 type DeviceGatewayAccessMode = "local" | "tailscale" | "online";
@@ -322,12 +325,12 @@ export function DevicesPage({
   };
 
   return (
-    <div className="devices-workspace">
+    <div className="devices-workspace ac-fleet">
       <section className="devices-overview" aria-labelledby="devices-heading">
         <div>
-          <p className="eyebrow">Hardware fleet</p>
+          <p className="ac-eyebrow">Hardware fleet</p>
           <div className="flex flex-wrap items-center gap-3">
-            <h2 id="devices-heading" className="font-display text-xl font-semibold tracking-[-0.025em]">
+            <h2 id="devices-heading" className="ac-display-title">
               {c.devices.length ? "Your controllers" : "Connect your first controller"}
             </h2>
             {c.devices.length ? <StatusBadge label={`${c.devices.length} total`} /> : null}
@@ -352,6 +355,7 @@ export function DevicesPage({
             <DeviceTile
               key={device.id}
               device={device}
+              selected={device.id === c.selectedDeviceId}
               can={can}
               onOpen={() => openDevice(device)}
               onRotate={() => void rotateSecret(device)}
@@ -366,8 +370,8 @@ export function DevicesPage({
             <span />
             <Radio className="size-6" />
           </div>
-          <p className="eyebrow">No devices reporting</p>
-          <h3 id="empty-devices-title" className="font-display text-xl font-semibold">How is this controller arriving?</h3>
+          <p className="ac-eyebrow">No devices reporting</p>
+          <h3 id="empty-devices-title" className="ac-display-title">How is this controller arriving?</h3>
           <p className="mt-2 max-w-lg text-sm leading-relaxed text-ink-muted">
             Factory hardware starts unowned, developer hardware needs a credential, and retail hardware arrives with a claim code.
           </p>
@@ -432,7 +436,7 @@ function CredentialBanner({ controller: c }: { controller: Controller }) {
       <div className="credential-banner__icon"><KeyRound className="size-4" /></div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <p className="font-display text-sm font-semibold">{c.deviceSecret?.title}</p>
+          <p className="ac-display text-sm">{c.deviceSecret?.title}</p>
           <StatusBadge tone="warning" label="Visible once" />
         </div>
         <p className="mt-1 truncate font-mono text-xs text-ink-muted">
@@ -459,7 +463,7 @@ function EmptyAction({
     <button type="button" className="devices-empty__action" onClick={onClick}>
       <span className="devices-empty__action-icon"><Icon className="size-4.5" /></span>
       <span className="min-w-0 text-left">
-        <span className="block font-display text-sm font-semibold text-ink">{title}</span>
+        <span className="block ac-display text-sm text-ink">{title}</span>
         <span className="mt-0.5 block text-xs text-ink-faint">{detail}</span>
       </span>
       <ArrowRight className="ml-auto size-4 text-ink-faint" />
@@ -469,6 +473,7 @@ function EmptyAction({
 
 function DeviceTile({
   device,
+  selected = false,
   can,
   onOpen,
   onRotate,
@@ -476,6 +481,7 @@ function DeviceTile({
   onRevoke,
 }: {
   device: Device;
+  selected?: boolean;
   can: (device: Device, action: keyof NonNullable<Device["actions"]>) => boolean;
   onOpen: () => void;
   onRotate: () => void;
@@ -492,6 +498,8 @@ function DeviceTile({
     <article
       className="device-tile"
       data-revoked={device.revokedAt ? true : undefined}
+      data-selected={selected || undefined}
+      data-tone={state.tone}
       onClick={onOpen}
     >
       <button
@@ -505,7 +513,7 @@ function DeviceTile({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="truncate font-display text-base font-semibold">{device.label}</h3>
+            <h3 className="truncate ac-display text-[1.0625rem]">{device.label}</h3>
             <StatusBadge tone={state.tone} label={state.label} pulse={state.label === "online"} />
           </div>
           <p className="mt-1 truncate font-mono text-[10px] text-ink-faint">{device.id}</p>
@@ -557,9 +565,9 @@ function DeviceTile({
 
 function TileMetric({ icon: Icon, label, value }: { icon: typeof Clock3; label: string; value: ReactNode }) {
   return (
-    <div className="device-tile__metric">
-      <dt><Icon className="size-3" /> {label}</dt>
-      <dd>{value}</dd>
+    <div className="device-tile__metric ac-stat">
+      <dt className="ac-stat__label"><Icon className="size-3" /> {label}</dt>
+      <dd className="ac-stat__value">{value}</dd>
     </div>
   );
 }
@@ -851,7 +859,7 @@ function BoardFields({
   if (boards.length === 0) {
     return (
       <div className="mx-auto grid w-full max-w-lg gap-3 py-6">
-        <p className="font-display text-base font-semibold">Board catalogue unavailable</p>
+        <p className="ac-display text-base">Board catalogue unavailable</p>
         <p className="text-sm leading-relaxed text-ink-muted">
           This gateway did not return a hardware catalogue, so the identity will be stamped with its
           own default board. Continue only if you know which image this unit will be flashed with.
@@ -1000,7 +1008,7 @@ function DefaultFields({
   return (
     <div className="mx-auto grid w-full max-w-lg gap-5 py-6">
       <div>
-        <p className="font-display text-base font-semibold">Choose its default destination</p>
+        <p className="ac-display text-base">Choose its default destination</p>
         <p className="mt-1 text-sm leading-relaxed text-ink-muted">You can skip this now and configure it from the device tile later.</p>
       </div>
       <Field label="Default environment" htmlFor="flow-environment">
@@ -1038,8 +1046,8 @@ function FlowReview({
   return (
     <div className="device-flow__review">
       <div>
-        <p className="eyebrow">Confirm operation</p>
-        <h3 className="font-display text-lg font-semibold">{FLOW_COPY[flow].title}</h3>
+        <p className="ac-eyebrow">Confirm operation</p>
+        <h3 className="ac-display text-lg">{FLOW_COPY[flow].title}</h3>
         <p className="mt-1 text-sm text-ink-muted">Review the ownership and execution context before continuing.</p>
       </div>
       <dl>
@@ -1310,7 +1318,7 @@ function DeviceEditorDialog({
               </dl>
               <section className="device-editor__danger" aria-labelledby="credential-actions-title">
                 <div>
-                  <p id="credential-actions-title" className="font-display text-sm font-semibold text-danger">Credential actions</p>
+                  <p id="credential-actions-title" className="ac-display text-sm text-danger">Credential actions</p>
                   <p className="mt-1 text-xs text-ink-muted">Rotation keeps the active credential until the controller acknowledges its replacement. Transfer removes ownership immediately and finishes on the controller.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -1593,7 +1601,7 @@ function DeviceGatewayAccessEditor({
   return (
     <section className="device-gateway-access sm:col-span-2" aria-labelledby="device-gateway-access-title">
       <div>
-        <p id="device-gateway-access-title" className="font-display text-sm font-semibold">Gateway access</p>
+        <p id="device-gateway-access-title" className="ac-display text-sm">Gateway access</p>
         <p className="mt-1 text-xs leading-relaxed text-ink-muted">
           Choose how this controller reaches Agent Controller. The new URL is applied after the device completes its next config sync.
         </p>
@@ -1929,7 +1937,7 @@ function DeviceControlsEditor({
         <div className="controller-preview" aria-label="Controller display preview">
           <div className="controller-preview__heading">
             <div>
-              <p className="eyebrow">Physical display</p>
+              <p className="ac-eyebrow">Physical display</p>
               <strong>{draftChanged ? "Draft preview" : pending ? "Saved preview" : "Applied preview"}</strong>
             </div>
             <StatusBadge
@@ -2046,7 +2054,7 @@ function DeviceFirmwareEditor({
       <div className="firmware-editor__hero">
         <span><HardDriveDownload className="size-5" /></span>
         <div>
-          <p className="eyebrow">Installed release</p>
+          <p className="ac-eyebrow">Installed release</p>
           <h3>{policy.currentVersion ?? device.status?.firmwareVersion ?? "Unknown"}</h3>
           <p>{device.status?.hardwareModel ?? "Unreported hardware"} · protocol {device.status?.protocolVersion ?? "legacy"}</p>
         </div>
@@ -2297,14 +2305,14 @@ function ModalShell({
         role="dialog"
         aria-modal="true"
         aria-labelledby="device-modal-title"
-        className="device-modal"
+        className="device-modal ac-fleet"
         data-size={size}
       >
         <header className="device-modal__header">
           <div className="min-w-0 flex-1">
-            <p className="eyebrow">{eyebrow}</p>
+            <p className="ac-eyebrow">{eyebrow}</p>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h2 id="device-modal-title" className="truncate font-display text-lg font-semibold">{title}</h2>
+              <h2 id="device-modal-title" className="truncate ac-display text-lg">{title}</h2>
               {headerAction}
             </div>
             {description ? <p className="mt-1 truncate text-xs text-ink-muted">{description}</p> : null}

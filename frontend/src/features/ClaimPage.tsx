@@ -5,6 +5,9 @@ import { type ClaimLink, consumeClaimUrl, normalizeClaimCode } from "../claimLin
 import type { Controller } from "../controller";
 import type { Device } from "../types";
 import { Button, Field, Panel } from "../ui";
+// The claim landing is a standalone arrival, so it carries the marketing
+// pages' own language: black canvas, glass card, white disc, glowing pill.
+import "./intelligence-onboarding.css";
 
 interface ClaimPageProps {
   controller: Controller;
@@ -62,7 +65,8 @@ export function ClaimPage({ controller: c, link, onDone }: ClaimPageProps) {
         </p>
         <CodeReadout code={link.code} />
         <Button
-          className="w-full"
+          className="claim-landing__cta w-full"
+          variant="primary"
           onClick={() => {
             if (c.clerk) c.clerk.openSignIn();
             else onDone({ device: null });
@@ -86,7 +90,7 @@ export function ClaimPage({ controller: c, link, onDone }: ClaimPageProps) {
           This controller now belongs to your account. Point it at an environment and thread to
           finish setup.
         </p>
-        <Button className="w-full" onClick={() => onDone({ device })}>
+        <Button className="claim-landing__cta w-full" variant="primary" onClick={() => onDone({ device })}>
           Continue setup
         </Button>
       </ClaimShell>
@@ -109,7 +113,8 @@ export function ClaimPage({ controller: c, link, onDone }: ClaimPageProps) {
           that code on the Devices page.
         </p>
         <Button
-          className="w-full"
+          className="claim-landing__cta w-full"
+          variant="primary"
           onClick={() => {
             consumeClaimUrl("#/devices");
             onDone({ device: null });
@@ -134,7 +139,7 @@ export function ClaimPage({ controller: c, link, onDone }: ClaimPageProps) {
         />
       </Field>
       {error ? <p className="text-sm text-danger">{error}</p> : null}
-      <Button className="w-full" onClick={() => void claim()} disabled={phase === "claiming"}>
+      <Button className="claim-landing__cta w-full" variant="primary" onClick={() => void claim()} disabled={phase === "claiming"}>
         <KeyRound className="size-4" />
         {phase === "claiming" ? "Claiming…" : "Claim this controller"}
       </Button>
@@ -181,8 +186,8 @@ function ClaimShell({
         <div className="claim-landing__icon" data-tone={tone}>
           <Icon className="size-6" aria-hidden="true" />
         </div>
-        <h1 className="font-display text-xl font-semibold">{title}</h1>
-        <p className="text-xs text-ink-muted">{subtitle}</p>
+        <h1 className="ac-display-title claim-landing__title">{title}</h1>
+        <p className="ac-eyebrow claim-landing__subtitle">{subtitle}</p>
         <div className="claim-landing__body">{children}</div>
       </Panel>
     </div>

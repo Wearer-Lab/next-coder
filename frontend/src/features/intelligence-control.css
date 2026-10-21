@@ -1,0 +1,885 @@
+/* ==========================================================================
+   The "intelligence design" language, applied to the ACTIONS library and the
+   SETTINGS workspace.
+
+   features/landing.css teaches the signed-out pages this language and
+   src/intelligence.css teaches the console its palette and its shared
+   primitives (.ac-display, .ac-eyebrow, .ac-glass, .ac-pill, .ac-stat). This
+   file teaches the two control-plane workspaces how to speak it: hairline
+   glass cards with a generous radius, the pixel display face for headings,
+   mono uppercase eyebrows, pill chips, and a calm focus ring.
+
+   Two decisions shape the file.
+
+   1. It is unlayered on purpose. Tailwind's utilities and the legacy
+      @layer components sheet both live in named layers, and an unlayered
+      declaration outranks every layered one at equal specificity. That is
+      what lets a hairline glass card replace a flat surface panel without
+      rewriting the markup's utility classes one at a time.
+
+   2. It is scoped. Every selector either hangs off a root class that only
+      these features render (.ic-scope, .ic-actions, .ic-settings, .ic-work,
+      .ic-picker) or names a class that only these features own (.ic-card,
+      .ic-panel, .gateway-profile-*, .rollout-card, .t3-compat-detail), so
+      the rest of the console keeps the surface it has today.
+
+   Meaning is never monochrome. Chrome — borders, dividers, chips, icon wells
+   — goes quiet and white; status, risk and health keep their semantic
+   colours (success / warning / danger / accent) so a state can never be
+   mistaken for decoration.
+
+   Performance: no continuous animation, no scroll-driven effect, no new
+   dependency, no new asset. The only transitions are transform and opacity,
+   and they are disabled under prefers-reduced-motion. Colour and border
+   changes are instant, so a hover never schedules a repaint loop.
+   ========================================================================== */
+
+/* The workspace tokens ----------------------------------------------------- */
+
+/* The workspace tokens. They live on :root so a panel that is rendered
+   outside a scoped root still resolves them instead of dropping the
+   declaration; the names are prefixed, so nothing else can collide. */
+:root {
+  --ic-line: var(--ac-border);
+  --ic-line-strong: var(--ac-border-strong);
+  --ic-fill: color-mix(in srgb, var(--ac-ink) 4%, transparent);
+  --ic-fill-strong: color-mix(in srgb, var(--ac-ink) 8%, transparent);
+  --ic-panel-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ac-ink) 6%, transparent),
+    color-mix(in srgb, var(--ac-ink) 2%, transparent)
+  );
+  --ic-inset: color-mix(in srgb, var(--ac-canvas) 72%, transparent);
+  --ic-inset-deep: color-mix(in srgb, var(--ac-canvas) 45%, transparent);
+  --ic-code: color-mix(in srgb, var(--ac-console) 90%, transparent);
+  --ic-radius: 1.25rem;
+  --ic-radius-sm: 0.9rem;
+}
+
+/* Type ------------------------------------------------------------------- */
+
+/* A heading that speaks in the pixel display face. The size stays with the
+   utility that sits next to it, so the face can be applied without
+   restating a type scale. */
+.ic-title {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+/* The glass card ---------------------------------------------------------- */
+
+/* The shell of a settings panel: a hairline edge, a translucent fill and a
+   soft lift, the way the marketing pricing cards are built. */
+.ic-panel {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius);
+  background: var(--ic-panel-fill);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 30%);
+}
+
+/* A panel that sits beside another one and must not claim the same weight. */
+.ic-panel--flat {
+  box-shadow: none;
+}
+
+/* An inner card: the same hairline language one level down. */
+.ic-card {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-fill);
+  padding: 0.95rem 1.05rem;
+}
+
+.ic-card--tight {
+  padding: 0.7rem 0.85rem;
+}
+
+/* A note that keeps its semantic colour and only borrows the radius. */
+.ic-note {
+  border-radius: var(--ic-radius-sm);
+}
+
+/* A quiet console block: commands, raw output, code. */
+.ic-console {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-code);
+  color: var(--ac-console-ink);
+  font-family: var(--font-mono);
+}
+
+/* A console block that sits flush inside a panel and only divides it. */
+.ic-console--flush {
+  border-width: 1px 0 0;
+  border-radius: 0;
+}
+
+/* A console block that hugs a single command and its copy button. */
+.ic-console--inline {
+  border-radius: 0.6rem;
+  padding: 0.3rem 0.35rem 0.3rem 0.8rem;
+}
+
+/* A copyable command chip. */
+.ic-command {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-code);
+  color: var(--ac-console-ink);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.7rem 0.85rem;
+  text-align: left;
+}
+
+.ic-command:hover {
+  border-color: var(--ic-line-strong);
+}
+
+/* A pill call to action: white, glowing, the marketing CTA. */
+.ic-cta {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--ac-primary);
+  color: var(--ac-primary-foreground);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ac-primary) 16%, transparent),
+    0 0 22px color-mix(in srgb, var(--ac-primary) 24%, transparent);
+  transition: transform 200ms ease;
+}
+
+.ic-cta:hover {
+  transform: translateY(-1px);
+}
+
+/* A secondary pill: the same shape, no fill. */
+.ic-pill-link {
+  border: 1px solid var(--ic-line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ac-ink);
+  transition: transform 200ms ease;
+}
+
+.ic-pill-link:hover {
+  background: var(--ic-fill-strong);
+  transform: translateY(-1px);
+}
+
+.ic-pill-link--quiet {
+  color: var(--ac-ink-muted);
+}
+
+/* A chip that opens a disclosure. */
+.ic-toggle {
+  border: 1px solid var(--ic-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  letter-spacing: 0.08em;
+  padding: 0.22rem 0.7rem;
+  text-transform: uppercase;
+}
+
+.ic-toggle:hover {
+  border-color: var(--ic-line-strong);
+  color: var(--ac-ink);
+}
+
+/* The metric strip -------------------------------------------------------- */
+
+/* The label/glyph pair, the way the marketing pages render it: a mono
+   uppercase label over a pixel-face value. */
+.ic-metrics dt {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.ic-metrics dd {
+  margin-top: 0.35rem;
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
+/* Form controls ----------------------------------------------------------- */
+
+/* Hairline borders, a calm radius, and a focus ring that announces itself
+   once instead of shouting. */
+.ic-scope :where(input, select, textarea):not([type="checkbox"]):not([type="radio"]) {
+  border: 1px solid var(--ic-line-strong);
+  border-radius: 0.6rem;
+  background: var(--ic-inset);
+  color: var(--ac-ink);
+}
+
+.ic-scope :where(input, select, textarea):not([type="checkbox"]):not([type="radio"]):focus {
+  border-color: color-mix(in srgb, var(--ac-focus) 60%, var(--ic-line-strong));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ac-focus) 16%, transparent);
+  outline: none;
+}
+
+.ic-scope :where(input, select, textarea):not([type="checkbox"]):not([type="radio"])::placeholder {
+  color: var(--ac-ink-faint);
+}
+
+/* The ACTIONS library ----------------------------------------------------- */
+
+.ic-actions {
+  max-width: 1680px;
+  gap: 1.15rem;
+  padding: 1.5rem;
+}
+
+.ic-actions .actions-header {
+  align-items: flex-end;
+  gap: 1.75rem;
+  padding: 0 0 0.35rem;
+}
+
+.ic-actions .actions-header h2 {
+  margin-top: 0.4rem;
+  font-size: clamp(1.35rem, 2.8vw, 2rem);
+}
+
+.ic-actions .actions-header > div > p:last-child {
+  max-width: 42rem;
+  color: var(--ac-ink-muted);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+/* The toolbar is one hairline glass strip, with the search as a pill inside
+   it and the filters as chips. */
+.ic-actions .actions-toolbar {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-fill);
+  gap: 1rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.ic-actions .actions-search {
+  min-height: 2.4rem;
+  gap: 0.55rem;
+  border: 1px solid var(--ic-line);
+  border-radius: 999px;
+  background: var(--ic-inset);
+  color: var(--ac-ink-faint);
+  padding-inline: 0.85rem;
+}
+
+.ic-actions .actions-search:focus-within {
+  border-color: color-mix(in srgb, var(--ac-focus) 55%, var(--ic-line));
+}
+
+.ic-actions .actions-search input {
+  min-height: auto;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.8rem;
+  padding: 0;
+}
+
+.ic-actions .actions-search input:focus {
+  box-shadow: none;
+}
+
+.ic-actions .actions-filters {
+  gap: 0.3rem;
+}
+
+.ic-actions .actions-filters button {
+  min-height: 2rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  padding: 0.35rem 0.8rem;
+  text-transform: uppercase;
+}
+
+.ic-actions .actions-filters button:hover {
+  color: var(--ac-ink);
+}
+
+.ic-actions .actions-filters button[data-active] {
+  border-color: var(--ic-line-strong);
+  background: var(--ic-fill-strong);
+  color: var(--ac-ink);
+}
+
+/* The action cards are the marketing feature cards: a hairline edge, a
+   translucent fill, a generous radius and a circle for the kind. */
+.ic-actions .action-grid {
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+  gap: 1rem;
+}
+
+.ic-actions .action-card {
+  min-height: 16rem;
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius);
+  background: var(--ic-fill);
+  box-shadow: none;
+  transition: transform 200ms ease, opacity 200ms ease;
+}
+
+.ic-actions .action-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--ic-line-strong);
+  box-shadow: none;
+}
+
+.ic-actions .action-card__topline,
+.ic-actions .action-card__actions {
+  gap: 0.5rem;
+  padding: 0.95rem 1.05rem;
+}
+
+.ic-actions .action-card__icon {
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--ic-line-strong);
+  border-radius: 50%;
+  background: var(--ic-fill-strong);
+  color: var(--ac-ink);
+}
+
+.ic-actions .action-card__usage {
+  margin-left: auto;
+  border: 1px solid var(--ic-line);
+  border-radius: 999px;
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  padding: 0.1rem 0.55rem;
+}
+
+.ic-actions .action-card__copy {
+  padding: 0.2rem 1.05rem 1.05rem;
+}
+
+.ic-actions .action-card__copy h3 {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 0.98rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.ic-actions .action-card__copy p {
+  margin-top: 0.5rem;
+  color: var(--ac-ink-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.ic-actions .action-card__target {
+  border-top: 1px solid var(--ic-line);
+  color: var(--ac-ink-faint);
+  font-size: 0.62rem;
+  padding: 0.6rem 1.05rem;
+}
+
+.ic-actions .action-card__media {
+  border-top: 1px solid var(--ic-line);
+  gap: 0.35rem;
+  padding: 0.6rem 1.05rem;
+}
+
+.ic-actions .action-card__media select {
+  min-height: 2.2rem;
+  font-size: 0.72rem;
+}
+
+.ic-actions .action-card__actions {
+  border-top: 1px solid var(--ic-line);
+  padding-block: 0.6rem;
+}
+
+.ic-actions .actions-empty {
+  border: 1px dashed var(--ic-line-strong);
+  border-radius: var(--ic-radius);
+  background: var(--ic-fill);
+}
+
+/* The editor keeps its own sheet layout and adopts the glass treatment. */
+.ic-actions .action-editor-backdrop {
+  background: rgb(0 0 0 / 62%);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.ic-actions .action-editor {
+  border-left: 1px solid var(--ic-line-strong);
+  background: color-mix(in srgb, var(--ac-surface-raised) 94%, transparent);
+  box-shadow: -24px 0 70px rgb(0 0 0 / 55%);
+}
+
+.ic-actions .action-editor > header,
+.ic-actions .action-editor > footer {
+  border-color: var(--ic-line);
+  padding: 1.1rem 1.35rem;
+}
+
+.ic-actions .action-editor > header h2 {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 1.15rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.ic-actions .action-editor__body {
+  gap: 1.15rem;
+  padding: 1.35rem;
+}
+
+.ic-actions .action-editor fieldset > legend,
+.ic-actions .macro-builder > legend {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+}
+
+.ic-actions .action-kind-grid {
+  gap: 0.6rem;
+}
+
+.ic-actions .action-kind-grid button {
+  min-height: 4.5rem;
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-fill);
+  color: var(--ac-ink-muted);
+  gap: 0.7rem;
+  padding: 0.85rem 0.95rem;
+}
+
+.ic-actions .action-kind-grid button:hover {
+  border-color: var(--ic-line-strong);
+}
+
+.ic-actions .action-kind-grid button[data-active] {
+  border-color: color-mix(in srgb, var(--ac-ink) 34%, var(--ic-line));
+  background: var(--ic-fill-strong);
+  color: var(--ac-ink);
+}
+
+.ic-actions .action-kind-grid strong {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.ic-actions .action-kind-grid small {
+  color: var(--ac-ink-faint);
+  font-size: 0.65rem;
+}
+
+.ic-actions .macro-builder {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-fill);
+  padding: 0.9rem;
+}
+
+.ic-actions .macro-steps li {
+  border: 1px solid var(--ic-line);
+  border-radius: 0.6rem;
+  background: var(--ic-inset-deep);
+  padding: 0.45rem;
+}
+
+.ic-actions .macro-steps__number {
+  border-radius: 50%;
+  background: var(--ic-fill-strong);
+  font-family: var(--ac-display);
+}
+
+.ic-actions .macro-builder__empty {
+  color: var(--ac-ink-faint);
+}
+
+/* The SETTINGS workspace -------------------------------------------------- */
+
+.ic-settings {
+  max-width: 1680px;
+  gap: 1.1rem;
+}
+
+/* A visibility option: a hairline card that reads as one when it is
+   selected. */
+.ic-option {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-fill);
+  gap: 0.8rem;
+  padding: 0.95rem 1.05rem;
+}
+
+.ic-option:hover {
+  border-color: var(--ic-line-strong);
+}
+
+.ic-option[data-selected] {
+  border-color: color-mix(in srgb, var(--ac-ink) 32%, var(--ic-line));
+  background: var(--ic-fill-strong);
+}
+
+.ic-option > span:first-child {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--ic-line-strong);
+  border-radius: 50%;
+  background: var(--ic-fill-strong);
+  color: var(--ac-ink-muted);
+}
+
+.ic-option[data-selected] > span:first-child {
+  border-color: color-mix(in srgb, var(--ac-ink) 38%, var(--ic-line));
+  background: color-mix(in srgb, var(--ac-ink) 14%, transparent);
+  color: var(--ac-ink);
+}
+
+/* The gateway profiles. */
+.gateway-profile-network {
+  border-top: 1px solid var(--ic-line);
+  border-bottom: 1px solid var(--ic-line);
+  background: var(--ic-fill);
+  padding: 0.9rem 1.35rem;
+}
+
+.gateway-profile-network__icon {
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--ic-line-strong);
+  border-radius: 50%;
+  background: var(--ic-fill-strong);
+  color: var(--ac-ink);
+}
+
+.gateway-profile-network strong {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 0.82rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.gateway-profile-grid {
+  gap: 0.85rem;
+  padding: 1.15rem 1.35rem 1.35rem;
+}
+
+.gateway-profile-card {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius);
+  background: var(--ic-fill);
+  gap: 0.8rem;
+  padding: 1rem 1.05rem;
+}
+
+.gateway-profile-card__heading > span:first-child {
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--ic-line-strong);
+  border-radius: 50%;
+  background: var(--ic-fill-strong);
+  color: var(--ac-ink);
+}
+
+.gateway-profile-card h3 {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 0.85rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.gateway-profile-card__heading p {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gateway-profile-card__risk {
+  border-top: 1px solid var(--ic-line);
+}
+
+.gateway-profile-empty {
+  border: 1px dashed var(--ic-line-strong);
+  border-radius: var(--ic-radius);
+  background: var(--ic-fill);
+}
+
+.gateway-profile-form {
+  border: 1px solid var(--ic-line-strong);
+  border-radius: var(--ic-radius);
+  background: color-mix(in srgb, var(--ac-surface-raised) 96%, transparent);
+  box-shadow: 0 28px 80px rgb(0 0 0 / 55%);
+}
+
+.gateway-profile-form > header,
+.gateway-profile-form > footer {
+  border-color: var(--ic-line);
+}
+
+.gateway-profile-form > header h3 {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 0.95rem;
+  font-weight: 400;
+}
+
+.gateway-profile-form__note {
+  border-radius: var(--ic-radius-sm);
+}
+
+/* The staged rollouts. */
+.rollout-card {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-fill);
+  padding: 0.95rem 1.05rem;
+}
+
+.rollout-detail {
+  border-top: 1px solid var(--ic-line);
+  padding-top: 0.75rem;
+}
+
+/* The compatibility panel. */
+.t3-compat-detail {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-fill);
+  padding: 0.7rem 0.85rem;
+}
+
+/* The band that closes a panel: a hairline divider over a glass fill, the
+   way the marketing spec blocks close. */
+.ic-metrics-band {
+  background: var(--ic-fill);
+}
+
+/* The agents and work inspector. */
+.ic-work {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius);
+  background: var(--ic-fill);
+}
+
+/* A stale or broken connection stays unmistakable: the edge keeps its
+   semantic colour instead of falling back to the monochrome chrome. */
+.ic-work[data-connection="stale"] {
+  border-color: color-mix(in srgb, var(--ac-warning) 34%, var(--ic-line));
+}
+
+.ic-work[data-connection="error"] {
+  border-color: color-mix(in srgb, var(--ac-danger) 34%, var(--ic-line));
+}
+
+.ic-work .work-inspector__icon {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--ic-line-strong);
+  border-radius: 50%;
+  background: var(--ic-fill-strong);
+  color: var(--ac-ink);
+}
+
+/* The hover and focus surfaces are glass, not a solid slab. */
+.ic-work .work-inspector > summary:hover,
+.ic-work .work-inspector > summary:focus-visible,
+.ic-work .work-node > summary:hover,
+.ic-work .work-node > summary:focus-visible {
+  background: var(--ic-fill-strong);
+}
+
+.ic-work .work-inspector__summary strong {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 0.85rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.ic-work .work-inspector__body {
+  border-top: 1px solid var(--ic-line);
+}
+
+.ic-work .work-inspector__facts span {
+  border: 1px solid var(--ic-line);
+  background: var(--ic-fill);
+  color: var(--ac-ink-muted);
+}
+
+.ic-work .work-inspector__notice {
+  border-radius: var(--ic-radius-sm);
+}
+
+.ic-work .work-inspector__controls {
+  border-top: 1px solid var(--ic-line);
+}
+
+.ic-work .work-node {
+  border-left: 1px solid var(--ic-line-strong);
+  border-radius: 0.6rem;
+  background: var(--ic-inset-deep);
+  overflow: hidden;
+}
+
+.ic-work .work-node__rail {
+  border-color: var(--ac-ink-faint);
+  background: var(--ic-fill-strong);
+}
+
+/* The task state is meaning, not chrome: the rail keeps its semantic
+   colour for every observed status. */
+.ic-work .work-node[data-status="working"] .work-node__rail {
+  border-color: var(--ac-success);
+  background: var(--ac-success);
+}
+
+.ic-work .work-node[data-status="failed"] .work-node__rail {
+  border-color: var(--ac-danger);
+  background: var(--ac-danger);
+}
+
+.ic-work .work-node[data-status="waiting"] .work-node__rail,
+.ic-work .work-node[data-status="queued"] .work-node__rail {
+  border-color: var(--ac-warning);
+  background: var(--ac-warning);
+}
+
+.ic-work .work-node__copy strong {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 0.8rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.ic-work .work-node__detail {
+  border-top: 1px solid var(--ic-line);
+}
+
+.ic-work .work-node__timeline {
+  border-top: 1px solid var(--ic-line);
+}
+
+/* The device profile picker. */
+.ic-picker .profile-card {
+  border: 1px solid var(--ic-line);
+  border-radius: var(--ic-radius-sm);
+  background: var(--ic-fill);
+  padding: 0.9rem 1rem;
+  transition: transform 200ms ease, opacity 200ms ease;
+}
+
+.ic-picker .profile-card:hover {
+  border-color: var(--ic-line-strong);
+}
+
+.ic-picker .profile-card[data-selected] {
+  border-color: color-mix(in srgb, var(--ac-ink) 32%, var(--ic-line));
+  background: var(--ic-fill-strong);
+}
+
+.ic-picker .profile-card:focus-within {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ac-focus) 40%, transparent);
+}
+
+.ic-picker .profile-assigned {
+  border: 1px solid var(--ic-line);
+  border-radius: 999px;
+  background: var(--ic-fill-strong);
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  padding: 0.1rem 0.5rem;
+  text-transform: uppercase;
+}
+
+.ic-picker .profile-diff {
+  border-radius: var(--ic-radius-sm);
+}
+
+/* The shared control list and the check card. They are the device-side
+   counterparts of the settings surfaces, so they follow the same hairline
+   language: a hairline row, a pill badge for the position, and a pill shape
+   for a check. They are plain class rules, not scoped, because the control
+   editor renders them beside the profile picker rather than inside it. */
+.control-list li {
+  border: 1px solid var(--ac-border);
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--ac-ink) 4%, transparent);
+}
+
+.control-list__position {
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ac-ink) 8%, transparent);
+  font-family: var(--ac-display);
+}
+
+/* A disabled control still carries a warning: the state is meaning, not
+   decoration. */
+.control-list li[data-disabled] {
+  border-color: color-mix(in srgb, var(--ac-warning) 25%, var(--ac-border));
+  background: color-mix(in srgb, var(--ac-warning) 5%, transparent);
+}
+
+.check-card {
+  border: 1px solid var(--ac-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ac-ink) 4%, transparent);
+}
+
+.check-card:has(input:checked) {
+  border-color: color-mix(in srgb, var(--ac-ink) 30%, var(--ac-border));
+  background: color-mix(in srgb, var(--ac-ink) 8%, transparent);
+}
+
+/* Reduced motion ---------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .ic-scope *,
+  .ic-actions *,
+  .ic-settings *,
+  .ic-work *,
+  .ic-picker * {
+    transition: none !important;
+  }
+
+  .ic-actions .action-editor {
+    animation: none;
+  }
+}

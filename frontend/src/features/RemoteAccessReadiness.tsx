@@ -3,6 +3,8 @@ import { Check, Circle, LoaderCircle, RefreshCw } from "lucide-react";
 import type { RemoteAccessMode } from "../remoteAccess";
 import type { RemoteAccessStatus } from "../types";
 import { Button, cn } from "../ui";
+// The hairline glass surfaces of the "intelligence design" system.
+import "./intelligence-fleet.css";
 
 export interface RemoteAccessReadinessStep {
   id: "install" | "connect" | "enable" | "restart";
@@ -89,11 +91,11 @@ export function RemoteAccessReadiness({
 }) {
   const steps = remoteAccessReadinessSteps(status, mode);
   return (
-    <div className="rounded-lg border border-control bg-surface-inset/35" aria-live="polite">
-      <div className="flex items-center justify-between gap-3 border-b border-control px-3 py-2.5">
+    <div className="ac-readiness" aria-live="polite">
+      <div className="ac-readiness__head">
         <div>
-          <p className="text-xs font-semibold text-ink">This gateway host</p>
-          <p className="mt-0.5 text-[11px] text-ink-faint">
+          <p className="ac-readiness__title">This gateway host</p>
+          <p className="ac-readiness__meta">
             {status ? `Checked ${new Date(status.checkedAt).toLocaleTimeString()}` : "Checking tunnel readiness…"}
           </p>
         </div>
@@ -103,11 +105,11 @@ export function RemoteAccessReadiness({
           </Button>
         ) : null}
       </div>
-      <ol className={cn("divide-y divide-control", compact ? "text-xs" : "text-sm")}>
+      <ol className={cn("ac-readiness__list", compact ? "text-xs" : "text-sm")}>
         {steps.map((step) => (
-          <li key={step.id} className="flex items-start gap-3 px-3 py-2.5">
+          <li key={step.id} className="ac-readiness__step">
             <span className={cn(
-              "mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border",
+              "ac-readiness__mark",
               step.ready
                 ? "border-success/30 bg-success/10 text-success"
                 : "border-control-strong bg-surface-raised text-ink-faint",
@@ -119,8 +121,8 @@ export function RemoteAccessReadiness({
                   : <Circle className="size-2.5" />}
             </span>
             <span className="min-w-0">
-              <strong className="block text-xs text-ink">{step.label}</strong>
-              <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-muted">{step.detail}</span>
+              <strong className="ac-readiness__label">{step.label}</strong>
+              <span className="ac-readiness__detail">{step.detail}</span>
             </span>
           </li>
         ))}

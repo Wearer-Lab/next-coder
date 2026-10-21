@@ -321,7 +321,7 @@ export function MediaCaptureDialog({
         <header className="media-creator__header">
           <div>
             <p className="eyebrow">New context</p>
-            <h2 id="media-creator-title">{title}</h2>
+            <h2 id="media-creator-title" className="ac-display-title">{title}</h2>
             <p id="media-creator-description">{description}</p>
           </div>
           <Button

@@ -104,9 +104,11 @@ remains authoritative.
 | `error` | Open square containing `x` | Failure, blocked, revoked, or unavailable |
 
 The `ac_mark` appears on boot and may occupy the header's left glyph cell on Home. Other screens use
-their capability glyph in the same cell, so the user's eye learns a stable location. Selected rows
-use the `>` text cursor rather than a filled highlight. This keeps selection legible after a partial
-refresh and avoids depending on inverse text support.
+their capability glyph in the same cell, so the user's eye learns a stable location. The selected row
+is an inverted block: the row band is filled with ink and its label, metadata and glyph are printed
+back out in bare paper. On a one-bit panel that inverse block is the device's active pill, and the
+renderer already knows how to print a glyph in paper, so the selected-and-disabled marker survives
+the inversion instead of disappearing into the highlight.
 
 ## Exact 250-by-122 screen architecture
 
@@ -116,13 +118,133 @@ All product screens use the same visible coordinate contract:
 |---|---|---|
 | Physical control rail | `x=2..43`, `y=2..119` | Centered top MENU, center rotary/OK, bottom BACK |
 | Rail divider | `x=43`, `y=2..119` | One-pixel boundary matching the left-side bezel controls |
-| Header glyph | `x=49..60`, `y=5..16` | One 12-by-12 Agent Controller glyph |
-| Header title | starts `x=67`, `y=5` | Screen/resource title, bounded before state |
-| Header state | boxed against `x=247`, `y=3..19` | Text such as `LIVE`, `RUN`, or `2/7` |
-| Header rule | `x=47..247`, `y=22` | One-pixel separator |
-| Body | `x=47..247`, `y=23..101` | Three 25-pixel list rows, or two compact detail lines |
-| List baselines | `y=27`, `52`, `77` | Cursor, 12-by-12 glyph, label, and right metadata |
-| Detail prompts | `y=34`, `64` | `$` system fact followed by `>` next/relevant fact |
+| Header eyebrow | `x=47..247`, `y=1` | Small mono state word on the left, position marker on the right |
+| Header glyph | `x=49..60`, `y=14..25` | One 12-by-12 Agent Controller glyph |
+| Header title | starts `x=67`, `y=14` | Screen/resource title in the 8-by-16 face, upper-cased |
+| Header rule | `x=47..247`, `y=30` | One-pixel separator |
+| Body | `x=47..247`, `y=31..99` | Three 23-pixel list rows, or two compact detail lines |
+| List baselines | `y=36`, `59`, `82` | Cursor, 12-by-12 glyph, label, and right metadata |
+| Detail prompts | `y=36`, `66` | `# Hardware Controller Protocol
+
+This document describes hardware protocol v2 for the ESP32 agent controller and the temporary
+protocol-v1 compatibility path.
+
+Project-wide firmware progress is maintained in
+[roadmap/IMPLEMENTATION-STATUS.md](../roadmap/IMPLEMENTATION-STATUS.md). The current inventory is 15
+PlatformIO environments; the post-TLS release and CrowPanel/Waveshare build evidence is recorded in
+[firmware-build-gate.md](firmware-build-gate.md). Hosyond is the only board with current silicon
+evidence. The CrowPanel sections below deliberately distinguish the implemented slice from the
+target protocol and UI contract.
+
+The current design keeps the ESP32 simple:
+
+- The cloud gateway owns account, device, policy, and durable control-plane state.
+- The ESP32 authenticates with a per-device ID and secret.
+- The ESP32 polls compact display state instead of holding a long-lived stream.
+- The ESP32 sends opaque saved-action IDs, not action payloads or raw T3 commands.
+- Phone/web clients and the ESP32 share the same intent model.
+- T3 state and provider execution remain on the user's machine behind the outbound connector.
+
+## Topology
+
+```mermaid
+flowchart TD
+  ESP32["ESP32 controller<br/>keys, display, optional media"] --> Gateway["Cloud gateway<br/>auth, registry, policy, routing"]
+  Phone["Phone/web client<br/>audio, images, prompts"] --> Gateway
+  Connector["Outbound connector CLI<br/>on user machine"] --> Gateway
+  Connector --> Tailscale["Loopback or optional Tailscale"]
+  Tailscale --> T3["T3 Code on user machine"]
+  T3 --> Agents["Codex / Claude Code"]
+```
+
+## CrowPanel product scope and UI status
+
+The physical product target in this document is the **CrowPanel ESP32 2.13-inch e-paper HMI**
+(`e213-esp32-s3r8`). Its visible panel is 250 pixels wide by 122 pixels high in landscape. The
+vendored driver exposes a 250-by-128 logical buffer; UI code must keep meaningful pixels inside
+rows `0..121` because the final six rows are not part of the visible product canvas.
+
+The Vision Master T190 remains a development target with no silicon proof. Its adapter now uses the
+shared identity, provisioning, gateway, and browse layers. The checked-in build is status-only;
+navigation and operate capability compile only behind an explicit external-encoder verification
+gate, so they are not release or hardware evidence.
+
+The following sections define the **target CrowPanel interaction contract**. They are deliberately
+more complete than the implemented first slice. The current source now includes:
+
+- a shared 250-by-122 retro terminal renderer with a hardware-aligned left control rail, header,
+  three-row list/two-line detail body, safe ASCII truncation, and original one-bit glyphs;
+- Home, Actions, Threads, Gateways, and Detail screen states;
+- a paged, bounded thread browser that renders gateway-provided `status` and `selected` metadata,
+  and changes context only after OK on the visible row;
+- a full-height Home summary for selected task, system counts, and latest activity, plus explicit
+  task-required and local-confirmation action metadata;
+- MENU-to-Actions and EXIT-back behavior, gateway selection, result/error details, the global
+  OK+EXIT stop chord, and the EXIT recovery hold.
+
+The full root hierarchy, separate action/thread detail confirmation, Approvals and Session screens,
+media review-before-upload, MENU-hold refresh, general OK-hold confirmations, and output paging are
+still target behavior. Current thread OK switches directly from the list after a static
+`SWITCHING` milestone; current reset confirmation uses a second OK tap rather than an OK hold.
+
+## Retro terminal visual language
+
+The controller should feel like a small field terminal: terse, technical, and calm. “Retro hacker”
+means functional terminal grammar, not decorative noise.
+
+- Use a one-bit, monospaced or pixel-compatible face for labels, counts, IDs, and state.
+- Use uppercase for short system labels (`THREADS`, `RUN`, `WAIT`), not for long user content.
+- Prefix selection with `>` and label the active resource `ACTIVE`; use `[STATE]` for status.
+- Use single-pixel rules, square corners, slash counts (`2/7`), and compact command-like verbs.
+- Keep the canvas predominantly white. Large inverse-black regions, checkerboards, fake scanlines,
+  and ornamental noise increase ghosting and spend refresh time without adding information.
+- Never encode status only in an icon. Pair every glyph with text such as `DONE`, `WAIT`, `RISK`,
+  `OFFLINE`, or `ERROR`.
+- Show user-created titles in their original case where space permits. Truncate with `~` rather
+  than allowing a label to collide with the state, metadata, or control rail.
+
+### Agent Controller glyph set
+
+These are original Agent Controller semantics, designed for a 12-by-12 one-bit cell. They must not
+copy the T3 Code wordmark or branded artwork. A glyph is a navigation aid; the adjacent ASCII label
+remains authoritative.
+
+| Glyph name | Pixel concept | Meaning |
+|---|---|---|
+| `ac_mark` | Square terminal frame containing `>_` | Agent Controller identity, boot, and Home |
+| `thread` | Three offset horizontal traces joined by a rail | T3 thread list or active thread |
+| `status` | Prompt caret followed by two short telemetry lines | Snapshot/status |
+| `action` | Prompt caret entering a small node | Saved prompt or generic remote action |
+| `shell` | Terminal frame containing `$` | Policy-screened shell request |
+| `macro` | Three connected step nodes | Multi-step macro |
+| `approval` | Diamond containing `?` | Decision required; always paired with risk text |
+| `continue` | Broken trace completed by a right arrow | Continue the selected thread |
+| `interrupt` | Split trace with a vertical break | Interrupt the current turn |
+| `stop` | Octagonal outline with a center square | Stop the selected session |
+| `audio` | Three vertical waveform bars | Audio capture, only when hardware reports it |
+| `image` | Framed horizon and point | Still image capture, only when hardware reports it |
+| `gateway` | Two endpoints joined through a center node | Gateway profile or route |
+| `firmware` | Chip outline with a downward arrow | Firmware release/update |
+| `ok` | Open square containing a check | Completed/success |
+| `warning` | Triangle containing `!` | Risk, stale state, or recoverable warning |
+| `error` | Open square containing `x` | Failure, blocked, revoked, or unavailable |
+
+The `ac_mark` appears on boot and may occupy the header's left glyph cell on Home. Other screens use
+their capability glyph in the same cell, so the user's eye learns a stable location. The selected row
+is an inverted block: the row band is filled with ink and its label, metadata and glyph are printed
+back out in bare paper. On a one-bit panel that inverse block is the device's active pill, and the
+renderer already knows how to print a glyph in paper, so the selected-and-disabled marker survives
+the inversion instead of disappearing into the highlight.
+
+## Exact 250-by-122 screen architecture
+
+All product screens use the same visible coordinate contract:
+
+| Region | Coordinates | Contents |
+|---|---|---|
+| Physical control rail | `x=2..43`, `y=2..119` | Centered top MENU, center rotary/OK, bottom BACK |
+| Rail divider | `x=43`, `y=2..119` | One-pixel boundary matching the left-side bezel controls |
+ system fact followed by `>` next/relevant fact |
 | Context rule | `x=47..247`, `y=102` | One-pixel separator |
 | Context footer | `x=50..247`, `y=106..117` | List movement hint; no relocated key labels |
 | Buffer padding | `y=122..127` | Always blank; not visible on the panel |
@@ -133,10 +255,11 @@ The display buffer's rows `122..127` remain blank. A list row uses `x=48` for th
 
 ```text
  0  +-------+-----------------------+  250 px
-    | MENU  |[G] TITLE       [STATE]|  header: y 0..21
-22  |       |-----------------------|
-23  | ^     |> primary content      |
-    |  OK   |  secondary content    |  body: y 23..101
+    | MENU  |STATE          2/7     |  header eyebrow: y 1
+    |       |[G] TITLE              |  header title: y 14..25
+30  |       |-----------------------|
+31  | ^     |  primary content      |
+    |  OK   |  secondary content    |  body: y 31..99
     | v     |  detail               |
 102 |       |-----------------------|
 103 | BACK  |ROTATE:MOVE            |  context: y 103..121

@@ -43,6 +43,27 @@ inline uint16_t panelGrey(uint8_t g) {
   return panelRgb(c);
 }
 
+// The same grey ramp, expressed as a LOGICAL RGB565 colour — the colour the eye receives, before
+// the panel's polarity is applied.
+//
+// Everything that blends has to blend in the colour the viewer sees: a shape composited against
+// a grey ground and then inverted is not the shape that was computed. This is the grey ramp in
+// that space, so a greyscale ground and a coloured shape can be mixed without either of them
+// knowing about the other's world.
+inline uint16_t greyRgb(uint8_t g) {
+  return (uint16_t)(((g & 0xF8) << 8) | ((g & 0xFC) << 3) | (g >> 3));
+}
+
+// The design system's accent: #b7a8ff, the same violet the console spends on its live state.
+//
+// 0xB55F is that colour in RGB565 (r5 = 22, g6 = 42, b5 = 31). It is the device's ONE chromatic
+// signal: the panel is otherwise monochrome on black, so anything violet on the glass is telling
+// the truth about state rather than decorating the screen.
+constexpr uint16_t kAccentRgb = 0xB55F;
+
+// The accent as bytes for the panel.
+inline uint16_t panelAccent() { return panelRgb(kAccentRgb); }
+
 bool displayBegin();
 
 // Allocates the off-screen canvases the orb and label composite into. Must be called after
@@ -108,6 +129,19 @@ bool displayReady();
 void displaySoftRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, float radius,
                           uint8_t bgGrey, int16_t fillGrey, int16_t strokeGrey,
                           float strokeWidth = 1.4f, float feather = 1.0f);
+
+// The same shape in colour.
+//
+// The greyscale renderer above is the workhorse and is left exactly as it was: it is on the hot
+// path, and three channel blends per pixel is a cost the whole UI should not pay for the sake of
+// one accent. This is the colour variant, for the handful of shapes that carry the accent — the
+// call to action, the selected marker, the live dot — where the colour IS the message.
+//
+// `bgRgb` is the ground the shape composites against, in logical RGB565. `fillRgb` and
+// `strokeRgb` are logical RGB565 colours, or -1 for "none".
+void displaySoftRoundRectRgb(int16_t x, int16_t y, int16_t w, int16_t h, float radius,
+                             uint16_t bgRgb, int32_t fillRgb, int32_t strokeRgb,
+                             float strokeWidth = 1.4f, float feather = 1.0f);
 
 // A capsule-ended line at any angle: chevrons, back arrows, the marker beside a selected row.
 void displaySoftSegment(float x0, float y0, float x1, float y1, float thickness,

@@ -3,6 +3,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { Connector, Environment, EnvironmentFailure, EnvironmentFailureReason } from "../types";
 import { Button } from "../ui";
+// The recovery dialog speaks the same language as the rest of the console
+// now: a hairline glass card, a pixel title and a glowing white pill.
+import "./intelligence-onboarding.css";
 
 const T3_SETUP_COMMAND = "npm run setup:t3";
 
@@ -353,7 +356,7 @@ export function WorkspaceRecoveryDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[110] grid place-items-center overflow-y-auto bg-black/65 p-4 backdrop-blur-[2px]"
+      className="workspace-recovery fixed inset-0 z-[110] grid place-items-center overflow-y-auto bg-black/65 p-4 backdrop-blur-[2px]"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -365,15 +368,15 @@ export function WorkspaceRecoveryDialog({
         aria-modal="true"
         aria-labelledby="workspace-recovery-title"
         aria-describedby="workspace-recovery-description"
-        className="w-full max-w-lg rounded-xl border border-control-strong bg-surface-raised shadow-raised"
+        className="workspace-recovery__dialog w-full max-w-lg rounded-xl border border-control-strong bg-surface-raised shadow-raised"
       >
-        <div className="flex items-start gap-3 border-b border-control px-5 py-4">
-          <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-warning/20 bg-warning/10 text-warning">
+        <div className="workspace-recovery__header flex items-start gap-3 border-b border-control px-5 py-4">
+          <div className="workspace-recovery__icon grid size-10 shrink-0 place-items-center rounded-lg border border-warning/20 bg-warning/10 text-warning">
             <AlertTriangle className="size-5" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="eyebrow text-warning-strong">{content.eyebrow}</p>
-            <h2 id="workspace-recovery-title" className="font-display text-lg font-semibold">
+            <p className="ac-eyebrow workspace-recovery__eyebrow">{content.eyebrow}</p>
+            <h2 id="workspace-recovery-title" className="ac-display-title workspace-recovery__title">
               {content.title}
             </h2>
           </div>
@@ -387,15 +390,15 @@ export function WorkspaceRecoveryDialog({
           </button>
         </div>
 
-        <div className="px-5 py-4">
+        <div className="workspace-recovery__body px-5 py-4">
           <p
             id="workspace-recovery-description"
-            className="rounded-md border border-danger/20 bg-danger/8 px-3 py-2 font-mono text-xs text-danger"
+            className="workspace-recovery__summary rounded-md border border-danger/20 bg-danger/8 px-3 py-2 font-mono text-xs text-danger"
             role="alert"
           >
             {content.summary}
           </p>
-          <ol className="mt-4 grid gap-4 text-sm">
+          <ol className="workspace-recovery__steps mt-4 grid gap-4 text-sm">
             {content.steps.map((step, index) => (
               <li key={step.title} className="grid grid-cols-[1.5rem_1fr] gap-2">
                 <span className="font-mono text-xs text-ink-faint">
@@ -405,7 +408,7 @@ export function WorkspaceRecoveryDialog({
                   <p className="font-semibold text-ink">{step.title}</p>
                   <div className="mt-1 leading-relaxed text-ink-muted">{step.body}</div>
                   {step.command ? (
-                    <div className="mt-2 flex items-center gap-2 rounded-md border border-control bg-console p-1.5 pl-3">
+                    <div className="workspace-recovery__command mt-2 flex items-center gap-2 rounded-md border border-control bg-console p-1.5 pl-3">
                       <code className="min-w-0 flex-1 overflow-x-auto text-xs text-console-ink">
                         {step.command}
                       </code>
@@ -433,7 +436,7 @@ export function WorkspaceRecoveryDialog({
           </ol>
           {retryable ? (
             <div
-              className="mt-4 flex items-start gap-3 rounded-md border border-info/20 bg-info/8 px-3 py-2.5"
+              className="workspace-recovery__status mt-4 flex items-start gap-3 rounded-md border border-info/20 bg-info/8 px-3 py-2.5"
               role="status"
               aria-busy={checking}
             >
@@ -449,7 +452,7 @@ export function WorkspaceRecoveryDialog({
             </div>
           ) : (
             <div
-              className="mt-4 flex items-start gap-3 rounded-md border border-control bg-surface-inset px-3 py-2.5"
+              className="workspace-recovery__status mt-4 flex items-start gap-3 rounded-md border border-control bg-surface-inset px-3 py-2.5"
               role="status"
               aria-busy={false}
             >
@@ -465,11 +468,18 @@ export function WorkspaceRecoveryDialog({
           )}
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-control px-5 py-4 sm:flex-row sm:justify-end">
+        <div className="workspace-recovery__footer flex flex-col-reverse gap-2 border-t border-control px-5 py-4 sm:flex-row sm:justify-end">
           <Button onClick={onOpenEnvironments}>
             <Cable className="size-4" aria-hidden="true" /> Connection settings
           </Button>
-          <Button ref={retryButtonRef} variant="primary" busy={retrying} disabled={checking} onClick={onRetry}>
+          <Button
+            ref={retryButtonRef}
+            className="workspace-recovery__cta"
+            variant="primary"
+            busy={retrying}
+            disabled={checking}
+            onClick={onRetry}
+          >
             <RotateCcw className="size-4" aria-hidden="true" /> Try again
           </Button>
         </div>

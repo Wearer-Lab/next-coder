@@ -51,6 +51,7 @@ import {
   webPushSupported,
   type WebPushConfig,
 } from "../webPush";
+import "./intelligence-control.css";
 
 const NOTIFICATION_HINTS: Record<string, string> = {
   unsupported: "This browser cannot raise notifications. Install the console to your home screen, or use a desktop browser.",
@@ -206,14 +207,14 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
   const tunnelReady = remoteAccessReady(c.remoteAccess, remoteAccessMode);
 
   return (
-    <div className="page-stack">
+    <div className="page-stack ic-scope ic-settings">
       <T3CompatibilityPanel controller={c} />
 
       <GatewayProfilesPanel controller={c} />
 
       <ReleaseRolloutsPanel controller={c} />
 
-      <Panel elevated className="overflow-hidden">
+      <Panel elevated className="ic-panel overflow-hidden">
         <SectionHeader
           eyebrow="Connector fleet"
           title="Workspace computers"
@@ -228,12 +229,12 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
               ? "danger"
               : connector.status === "online" ? "success" : "warning";
             return (
-              <article key={connector.id} className="rounded-lg border border-control bg-surface-inset/35 p-4">
+              <article key={connector.id} className="ic-card">
                 <div className="flex flex-wrap items-start gap-3">
-                  <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Cable className="size-4" /></span>
+                  <span className="grid size-9 shrink-0 place-items-center rounded-full bg-surface-raised text-ink-muted"><Cable className="size-4" /></span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <strong className="text-sm text-ink">{connector.label}</strong>
+                      <strong className="ic-title text-sm text-ink">{connector.label}</strong>
                       <StatusBadge tone={tone} label={connector.status} />
                     </div>
                     <p className="mt-1 text-xs text-ink-muted">{environment?.label ?? connector.environmentId} · Last seen {formatRelativeTime(connector.lastSeenAt ?? connector.lastConnectedAt)}</p>
@@ -252,18 +253,18 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
               </article>
             );
           }) : (
-            <p className="rounded-lg border border-control bg-surface-inset/45 p-4 text-sm text-ink-muted">No connector has enrolled yet. Connect a computer from Environments or Initial setup.</p>
+            <p className="ic-card text-sm text-ink-muted">No connector has enrolled yet. Connect a computer from Environments or Initial setup.</p>
           )}
           <div className="grid gap-2 sm:grid-cols-2">
             {["npx @agent-controller/connector status", "npx @agent-controller/connector doctor"].map((command) => (
-              <button key={command} type="button" className="rounded-md border border-control bg-console p-3 text-left font-mono text-xs text-console-ink" onClick={() => void copyRemoteAccessCommand(command, "Connector command")}>{command}</button>
+              <button key={command} type="button" className="ic-command" onClick={() => void copyRemoteAccessCommand(command, "Connector command")}>{command}</button>
             ))}
           </div>
           <p className="text-xs text-ink-muted">Run status or doctor on the workspace computer. These checks do not reveal the standing connector secret or local T3/provider credentials.</p>
         </div>
       </Panel>
 
-      {c.authConfig.deploymentMode !== "cloud" ? <Panel elevated className="overflow-hidden">
+      {c.authConfig.deploymentMode !== "cloud" ? <Panel elevated className="ic-panel overflow-hidden">
         <SectionHeader
           eyebrow="Advanced self-hosted gateway access"
           title="Open this console from another device"
@@ -277,7 +278,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
         />
         <div className="grid gap-5 border-t border-control p-5 xl:grid-cols-[minmax(0,0.82fr)_minmax(360px,1.18fr)]">
           <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-faint">Choose visibility</p>
+            <p className="ac-eyebrow">Choose visibility</p>
             {remoteAccessOptions.map((option) => {
               const selected = remoteAccessMode === option.id;
               const Icon = option.id === "serve" ? Network : Globe2;
@@ -286,16 +287,16 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
                   key={option.id}
                   type="button"
                   aria-pressed={selected}
-                  className="flex w-full items-start gap-3 rounded-lg border border-control bg-surface-inset/35 p-4 text-left outline-none transition hover:border-control-strong hover:bg-surface-inset focus-visible:ring-2 focus-visible:ring-focus"
+                  className="ic-option flex w-full items-start gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-focus"
                   data-selected={selected || undefined}
                   onClick={() => setRemoteAccessMode(option.id)}
                 >
-                  <span className={`grid size-9 shrink-0 place-items-center rounded-md ${selected ? "bg-primary/12 text-primary" : "bg-surface-raised text-ink-muted"}`}>
+                  <span className={`grid size-9 shrink-0 place-items-center rounded-full ${selected ? "text-ink" : "text-ink-muted"}`}>
                     <Icon className="size-4" aria-hidden="true" />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-2">
-                      <strong className="text-sm">{option.label}</strong>
+                      <strong className="ic-title text-sm">{option.label}</strong>
                       <StatusBadge tone={option.id === "serve" ? "success" : "warning"} label={option.visibility} />
                     </span>
                     <span className="mt-1 block text-xs leading-relaxed text-ink-muted">{option.description}</span>
@@ -304,11 +305,11 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
               );
             })}
             {remoteAccessMode === "funnel" ? (
-              <div className="rounded-lg border border-warning/25 bg-warning/8 p-3 text-xs leading-relaxed text-warning" role="note">
+              <div className="ic-note border border-warning/25 bg-warning/8 p-3 text-xs leading-relaxed text-warning" role="note">
                 Funnel exposes the gateway to the public internet. The setup script refuses to enable it unless Clerk is configured, unless you explicitly acknowledge another production authentication layer.
               </div>
             ) : (
-              <p className="rounded-lg border border-success/20 bg-success/7 p-3 text-xs leading-relaxed text-ink-muted">
+              <p className="ic-note border border-success/20 bg-success/7 p-3 text-xs leading-relaxed text-ink-muted">
                 Serve follows T3 Code’s recommended remote-access model: a trusted private network, stable MagicDNS address, HTTPS, and Tailnet access controls.
               </p>
             )}
@@ -327,14 +328,14 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
             />
 
             {tunnelReady && c.remoteAccess?.tailscale.httpsUrl ? (
-              <div className="rounded-lg border border-success/25 bg-success/8 p-4">
+              <div className="ic-note border border-success/25 bg-success/8 p-4">
                 <div className="flex items-start gap-3">
                   <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-ink">Remote access is configured</p>
+                    <p className="ic-title text-sm text-ink">Remote access is configured</p>
                     <p className="mt-1 break-all font-mono text-[11px] text-ink-muted">{c.remoteAccess.tailscale.httpsUrl}</p>
                     <a
-                      className="mt-3 inline-flex min-h-8 items-center gap-2 rounded-md border border-success/25 bg-success/10 px-3 text-xs font-semibold text-success outline-none hover:bg-success/15 focus-visible:ring-2 focus-visible:ring-focus"
+                      className="ic-pill-link mt-3 inline-flex min-h-8 items-center gap-2 px-3 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-focus"
                       href={c.remoteAccess.tailscale.httpsUrl}
                       target="_blank"
                       rel="noreferrer"
@@ -348,7 +349,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
               <>
                 {!c.remoteAccess?.tailscale.installed ? (
                   <a
-                    className="inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-md border border-primary bg-primary px-3 text-sm font-semibold text-primary-foreground outline-none hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-focus"
+                    className="ic-cta inline-flex min-h-9 w-full items-center justify-center gap-2 px-3 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-focus"
                     href="https://tailscale.com/download"
                     target="_blank"
                     rel="noreferrer"
@@ -356,7 +357,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
                     Install Tailscale <ExternalLink className="size-3.5" />
                   </a>
                 ) : null}
-                <div className="rounded-lg border border-control bg-console p-3">
+                <div className="ic-console p-3">
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex items-center gap-2 text-xs font-semibold text-console-ink">
                       <SquareTerminal className="size-3.5" aria-hidden="true" /> Run on the gateway host
@@ -397,7 +398,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
       </Panel> : null}
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Panel elevated className="overflow-hidden">
+        <Panel className="ic-panel ic-panel--flat overflow-hidden">
           <SectionHeader
             eyebrow="Access"
             title="Gateway session"
@@ -411,13 +412,13 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
           />
           <div className="space-y-5 border-t border-control p-5">
             {c.authConfig.clerk?.enabled && c.clerk ? (
-              <div className="rounded-lg border border-control bg-surface-inset/45 p-4">
+              <div className="ic-card">
                 <div className="flex items-start gap-3">
-                  <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <div className="grid size-10 shrink-0 place-items-center rounded-full bg-surface-raised text-ink-muted">
                     <UserRound className="size-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold">
+                    <p className="ic-title text-sm">
                       {c.clerk.signedIn ? c.clerk.userLabel ?? "Signed-in Clerk user" : "Clerk account"}
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-ink-muted">
@@ -447,7 +448,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
                 </div>
               </div>
             ) : (
-              <div className="rounded-lg border border-danger/20 bg-danger/8 p-4 text-sm text-danger">
+              <div className="ic-note border border-danger/20 bg-danger/8 p-4 text-sm text-danger">
                 <p className="font-semibold">Clerk authentication is not configured.</p>
                 <p className="mt-1 text-xs leading-relaxed">
                   Add the Clerk publishable and secret keys to the gateway environment, then restart the service.
@@ -457,7 +458,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
           </div>
         </Panel>
 
-        <Panel className="overflow-hidden">
+        <Panel className="ic-panel ic-panel--flat overflow-hidden">
           <SectionHeader
             eyebrow="Privacy"
             title="Media retention"
@@ -487,8 +488,8 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
                 <Trash2 className="size-4" /> Purge expired
               </Button>
             </div>
-            <div className="rounded-lg border border-control bg-surface-inset/45 p-4">
-              <dl className="grid grid-cols-2 gap-4">
+            <div className="ic-card">
+              <dl className="ic-metrics grid grid-cols-2 gap-4">
                 <Metric label="Current policy" value={c.privacyDays === null ? "Manual deletion" : `${c.privacyDays} days`} />
                 <Metric label="Stored captures" value={c.media.length} />
               </dl>
@@ -497,7 +498,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
         </Panel>
       </div>
 
-      <Panel className="overflow-hidden">
+      <Panel className="ic-panel ic-panel--flat overflow-hidden">
         <SectionHeader
           eyebrow="Alerts"
           title="Local system notifications"
@@ -534,7 +535,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
           <div className="border-t border-control pt-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-ink">Web Push</p>
+                <p className="ic-title text-sm text-ink">Web Push</p>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-muted">
                   Optional encrypted delivery through your browser's push service, including while
                   this console is closed. Payloads contain only a static event label and an opaque
@@ -569,7 +570,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
       </Panel>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
-        <Panel className="overflow-hidden">
+        <Panel className="ic-panel ic-panel--flat overflow-hidden">
           <SectionHeader
             eyebrow="Support"
             title="Diagnostics"
@@ -578,7 +579,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
           <div className="space-y-3 border-t border-control p-5">
             <a
               href="#onboarding"
-              className="inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-md border border-control-strong bg-surface-raised px-3 text-sm font-semibold text-ink outline-none hover:bg-surface-inset focus-visible:ring-2 focus-visible:ring-focus"
+              className="ic-pill-link inline-flex min-h-9 w-full items-center justify-center gap-2 px-3 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-focus"
             >
               <Sparkles className="size-4" />
               {c.onboarding?.status === "completed" ? "Review setup and readiness" : "Continue initial setup"}
@@ -588,21 +589,21 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
             </Button>
             <a
               href="/legacy/"
-              className="inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-md border border-control px-3 text-sm font-semibold text-ink-muted outline-none hover:bg-surface-inset focus-visible:ring-2 focus-visible:ring-focus"
+              className="ic-pill-link ic-pill-link--quiet inline-flex min-h-9 w-full items-center justify-center gap-2 px-3 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-focus"
             >
               <Wrench className="size-4" /> Open legacy dashboard <ExternalLink className="size-3.5" />
             </a>
           </div>
         </Panel>
 
-        <Panel className="overflow-hidden">
+        <Panel className="ic-panel ic-panel--flat overflow-hidden">
           <SectionHeader
             eyebrow="Developer console"
             title="Latest operation"
             description="Raw API output remains available for development and support inspection."
             action={<StatusBadge tone={c.connection === "error" ? "danger" : "neutral"} label={c.connection} />}
           />
-          <pre className="max-h-[420px] overflow-auto border-t border-control bg-console p-4 font-mono text-xs leading-relaxed text-console-ink">
+          <pre className="ic-console ic-console--flush max-h-[420px] overflow-auto p-4 text-xs leading-relaxed">
             {JSON.stringify(c.lastResult, null, 2)}
           </pre>
         </Panel>

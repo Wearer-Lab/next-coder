@@ -1,0 +1,732 @@
+/* ==========================================================================
+   The OPERATIONS workspace — the console's "intelligence design" language.
+
+   The signed-out front door already speaks this language (features/landing.css):
+   a black canvas, a white pill navigation, a pixel display face, glowing white
+   calls to action and hairline glass cards. This file is the Operations half of
+   the same system: the thread workbench, the composer dock, the context strip
+   and the intent switcher.
+
+   Two deliberate choices, matching the console shell (intelligence-shell.css):
+
+     1. These rules are *unlayered*. Tailwind v4 keeps its utilities in a
+        cascade layer, and a layered rule loses to any utility — which would
+        make it impossible to restyle a shared Button that carries, say,
+        `bg-transparent`, without editing the component that owns it. Unlayered
+        rules win, so the workspace can be restyled from the outside and the
+        markup can stay exactly as it was.
+
+     2. Everything is scoped under `.thread-workspace`. The marketing pages and
+        the other workspaces are separate surfaces; nothing here may leak into
+        them.
+
+   The workspace keeps its own information architecture and every existing class
+   name; only surfaces, rhythm, colour and type change here. Nothing animates
+   on its own: the transcript is a live view that re-renders on every event, so
+   the only transitions are cheap colour and transform changes, and they are
+   switched off under prefers-reduced-motion.
+   ========================================================================== */
+
+.thread-workspace {
+  /* Hairlines and fills, expressed against the ink so they follow the theme
+     instead of being hardcoded to white. */
+  --op-line: color-mix(in srgb, var(--ac-ink) 9%, transparent);
+  --op-line-strong: color-mix(in srgb, var(--ac-ink) 17%, transparent);
+  --op-fill: color-mix(in srgb, var(--ac-ink) 3.5%, transparent);
+  --op-fill-strong: color-mix(in srgb, var(--ac-ink) 8%, transparent);
+  /* The composer is a well cut into the panel, so the field never floats on
+     the canvas without a surface under it. */
+  --op-well: color-mix(in srgb, var(--ac-canvas) 72%, transparent);
+  /* The active segment: a lit edge, a lit fill and a soft glow. */
+  --op-active-line: color-mix(in srgb, var(--ac-ink) 34%, transparent);
+  --op-active-fill: color-mix(in srgb, var(--ac-ink) 10%, transparent);
+  --op-active-glow: 0 0 18px color-mix(in srgb, var(--ac-ink) 16%, transparent);
+  /* The one call to action on this screen. The ink is the button's own colour
+     in both themes, so the halo always belongs to the button. */
+  --op-cta-glow:
+    0 0 0 1px color-mix(in srgb, var(--ac-ink) 18%, transparent),
+    0 0 22px color-mix(in srgb, var(--ac-ink) 26%, transparent),
+    0 0 44px color-mix(in srgb, var(--ac-ink) 10%, transparent);
+  --op-cta-glow-hover:
+    0 0 0 1px color-mix(in srgb, var(--ac-ink) 26%, transparent),
+    0 0 30px color-mix(in srgb, var(--ac-ink) 38%, transparent),
+    0 0 56px color-mix(in srgb, var(--ac-ink) 16%, transparent);
+}
+
+/* The canvas ---------------------------------------------------------------- */
+
+.thread-workspace {
+  background: var(--ac-canvas);
+}
+
+.thread-workspace .thread-feed {
+  padding: 1.6rem 1.5rem 0.75rem;
+}
+
+.thread-workspace .thread-feed__inner {
+  display: flex;
+  width: min(100%, 900px);
+  min-height: 100%;
+  flex-direction: column;
+  margin: 0 auto;
+}
+
+/* The transcript sits at the bottom of the feed, the way a conversation does:
+   a short thread leaves the space above it, not a void under it. */
+.thread-workspace .thread-message-list,
+.thread-workspace .thread-command-list {
+  margin-top: auto;
+}
+
+/* Messages ------------------------------------------------------------------ */
+
+/* Every entry is a hairline glass card on the black canvas. The body text is
+   not smaller than it was: the redesign changes the surface, not the reading. */
+.thread-workspace .thread-message {
+  width: min(88%, 48rem);
+  min-width: 0;
+  border: 1px solid var(--op-line);
+  border-radius: 1.25rem;
+  background: var(--op-fill);
+  padding: 0.9rem 1.05rem;
+}
+
+.thread-workspace .thread-message[data-role="user"] {
+  justify-self: end;
+  border-color: var(--op-line-strong);
+  background: var(--op-fill-strong);
+}
+
+.thread-workspace .thread-message[data-role="assistant"] {
+  justify-self: start;
+}
+
+/* System and tool rows are annotations on the transcript, not turns of it:
+   they stay flat, marked by a single hairline. */
+.thread-workspace .thread-message[data-role="system"],
+.thread-workspace .thread-message[data-role="tool"] {
+  width: 100%;
+  border: 0;
+  border-left: 2px solid var(--op-line-strong);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.5rem 0.85rem;
+}
+
+/* A reply that is still arriving carries the accent, so "streaming" is a fact
+   the reader can see rather than a spinner they have to infer. */
+.thread-workspace .thread-message[data-streaming="true"] {
+  border-color: color-mix(in srgb, var(--ac-accent) 30%, var(--op-line));
+}
+
+.thread-workspace .thread-message header {
+  margin-bottom: 0.45rem;
+}
+
+/* The role is a mono small label; the timestamp keeps the console's own. */
+.thread-workspace .thread-message header > span:first-child {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.thread-workspace .thread-message p {
+  color: var(--ac-ink);
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+/* Live entries -------------------------------------------------------------- */
+
+.thread-workspace .thread-activity {
+  gap: 0.6rem;
+  border-left-color: var(--op-line-strong);
+  font-size: 0.78rem;
+}
+
+.thread-workspace .thread-activity__kind {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.thread-workspace .thread-turn {
+  font-size: 0.78rem;
+}
+
+/* A finished turn and a proposed plan are section headings in the transcript,
+   so they speak in the pixel display face. */
+.thread-workspace .thread-turn__label,
+.thread-workspace .thread-plan__label {
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.thread-workspace .thread-plan {
+  border-radius: 1.1rem;
+  background: var(--op-fill);
+  padding: 0.85rem 0.95rem;
+}
+
+.thread-workspace .thread-note {
+  font-size: 0.78rem;
+}
+
+/* Notices ------------------------------------------------------------------- */
+
+/* The live-connection banner is the truth about the stream. It keeps the
+   warning and danger tints it already had. */
+.thread-workspace .thread-live-status {
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  border-radius: 0.9rem;
+  background: var(--op-fill);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.74rem;
+}
+
+.thread-workspace .thread-live-status[data-state="reconnecting"] {
+  border-color: color-mix(in srgb, var(--ac-warning) 32%, var(--op-line));
+  background: color-mix(in srgb, var(--ac-warning) 8%, transparent);
+}
+
+.thread-workspace .thread-live-status[data-state="stopped"] {
+  border-color: color-mix(in srgb, var(--ac-danger) 32%, var(--op-line));
+  background: color-mix(in srgb, var(--ac-danger) 8%, transparent);
+}
+
+.thread-workspace .thread-gap-notice {
+  margin-bottom: 1rem;
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--ac-warning) 7%, transparent);
+  padding: 0.65rem 0.8rem;
+}
+
+.thread-workspace .thread-catalogue-notice {
+  margin-bottom: 1rem;
+  border-radius: 0.9rem;
+  background: var(--op-fill);
+  padding: 0.75rem 0.85rem;
+}
+
+/* Provider errors belong to the scrollable history and keep their danger tint. */
+.thread-workspace .thread-failure-notice {
+  margin-bottom: 1rem;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--ac-danger) 7%, transparent);
+}
+
+.thread-workspace .thread-failure-notice__icon {
+  border: 1px solid color-mix(in srgb, var(--ac-danger) 26%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ac-danger) 13%, transparent);
+}
+
+/* The notice's heading is a section heading, so it speaks in the pixel display
+   face; the line under it is a small label. */
+.thread-workspace .thread-failure-notice > header strong {
+  font-family: var(--ac-display);
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.thread-workspace .thread-failure-notice > header small {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+}
+
+/* The three blocking states -------------------------------------------------- */
+
+/* A gateway approval, a provider approval and a user question are three
+   different things, and the monochrome treatment must never fold them into one.
+   Each keeps its own colour: warning for the two permissions, accent for the
+   question. */
+.thread-workspace .thread-approval {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid color-mix(in srgb, var(--ac-warning) 34%, var(--op-line));
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--ac-warning) 8%, transparent);
+  padding: 0.95rem 1rem;
+}
+
+.thread-workspace .thread-approval[data-approval-kind="provider"] {
+  border-color: color-mix(in srgb, var(--ac-warning) 44%, var(--op-line));
+}
+
+.thread-workspace .thread-approval[data-approval-kind="question"] {
+  border-color: color-mix(in srgb, var(--ac-accent) 44%, var(--op-line));
+  background: color-mix(in srgb, var(--ac-accent) 10%, transparent);
+}
+
+.thread-workspace .thread-approval pre {
+  border-radius: 0.7rem;
+  background: color-mix(in srgb, var(--ac-canvas) 78%, transparent);
+  font-size: 0.72rem;
+}
+
+/* Commands and events -------------------------------------------------------- */
+
+.thread-workspace .thread-command-list {
+  gap: 1rem;
+}
+
+.thread-workspace .thread-command__meta {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+}
+
+.thread-workspace .thread-command > button {
+  border-radius: 1rem;
+  background: var(--op-fill);
+  padding: 0.85rem 1rem;
+}
+
+.thread-workspace .thread-command > button:hover,
+.thread-workspace .thread-command > button:focus-visible {
+  border-color: var(--op-line-strong);
+  background: var(--op-fill-strong);
+}
+
+.thread-workspace .thread-events {
+  border-top-color: var(--op-line);
+}
+
+/* Empty states --------------------------------------------------------------- */
+
+/* The empty state is a card on the black canvas, and its title speaks in the
+   pixel display face like every other heading in the system. */
+.thread-workspace .thread-feed:has(> .thread-empty-state) {
+  display: grid;
+  align-content: center;
+  align-content: safe center;
+  justify-items: center;
+}
+
+.thread-workspace .thread-empty-state {
+  display: grid;
+  min-height: 0;
+  width: min(100%, 36rem);
+  justify-items: center;
+  align-content: center;
+  gap: 0.75rem;
+  border: 1px solid var(--op-line);
+  border-radius: 1.25rem;
+  background: var(--op-fill);
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+  text-align: center;
+}
+
+.thread-workspace .thread-empty-state > * {
+  max-width: min(34rem, 100%);
+}
+
+.thread-workspace .thread-empty-state h2 {
+  margin: 0;
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: clamp(1.25rem, 2.6vw, 1.65rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+}
+
+.thread-workspace .thread-empty-state p {
+  max-width: 32rem;
+  margin: 0;
+  color: var(--ac-ink-muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.thread-workspace .thread-feed__empty {
+  gap: 0.5rem;
+  color: var(--ac-ink-faint);
+}
+
+.thread-workspace .thread-feed__empty p {
+  margin: 0.5rem 0 0;
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: clamp(1.1rem, 2.2vw, 1.4rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.thread-workspace .thread-feed__empty span {
+  max-width: 26rem;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+/* The composer dock ------------------------------------------------------------ */
+
+/* A floating hairline glass panel over the black canvas. */
+.thread-workspace .thread-composer-dock {
+  position: relative;
+  z-index: 8;
+  width: min(calc(100% - 2rem), 980px);
+  margin: 0 auto 0.9rem;
+  padding: 0.85rem 0.85rem 0.7rem;
+  border: 1px solid var(--op-line-strong);
+  border-radius: 1.5rem;
+  background: var(--op-fill-strong);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 45%);
+}
+
+/* The context strip: a row of pills, like the marketing navigation. */
+.thread-workspace .thread-context-toolbar {
+  gap: 0.4rem;
+  padding: 0.1rem 0.15rem 0.55rem;
+  background: transparent;
+  border-bottom: 0;
+}
+
+.thread-workspace .thread-context-control > span {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.thread-workspace .thread-context-toolbar .thread-context-control select {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  min-height: 2.1rem;
+  border: 1px solid var(--op-line);
+  border-radius: 999px;
+  background: var(--op-fill);
+  color: var(--ac-ink);
+  padding: 0.3rem 1.55rem 0.3rem 0.7rem;
+  font-size: 0.7rem;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.thread-workspace .thread-context-toolbar .thread-context-control select:hover {
+  border-color: var(--op-line-strong);
+  background: var(--op-fill-strong);
+  color: var(--ac-ink);
+}
+
+.thread-workspace .thread-context-toolbar .thread-context-control select:focus-visible {
+  border-color: color-mix(in srgb, var(--ac-focus) 55%, var(--op-line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ac-focus) 40%, transparent);
+}
+
+/* The strip's own actions are pills too, so the row reads as one group. */
+.thread-workspace .thread-context-actions > button {
+  border-color: var(--op-line);
+  background: var(--op-fill);
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+.thread-workspace .thread-context-actions > button:hover:not(:disabled) {
+  border-color: var(--op-line-strong);
+  background: var(--op-fill-strong);
+  color: var(--ac-ink);
+}
+
+.thread-workspace .thread-context-sync {
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* The composer shell sits inside the panel as an inset well. */
+.thread-workspace .thread-composer-dock .composer-shell {
+  border-color: var(--op-line);
+  border-radius: 1.15rem;
+  background: var(--op-well);
+  box-shadow: none;
+}
+
+.thread-workspace .thread-composer-dock .composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--ac-focus) 60%, var(--op-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac-focus) 14%, transparent);
+}
+
+.thread-workspace .thread-composer-dock .composer-shell[data-dropping] {
+  border-color: var(--ac-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac-focus) 18%, transparent);
+}
+
+.thread-workspace .thread-composer-dock .composer-shell textarea {
+  min-height: 6.6rem;
+  padding: 0.95rem 1rem 0.65rem;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.thread-workspace .thread-composer-dock .composer-shell textarea::placeholder {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+}
+
+.thread-workspace .thread-composer-dock .composer-footer {
+  gap: 0.75rem;
+  border-top-color: var(--op-line);
+  background: transparent;
+  padding: 0.5rem 0.55rem;
+}
+
+.thread-workspace .thread-composer-dock .composer-dropzone {
+  background: color-mix(in srgb, var(--ac-canvas) 82%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The send button is the one call to action on this screen, so it carries the
+   marketing glow. */
+.thread-workspace .thread-composer-dock .composer-footer__send button {
+  box-shadow: var(--op-cta-glow);
+  transition: transform 220ms ease, box-shadow 220ms ease;
+}
+
+.thread-workspace .thread-composer-dock .composer-footer__send button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--op-cta-glow-hover);
+}
+
+/* The intent switcher --------------------------------------------------------- */
+
+/* Prompt and shell are two intents, not two buttons. The active one is marked
+   the way the marketing navigation marks the active link: a soft white glow
+   and a small dot. */
+.thread-workspace .thread-composer-dock .composer-mode-toggle {
+  min-height: 2rem;
+  border: 1px solid var(--op-line);
+  border-radius: 999px;
+  background: var(--op-fill);
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  padding: 0.3rem 0.75rem;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.thread-workspace .thread-composer-dock .composer-mode-toggle:hover:not(:disabled) {
+  border-color: var(--op-line-strong);
+  background: var(--op-fill-strong);
+  color: var(--ac-ink);
+}
+
+.thread-workspace .thread-composer-dock .composer-mode-toggle[data-active] {
+  border-color: var(--op-active-line);
+  background: var(--op-active-fill);
+  color: var(--ac-ink);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ac-ink) 6%, transparent),
+    var(--op-active-glow);
+}
+
+.thread-workspace .thread-composer-dock .composer-mode-toggle[data-active]::after {
+  content: "";
+  width: 3px;
+  height: 3px;
+  margin-left: 0.1rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+/* The attachment trigger belongs to the same pill group as the intent
+   switcher, so it gets the same edge and fill. */
+.thread-workspace .thread-composer-dock .composer-attach > button {
+  border-color: var(--op-line);
+  background: var(--op-fill);
+  color: var(--ac-ink-muted);
+}
+
+.thread-workspace .thread-composer-dock .composer-attach > button:hover:not(:disabled) {
+  border-color: var(--op-line-strong);
+  background: var(--op-fill-strong);
+  color: var(--ac-ink);
+}
+
+/* Attachments and the tools menu ---------------------------------------------- */
+
+.thread-workspace .thread-composer-dock .thread-attachment-chips {
+  border-bottom-color: var(--op-line);
+}
+
+.thread-workspace .thread-attachment-chip {
+  border-color: var(--op-line);
+  border-radius: 999px;
+  background: var(--op-fill);
+  font-size: 0.7rem;
+}
+
+.thread-workspace .thread-attachment-chip small {
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+}
+
+.thread-workspace .thread-composer-meta {
+  padding: 0.55rem 0.15rem 0;
+}
+
+.thread-workspace .thread-tools summary {
+  border: 1px solid var(--op-line);
+  border-radius: 999px;
+  background: var(--op-fill);
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  padding: 0.35rem 0.7rem;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.thread-workspace .thread-tools summary:hover,
+.thread-workspace .thread-tools summary:focus-visible {
+  border-color: var(--op-line-strong);
+  background: var(--op-fill-strong);
+  color: var(--ac-ink);
+}
+
+.thread-workspace .thread-tools__panel {
+  border-radius: 1rem;
+  background: var(--ac-surface-raised);
+}
+
+/* The attachment menus ---------------------------------------------------------- */
+
+.thread-workspace .thread-composer-dock .composer-source-menu,
+.thread-workspace .thread-composer-dock .composer-library {
+  border-radius: 1rem;
+  background: var(--ac-surface-raised);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+
+.thread-workspace .thread-composer-dock .composer-library > header h3 {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Media capture, inside the composer --------------------------------------------- */
+
+.thread-workspace .thread-composer-dock .media-creator {
+  border-radius: 1.25rem;
+  background: var(--ac-surface-raised);
+}
+
+.thread-workspace .thread-composer-dock .media-creator__header h2 {
+  margin: 0;
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: 1.15rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.thread-workspace .thread-composer-dock .media-creator__header .eyebrow {
+  margin: 0 0 0.35rem;
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* The three capture sources are a segmented control: a dark surface, a hairline
+   edge, and the active segment lifted by a soft white glow. */
+.thread-workspace .thread-composer-dock .media-source-tabs {
+  border-color: var(--op-line);
+  border-radius: 999px;
+  background: var(--op-well);
+  padding: 0.25rem;
+}
+
+.thread-workspace .thread-composer-dock .media-source-tabs button {
+  border-radius: 999px;
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+.thread-workspace .thread-composer-dock .media-source-tabs button[data-active] {
+  background: var(--op-active-fill);
+  color: var(--ac-ink);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ac-ink) 8%, transparent),
+    var(--op-active-glow);
+}
+
+.thread-workspace .thread-composer-dock .media-capture-panel__copy h3 {
+  font-family: var(--ac-display);
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+/* Responsive -------------------------------------------------------------------- */
+
+@media (max-width: 820px) {
+  .thread-workspace .thread-feed {
+    padding: 1rem 0.75rem 0.5rem;
+  }
+
+  .thread-workspace .thread-composer-dock {
+    width: calc(100% - 1rem);
+    padding: 0.7rem 0.7rem 0.6rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .thread-workspace .thread-message {
+    width: min(94%, 46rem);
+  }
+
+  .thread-workspace .thread-approval {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Motion ------------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-workspace .composer-mode-toggle,
+  .thread-workspace .composer-attach > button,
+  .thread-workspace .thread-tools summary,
+  .thread-workspace .thread-context-toolbar .thread-context-control select,
+  .thread-workspace .thread-composer-dock .composer-footer__send button {
+    transition: none !important;
+    transform: none !important;
+  }
+}

@@ -740,7 +740,9 @@ void drawHeader() {
 
   const int16_t nameX = back ? 40 : 14;
   const size_t nameCols = (size_t)((kW - nameX - 46) / 6);
-  uip::text(nameX, 20, 1, kText, uip::fit(deviceName(), nameCols));
+  // The device's own name is the title of every screen on it, so it is the brightest thing in the
+  // header: in the reference design the chrome is white and the content below it is not.
+  uip::text(nameX, 20, 1, kBright, uip::fit(deviceName(), nameCols));
 
   // The divider is a shallow arc that fades out before either bezel, and the pull grabber sits
   // above its low point rather than on it — a rule with a tab welded to it is the shape this UI is
@@ -757,12 +759,16 @@ void drawHeader() {
 // opens, and it is not a second copy of the same idea — the arrow sat beside the STATUS dot, where
 // it read as a property of the status rather than of the header, while the grabber is the ordinary
 // sheet handle sitting centred on the edge the panel comes out of.
+//
+// The dot is the accent when something needs a person. That is the console's rule too: the violet
+// is spent on live state, and a state that needs a person is the one that is live.
 void drawHeaderStatusDot() {
-  uint8_t tone = kMuted;
+  bool alert = false;
   for (uint8_t i = 0; i < drawerRowCount; ++i) {
-    if (rowTone(drawerRows[i]) == kBright) { tone = kBright; break; }
+    if (rowTone(drawerRows[i]) == kBright) { alert = true; break; }
   }
-  uip::dot(kMiniOrbCx, kMiniOrbCy, 5.0f, tone);
+  if (alert) uip::accentDot(kMiniOrbCx, kMiniOrbCy, 5.0f);
+  else uip::dot(kMiniOrbCx, kMiniOrbCy, 5.0f, kMuted);
 }
 
 void drawChrome() {
@@ -1203,7 +1209,10 @@ HomePickerVisual homePickerVisual(int slot, bool pending) {
   visual.prominent = uip::fitWords(prominent, visual.big ? kCols2 : kCols1);
   visual.secondary = uip::fitWords(secondary, kCols1);
   visual.verb = onNew ? "CREATE" : (row == nullptr && !haveThread() ? "CHOOSE" : "OPEN");
-  visual.prominentTone = pending ? kMuted : kText;
+  // The title is the brightest thing on the screen, as in the reference design. A selection that
+  // has not been committed is the exception: it recedes, and the warning takes the brightness,
+  // because the line must never look more certain than it is.
+  visual.prominentTone = pending ? kMuted : kBright;
   visual.secondaryTone = pending ? kBright : kMuted;
   return visual;
 }
@@ -1439,18 +1448,31 @@ constexpr int16_t kActionRowInkTop = 6;    // the control's label
 // One row of any of the three lists. They are the same shape on purpose: an environment, a folder
 // and a thread are the same kind of choice at three depths, and a person should not have to relearn
 // the row between them.
+//
+// `accentLabel` is the word that says the row is the LIVE one — the thread this device is bound
+// to. It is the accent because "this is where your voice goes" is a fact about right now, and the
+// accent is what the console spends on facts about right now.
 void paintChoiceRow(int16_t y, int16_t rowH, const String& title, const String& meta,
-                    bool selected, bool last) {
+                    bool selected, bool last, const char* accentLabel = nullptr) {
   if (selected) {
     uip::card({8, (int16_t)(y + 2), (int16_t)(kW - 16), (int16_t)(rowH - 10)}, 14.0f,
               (int16_t)kSurface, -1, 0.0f, 1.6f);
     // Composited against the card it sits on, not against the ground: an anti-aliased edge blended
     // towards the wrong colour draws a dark halo, which is the one artefact that makes a soft shape
     // look worse than a hard one.
-    uip::marker(14, (int16_t)(y + 10), (int16_t)(rowH - 26), kBright, kSurface);
+    //
+    // The marker is the accent: the selection is one of the three facts the violet is spent on,
+    // and it is the only thing on a row that says which row this is.
+    uip::accentMarker(14, (int16_t)(y + 10), (int16_t)(rowH - 26), kSurface);
   }
   uip::text(26, (int16_t)(y + 9), 1, selected ? kBright : kText, uip::fitWords(title, 33));
-  uip::text(26, (int16_t)(y + 25), 1, selected ? kMuted : kHair, uip::fit(meta, 33));
+  if (accentLabel) {
+    uip::textAccent(26, (int16_t)(y + 25), 1, accentLabel);
+    const int16_t metaX = (int16_t)(26 + strlen(accentLabel) * 6 + 6);
+    uip::text(metaX, (int16_t)(y + 25), 1, selected ? kMuted : kHair, uip::fit(meta, 28));
+  } else {
+    uip::text(26, (int16_t)(y + 25), 1, selected ? kMuted : kHair, uip::fit(meta, 33));
+  }
   if (!last && !selected) uip::divider(20, (int16_t)(y + rowH - 5), (int16_t)(kW - 40));
 }
 
@@ -1459,9 +1481,10 @@ void paintChoiceRow(int16_t y, int16_t rowH, const String& title, const String& 
 void paintThreadsChrome() {
   g().fillRect(0, kContentTop, kW, (int16_t)(kThreadListTop - kContentTop), panelGrey(kBg));
   paintBreadcrumb();
+  // The metric line. The count is the answer and the word only names it — the rhythm the console
+  // uses in its stat strip, which is the one thing a list of this size can carry.
   const size_t count = threadRowCount();
-  uip::text(14, kContentTop + 42, 1, kMuted,
-            count > 0 ? String(count) + " THREADS" : String("THREADS"));
+  uip::statLine(14, kContentTop + 40, String(count), "THREADS", kBright);
 }
 
 void paintThreads() {
@@ -1488,8 +1511,10 @@ void paintThreads() {
     const ThreadOption* row = threadRowAt(i);
     if (!row) continue;
     const bool active = row->selected && (int)i == boundThreadIndex();
-    const String meta = active ? String("ACTIVE  ") + row->status : row->status;
-    paintChoiceRow(y, kThreadRowH, row->title, meta, active, i + 1 == count);
+    // "ACTIVE" says this is the thread the device is bound to; it is the accent, because it is
+    // the one row whose state is about right now rather than about the past.
+    paintChoiceRow(y, kThreadRowH, row->title, row->status, active, i + 1 == count,
+                   active ? "ACTIVE" : nullptr);
   }
   paintThreadsChrome();
 }
@@ -1500,16 +1525,16 @@ constexpr int16_t kBrowseRowH = 48;
 // The heading band of a browse list. Cleared whole and repainted on top of the rows, for the same
 // reason the thread list does it: a row scrolled halfway out of the viewport has already drawn its
 // title up here, and there is no clipping to stop it.
-void paintBrowseChrome(const char* label) {
+void paintBrowseChrome(const char* label, size_t count) {
   g().fillRect(0, kContentTop, kW, (int16_t)(kBrowseListTop - kContentTop), panelGrey(kBg));
-  uip::text(14, kContentTop + 8, 1, kMuted, label);
+  uip::statLine(14, kContentTop + 6, String(count), label, kBright);
 }
 
 void paintEnvironments() {
   clearListRegion(kBrowseListTop);
   const size_t count = browse.environmentCount();
   if (count == 0) {
-    paintBrowseChrome("ENVIRONMENT");
+    paintBrowseChrome("ENVIRONMENT", count);
     const String detail = browse.environmentsDetail();
     uip::textCentered(kContentTop + 100, 1, kMuted,
                       uip::fit(detail.length() > 0 ? detail : String("Tap RELOAD"), kCols1));
@@ -1528,7 +1553,7 @@ void paintEnvironments() {
     const String meta = browseEnvironmentAction(*row);
     paintChoiceRow(y, kBrowseRowH, row->label, meta, row->selected, i + 1 == count);
   }
-  paintBrowseChrome("ENVIRONMENT");
+  paintBrowseChrome("ENVIRONMENT", count);
 }
 
 void paintProjects() {
@@ -1538,7 +1563,7 @@ void paintProjects() {
   // one is bound. Widening the scope again is a console operation.
   const size_t count = browse.projectCount();
   if (count == 0) {
-    paintBrowseChrome("FOLDER");
+    paintBrowseChrome("FOLDER", count);
     const String detail = browse.projectsDetail();
     uip::textCentered(kContentTop + 100, 1, kMuted,
                       uip::fit(detail.length() > 0 ? detail : String("Tap RELOAD"), kCols1));
@@ -1557,7 +1582,7 @@ void paintProjects() {
                                               : String(row->threadCount) + " threads";
     paintChoiceRow(y, kBrowseRowH, row->title, meta, row->selected, i + 1 == count);
   }
-  paintBrowseChrome("FOLDER");
+  paintBrowseChrome("FOLDER", count);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1607,6 +1632,18 @@ constexpr int16_t kVoiceGapCapsuleLabel = 14;
 constexpr int16_t kVoiceGapLabelName = 4;
 constexpr int16_t kVoiceBlockH = kVoiceOrbR * 2 + kVoiceGapOrbCapsule + kVoiceCapsuleH
   + kVoiceGapCapsuleLabel + kLineH + kVoiceGapLabelName + kLineH;
+
+// Where the capsule's own two lines sit, measured from the top of the capsule.
+//
+// Both live INSIDE the pill. They used to sit below it, which put them exactly where the
+// destination block puts "SENDING TO" — three rows of overprint on every screen that is not in
+// the middle of a capture. The pill is 48 px tall and a size-2 label is 14 px, so the two lines
+// fit with room to spare.
+constexpr int16_t kMicMainLine = 14;
+constexpr int16_t kMicSubLine = 32;
+// The one line that genuinely cannot fit inside the pill: the recording instruction. The gap
+// between the capsule and "SENDING TO" is exactly fourteen pixels, which is one size-1 line.
+constexpr int16_t kMicCaptionOutside = 50;
 
 // A block taller than the band would centre to a negative top and slide the orb under the header.
 // A build error is the right way to find that out.
@@ -1677,15 +1714,25 @@ bool voiceShowsOrb() {
 // buys most of the budget the orb now needs.
 void paintMicTimer(uint32_t ms) {
   const Rect capsule = micButtonRect();
-  const int16_t y = (int16_t)(capsule.y + 40);
-  g().fillRect((int16_t)(capsule.x + 20), (int16_t)(y - 2), (int16_t)(capsule.w - 40), 12,
-               panelGrey(kSurfaceHi));
+  const int16_t y = (int16_t)(capsule.y + kMicSubLine);
+  // The band is cleared in the capsule's own colour. It is inset far enough to stay inside the
+  // pill's flat middle, because the ends of a capsule are curved and a hard rectangle across them
+  // would draw a step that the shape itself does not have.
+  g().fillRect((int16_t)(capsule.x + 26), (int16_t)(y - 2), (int16_t)(capsule.w - 52), 9,
+               panelAccent());
   char buf[16];
   snprintf(buf, sizeof(buf), "%u.%us", (unsigned)(ms / 1000), (unsigned)((ms % 1000) / 100));
-  uip::textCentered(y, 1, kMuted, buf);
+  uip::textCentered(y, 1, kBg, buf);
 }
 
 // The capsule and its words. Drawn on arrival at a state, not on a timer.
+//
+// The capsule holds two lines: the main label and a sub-line. Both used to sit OUTSIDE the
+// capsule — "press and speak" was drawn at capsule.y + 58 and "release to stop" at capsule.y + 64,
+// which is where "SENDING TO" is drawn as well. Those three strings overprinted each other by
+// three rows and nobody had photographed that screen. Everything the capsule says now lives
+// inside the capsule, and the one line that has to sit outside it (the recording instruction)
+// goes in the fourteen pixels between the capsule and the destination block.
 void paintMicButton() {
   const bool have = audio::available();
   const bool live = audio::recording();
@@ -1693,31 +1740,34 @@ void paintMicButton() {
 
   // A capsule, and at this height the radius is 46 px — there is no corner on it at all, which is
   // the point: the one thing on this screen a thumb lands on should not be a box.
-  const int16_t fill = live ? (int16_t)kSurfaceHi : (int16_t)kSurface;
-  const int16_t stroke = live ? (int16_t)kBright : (have ? (int16_t)kMuted : (int16_t)kHair);
-  uip::capsule(capsule, fill, stroke, live ? 2.4f : 1.4f, 1.6f);
-
   if (!have) {
-    uip::textCentered((int16_t)(capsule.y + 32), 2, kHair, "NO MIC");
-    uip::textCentered((int16_t)(capsule.y + 58), 1, kHair, "flash the -controller build");
+    uip::capsule(capsule, -1, (int16_t)kHair, 1.4f, 1.6f);
+    uip::textCentered((int16_t)(capsule.y + kMicMainLine), 2, kHair, "NO MIC");
+    uip::textCentered((int16_t)(capsule.y + kMicSubLine), 1, kHair, "flash the -controller build");
     return;
   }
   if (live) {
-    uip::textCentered((int16_t)(capsule.y + 16), 2, kBright, "RECORDING");
+    // Filled, because the accent is the console's live signal and a recording IS live. The label
+    // is the ground colour so it reads as cut out of the pill.
+    uip::accentCapsule(capsule);
+    uip::textCentered((int16_t)(capsule.y + kMicMainLine), 2, kBg, "RECORDING");
     paintMicTimer(audio::recordedMs());
-    uip::textCentered((int16_t)(capsule.y + 64), 1, kHair, "release to stop");
+    uip::textCentered((int16_t)(capsule.y + kMicCaptionOutside), 1, kMuted, "release to stop");
     return;
   }
+  // Idle and held share the capsule's treatment: an outlined accent pill, because the action is
+  // waiting for a thumb rather than happening.
+  uip::accentOutline(capsule, 1.8f);
   if (clipHeld) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%u.%us CLIP", (unsigned)(clipHeldMs / 1000),
              (unsigned)((clipHeldMs % 1000) / 100));
-    uip::textCentered((int16_t)(capsule.y + 32), 2, kBright, buf);
-    uip::textCentered((int16_t)(capsule.y + 58), 1, kMuted, "send or discard below");
+    uip::textCentered((int16_t)(capsule.y + kMicMainLine), 2, kText, buf);
+    uip::textCentered((int16_t)(capsule.y + kMicSubLine), 1, kMuted, "send or discard below");
     return;
   }
-  uip::textCentered((int16_t)(capsule.y + 32), 2, kText, "HOLD TO TALK");
-  uip::textCentered((int16_t)(capsule.y + 58), 1, kMuted, "press and speak");
+  uip::textCentered((int16_t)(capsule.y + kMicMainLine), 2, kText, "HOLD TO TALK");
+  uip::textCentered((int16_t)(capsule.y + kMicSubLine), 1, kMuted, "press and speak");
 }
 
 // Where the clip is going. The thread's own title, so a person knows before they speak.
@@ -1765,7 +1815,8 @@ constexpr int16_t kActionRowH = 42;
 
 void paintActionsChrome() {
   g().fillRect(0, kContentTop, kW, (int16_t)(kActionListTop - kContentTop), panelGrey(kBg));
-  uip::text(14, kContentTop + 8, 1, kMuted, "SAVED ACTIONS");
+  // The same metric line as the other lists: how many are saved, and what they are.
+  uip::statLine(14, kContentTop + 6, String(gw->controlCount()), "SAVED ACTIONS", kBright);
 }
 
 void paintActions() {
@@ -1855,8 +1906,14 @@ void paintResponse() {
   String state = r.state;
   state.toUpperCase();
   uip::divider(20, kContentTop + 138, (int16_t)(kW - 40));
-  uip::text(14, kContentTop + 146, 1, kMuted, state);
-  uip::textRight((int16_t)(kW - 14), kContentTop + 146, 1, kMuted,
+  // The metric rhythm again: the marker, the value, the quiet column beside it. The marker is the
+  // accent while the turn is in flight, because "the agent is working" is the one live fact on
+  // this screen and the accent is what the console spends on live.
+  const bool live = stateIs(r.state, "waiting") || stateIs(r.state, "streaming");
+  if (live) uip::accentPixel(14, kContentTop + 145, 6);
+  else uip::pixel(14, kContentTop + 145, 6, kHair);
+  uip::text(26, kContentTop + 146, 1, kText, state);
+  uip::textRight((int16_t)(kW - 14), kContentTop + 146, 1, kHair,
                  String(r.page + 1) + "/" + String(r.pageCount));
 
   for (size_t i = 0; i < r.followUpCount && i < 2; ++i) {
@@ -1889,10 +1946,13 @@ void paintApprovals() {
   if (a->risk.length() > 0) {
     String risk = a->risk;
     risk.toUpperCase();
-    uip::textRight((int16_t)(kW - 24), (int16_t)(box.y + 14), 1, kBright, risk);
+    // The risk is the one thing on this card that is asking for a decision, so it is the one thing
+    // that wears the accent.
+    uip::textRightAccent((int16_t)(kW - 24), (int16_t)(box.y + 14), 1, risk);
   }
 
-  uip::text(24, box.y + 36, 2, kText, uip::fit(a->intentType, 17));
+  // The card's title: large, tight and the brightest thing in the card, as in the reference design.
+  uip::text(24, box.y + 36, 2, kBright, uip::fit(a->intentType, 17));
 
   String lines[4];
   const size_t wrapped = uip::wrapText(a->summary, 33, lines, 4);
@@ -1907,16 +1967,26 @@ void paintApprovals() {
 // Device and gateway configuration
 // ---------------------------------------------------------------------------------------------
 
-// One label/value pair. The label is small and quiet, the value is the answer — the opposite of a
-// table, which is what this used to want to be.
-void paintFact(int16_t y, const char* label, const String& value, uint8_t tone) {
-  uip::text(16, y, 1, kHair, label);
-  uip::text(16, (int16_t)(y + 13), 1, tone, uip::fit(value, 36));
+// Whether a row's value is a fact that needs a person right now.
+//
+// The accent is spent here and nowhere else: it is the console's live state, and a state that
+// needs a person is the one that is live. Everything else on this screen is a fact about a
+// machine, and a fact about a machine does not need a colour.
+bool rowAlerts(Row row) { return rowTone(row) == kBright; }
+
+// One label/value pair. The value is the answer and the caption only names it — the order the
+// console's metric strip reads in, and the opposite of a table, which is what this used to want
+// to be.
+void paintFact(int16_t y, const char* label, const String& value, uint8_t tone,
+               bool alert = false) {
+  uip::factRow(16, y, uip::fit(value, 34), label, tone, alert);
 }
 
 void paintDevice() {
   clearContent();
-  uip::text(14, kContentTop + 8, 1, kMuted, "DEVICE");
+  // The headline. In the reference design the title is the largest and brightest thing on the
+  // page and everything under it is quiet; a configuration screen is no different.
+  uip::text(14, kContentTop + 4, 2, kBright, "DEVICE");
 
   int16_t y = kContentTop + 26;
   paintFact(y, "NAME", deviceName(), kText);
@@ -1929,7 +1999,8 @@ void paintDevice() {
   paintFact(y, "WI-FI", store && store->wifiSsid().length() > 0 ? store->wifiSsid()
                                                                 : String("Not configured"), kMuted);
   y += 30;
-  paintFact(y, "STATE", rowValue(Row::Device), rowTone(Row::Device));
+  paintFact(y, "STATE", rowValue(Row::Device), rowAlerts(Row::Device) ? kBright : kText,
+            rowAlerts(Row::Device));
   y += 30;
   uip::divider(20, y, (int16_t)(kW - 40));
   uip::text(16, (int16_t)(y + 8), 1, kHair, "RE-PROVISION clears Wi-Fi only");
@@ -1937,20 +2008,22 @@ void paintDevice() {
 
 void paintGateway() {
   clearContent();
-  uip::text(14, kContentTop + 8, 1, kMuted, "GATEWAY");
+  uip::text(14, kContentTop + 4, 2, kBright, "GATEWAY");
 
+  // The URL is a fact like any other, except that it can be two lines long.
   const String url = store ? store->gatewayUrl() : String();
-  uip::text(16, kContentTop + 30, 1, kHair, "URL");
+  uip::pixel(16, kContentTop + 31, 6, kHair);
   String lines[2];
-  const size_t wrapped = uip::wrapText(url.length() > 0 ? url : String("Not configured"), 36,
+  const size_t wrapped = uip::wrapText(url.length() > 0 ? url : String("Not configured"), 34,
                                        lines, 2);
   for (size_t i = 0; i < wrapped; ++i) {
-    uip::text(16, (int16_t)(kContentTop + 43 + (int16_t)i * 14), 1, kText, lines[i]);
+    uip::text(30, (int16_t)(kContentTop + 30 + (int16_t)i * 14), 1, kText, lines[i]);
   }
+  uip::text(30, (int16_t)(kContentTop + 30 + (int16_t)wrapped * 14), 1, kHair, "URL");
 
   int16_t y = kContentTop + 76;
   paintFact(y, "LINK", gw ? String(gatewayLinkName(gw->link())) : String("None"),
-            rowTone(Row::Gateway));
+            rowAlerts(Row::Gateway) ? kBright : kText, rowAlerts(Row::Gateway));
   y += 30;
   paintFact(y, "PROBE", String(gatewayStatusText(gatewayStatus())), kMuted);
   y += 30;
@@ -1970,7 +2043,10 @@ void paintModal() {
   // edges shows half a list row and reads as a rendering fault rather than as a dialog.
   clearContent();
   const Rect box = {12, 86, kW - 24, 144};
-  uip::card(box, 22.0f, (int16_t)kSurface, (int16_t)kMuted, 1.4f, 1.8f);
+  // A glass card: a hairline edge over a barely-lifted surface, which is what the reference
+  // design's cards are. The edge was a full kMuted, which read as a second, louder border than
+  // the one every other card on this screen wears.
+  uip::card(box, 22.0f, (int16_t)kSurface, (int16_t)kHair, 1.3f, 1.8f);
 
   const bool approval = modal == Modal::ConfirmApproval;
   const bool reprovision = modal == Modal::ConfirmReprovision;
@@ -2045,9 +2121,12 @@ void paintDrawerRow(uint8_t index) {
   // once already.
   g().fillRect(0, r.y, kW, r.h, panelGrey(kSurfaceHi));
 
-  uip::dot(26, (int16_t)(r.y + 26), 4.0f, rowTone(row), kSurfaceHi);
+  // The row's own mark. The accent is spent on the row that needs a person, which is the same
+  // rule the header's dot follows.
+  if (rowAlerts(row)) uip::accentDot(26, (int16_t)(r.y + 26), 4.0f, kSurfaceHi);
+  else uip::dot(26, (int16_t)(r.y + 26), 4.0f, rowTone(row), kSurfaceHi);
   uip::text(44, (int16_t)(r.y + 12), 1, kMuted, rowTitle(row));
-  uip::text(44, (int16_t)(r.y + 30), 1, kText, value);
+  uip::text(44, (int16_t)(r.y + 30), 1, rowAlerts(row) ? kBright : kText, value);
   uip::chevron((int16_t)(kW - 24), (int16_t)(r.y + 26), 5.0f, 1, kMuted, 2.0f, kSurfaceHi);
   displaySoftArcDivider(44, (int16_t)(r.y + r.h - 4), (int16_t)(kW - 88), 2.0f, 1.2f,
                         kSurfaceHi, kHair);
@@ -2322,6 +2401,15 @@ void paintActionBar() {
   g().fillRect(0, (int16_t)(kH - kBarH), kW, kBarH, panelGrey(kBg));
   barDirty = false;
   if (offset >= kBarH || actionCount == 0) return;
+
+  // The hairline that separates the tray from the content.
+  //
+  // There is still no tray — no fill, no panel, no second surface; that was the whole point of
+  // the version before this one. But the reference design's architecture is a header band, a
+  // content field and a footer, divided by hairlines, and without the third line the buttons
+  // float on the page with nothing saying they belong to the bottom of it. One curved rule, in
+  // the same hairline grey as every other separator, and it rides up with the tray.
+  uip::divider(20, (int16_t)(top + 5), (int16_t)(kW - 40));
 
   // No tray. The buttons sit on the page.
   //
@@ -2640,7 +2728,7 @@ void commitPicker() {
   if (!bound) {
     // ONE retry, and the reason is that `code=-11` is a read timeout, not a rejection.
     //
-    // Against a Convex-backed gateway this write regularly outruns the client's 1200 ms budget, and
+    // Against a Convex-backed gateway this write regularly outruns the client's request budget, and
     // when it does the POST may well have LANDED — only the answer was lost. Believing the failure
     // straight away would revert the line to the previous thread and contradict a write that
     // actually took effect, which is worse than the timeout: the next voice note would go somewhere

@@ -1,8 +1,13 @@
 import { CircleAlert, LogIn, Radio, ShieldCheck, Smartphone, Sparkles } from "lucide-react";
 
 import type { AuthConfig, ClerkBridge } from "../types";
-import { Button } from "../ui";
-import { LandingBrand, MarketingSwitch, Shot } from "./landingChrome";
+import {
+  LandingBackdrop,
+  LandingButton,
+  LandingNav,
+  Shot,
+  marketingPageLinks,
+} from "./landingChrome";
 
 interface DeveloperLandingPageProps {
   authConfig: AuthConfig;
@@ -92,13 +97,13 @@ export function DeveloperLandingPage({ authConfig, clerk }: DeveloperLandingPage
 
   const accountActions = clerkReady ? (
     <div className="landing__actions">
-      <Button size="lg" variant="primary" disabled={checkingSession} onClick={() => clerk?.openSignUp()}>
+      <LandingButton size="lg" variant="primary" disabled={checkingSession} onClick={() => clerk?.openSignUp()}>
         <Sparkles className="size-4" />
         {checkingSession ? "Checking session…" : "Create your account"}
-      </Button>
-      <Button size="lg" variant="secondary" disabled={checkingSession} onClick={() => clerk?.openSignIn()}>
+      </LandingButton>
+      <LandingButton size="lg" variant="secondary" disabled={checkingSession} onClick={() => clerk?.openSignIn()}>
         I already have one
-      </Button>
+      </LandingButton>
     </div>
   ) : (
     <div className="landing__notice" role="status">
@@ -114,20 +119,19 @@ export function DeveloperLandingPage({ authConfig, clerk }: DeveloperLandingPage
   );
 
   return (
-    <div className="landing landing--console devland">
-      <header className="landing__bar">
-        <div className="landing__bar-inner">
-          <LandingBrand />
-          <div className="landing__bar-actions">
-            <MarketingSwitch current="developers" />
-            {clerkReady ? (
-              <Button variant="secondary" size="sm" disabled={checkingSession} onClick={() => clerk?.openSignIn()}>
-                <LogIn className="size-4" /> Sign in
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </header>
+    <div className="landing devland">
+      <LandingBackdrop />
+
+      <LandingNav
+        links={marketingPageLinks("developers")}
+        actions={
+          clerkReady ? (
+            <LandingButton variant="dark" size="sm" disabled={checkingSession} onClick={() => clerk?.openSignIn()}>
+              <LogIn className="size-4" /> Sign in
+            </LandingButton>
+          ) : null
+        }
+      />
 
       <main className="landing__main" id="main-content">
         <section className="landing__section devland__hero">

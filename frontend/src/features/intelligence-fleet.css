@@ -1,0 +1,781 @@
+/* ==========================================================================
+   The fleet workspaces, in the "intelligence design" language.
+
+   The signed-out front door (features/landing.css) and the console shell
+   (intelligence.css) already speak this language: a black canvas, hairline
+   glass cards, the pixel display face, glowing white calls to action, mono
+   micro-labels and a metric strip of tabular values.
+
+   This file restyles the two fleet workspaces — Devices and Environments —
+   in the same voice, and nowhere else.
+
+   Scope
+   -----
+   Every rule is scoped under `.ac-fleet`, which the two workspaces and their
+   dialogs carry. That keeps the sheet away from the other workspaces, and it
+   guarantees these rules beat the legacy sheet in styles.css on specificity
+   whatever order the bundler emits the two files in. Where a rule has to
+   out-specify a legacy `element:not(...)` selector, the scope is spelled out
+   twice rather than relying on source order.
+
+   Motion
+   ------
+   A fleet list grows with the account, so nothing here animates
+   continuously. Every transition is a cheap colour, border, transform or
+   opacity change, and all of them are switched off under
+   prefers-reduced-motion.
+
+   Colour
+   ------
+   The treatment is monochrome on purpose, but never at the cost of truth: a
+   live device, an unreachable environment and a failed action keep their
+   semantic colours (success / warning / danger / accent) in the badge, in the
+   card's hairline and in the health layers.
+   ========================================================================== */
+
+@layer components {
+  /* ==========================================================================
+     Workspace frame
+     ========================================================================== */
+
+  .ac-fleet.devices-workspace,
+  .ac-fleet.environments-workspace {
+    gap: 1.1rem;
+  }
+
+  .ac-fleet .devices-overview,
+  .ac-fleet .environments-overview {
+    align-items: flex-end;
+    padding: 0.4rem 0 0.9rem;
+  }
+
+  /* The fleet heading speaks in the pixel display face, like the marketing
+     pages. */
+  .ac-fleet .devices-overview h2,
+  .ac-fleet .environments-overview h2 {
+    font-family: var(--ac-display);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1.16;
+  }
+
+  .ac-fleet .devices-overview .ac-eyebrow,
+  .ac-fleet .environments-overview .ac-eyebrow {
+    margin: 0 0 0.35rem;
+  }
+
+  /* ==========================================================================
+     The fleet card
+     --------------------------------------------------------------------------
+     A hairline glass card with a generous radius, the way the marketing
+     pricing tiers read. The selected tile is the featured tier: a brighter
+     hairline and a soft glow, never a filled slab.
+     ========================================================================== */
+
+  .ac-fleet .device-tile {
+    --ac-fleet-lift: 0 18px 60px rgb(0 0 0 / 30%);
+    border: 1px solid var(--ac-border);
+    border-radius: 1.25rem;
+    background: var(--ac-glass);
+    box-shadow: var(--ac-fleet-lift);
+    transition:
+      border-color 160ms ease,
+      background 160ms ease,
+      box-shadow 160ms ease,
+      transform 160ms ease;
+  }
+
+  .ac-fleet .device-tile:hover,
+  .ac-fleet .device-tile:focus-visible {
+    border-color: var(--ac-border-strong);
+    background: var(--ac-glass-strong);
+    transform: translateY(-2px);
+  }
+
+  .ac-fleet .device-tile:focus-visible {
+    outline: 2px solid var(--ac-focus);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px var(--ac-focus), var(--ac-fleet-lift);
+  }
+
+  /* The selected tile is the featured tier. The glow rides a custom property
+     so the focus ring can reuse it instead of replacing it. */
+  .ac-fleet .device-tile[data-selected] {
+    --ac-fleet-lift:
+      0 0 0 1px color-mix(in srgb, var(--ac-ink) 24%, transparent),
+      0 0 28px color-mix(in srgb, var(--ac-ink) 11%, transparent),
+      0 18px 60px rgb(0 0 0 / 34%);
+    border-color: color-mix(in srgb, var(--ac-ink) 34%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--ac-ink) 9%, transparent),
+      color-mix(in srgb, var(--ac-ink) 3%, transparent)
+    );
+  }
+
+  /* Status stays unmistakable: the card's hairline carries the same tone the
+     badge does. */
+  .ac-fleet .device-tile[data-tone="success"] {
+    border-color: color-mix(in srgb, var(--ac-success) 30%, var(--ac-border));
+  }
+
+  .ac-fleet .device-tile[data-tone="warning"] {
+    border-color: color-mix(in srgb, var(--ac-warning) 34%, var(--ac-border));
+  }
+
+  .ac-fleet .device-tile[data-tone="danger"] {
+    border-color: color-mix(in srgb, var(--ac-danger) 36%, var(--ac-border));
+  }
+
+  .ac-fleet .device-tile[data-tone="info"] {
+    border-color: color-mix(in srgb, var(--ac-info) 30%, var(--ac-border));
+  }
+
+  .ac-fleet .device-tile[data-revoked] {
+    opacity: 0.72;
+  }
+
+  /* Card head ---------------------------------------------------------------- */
+
+  .ac-fleet .device-tile__header {
+    gap: 0.85rem;
+    padding: 1.15rem 1.15rem 0.9rem;
+  }
+
+  .ac-fleet .device-tile__glyph {
+    width: 2.75rem;
+    height: 2.75rem;
+    border: 1px solid var(--ac-border-strong);
+    border-radius: 0.9rem;
+    background: var(--ac-glass-strong);
+    color: var(--ac-ink);
+  }
+
+  /* The environment tile keeps its own accent so a host is never mistaken for
+     a controller at a glance. */
+  .ac-fleet .environment-tile__glyph {
+    color: var(--ac-info);
+  }
+
+  .ac-fleet .device-tile[data-revoked] .device-tile__glyph {
+    color: var(--ac-danger);
+  }
+
+  .ac-fleet .device-tile__open {
+    color: var(--ac-ink-faint);
+  }
+
+  .ac-fleet .device-tile:hover .device-tile__open,
+  .ac-fleet .device-tile:focus-visible .device-tile__open {
+    color: var(--ac-ink);
+    transform: translateX(2px);
+  }
+
+  /* ==========================================================================
+     The metric strip
+     --------------------------------------------------------------------------
+     The same shape as the marketing metric strip: a small label, a tabular
+     value and a faint caption. Each metric is its own hairline cell rather
+     than a cell in a ruled table.
+     ========================================================================== */
+
+  .ac-fleet .device-tile__metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+    border-top: 1px solid var(--ac-border);
+    border-bottom: 0;
+    padding: 0.9rem 1.15rem 0.5rem;
+  }
+
+  .ac-fleet .device-tile__metrics .device-tile__metric {
+    display: grid;
+    min-width: 0;
+    justify-items: start;
+    gap: 0.2rem;
+    border: 1px solid var(--ac-border);
+    border-radius: 0.85rem;
+    background: var(--ac-glass);
+    padding: 0.5rem 0.6rem;
+  }
+
+  .ac-fleet .device-tile__metrics .device-tile__metric dt {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.3rem;
+    margin: 0;
+    color: var(--ac-ink-faint);
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    line-height: 1.25;
+    text-transform: uppercase;
+  }
+
+  .ac-fleet .device-tile__metrics .device-tile__metric dd {
+    overflow: hidden;
+    margin: 0;
+    color: var(--ac-ink);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Context chips become pills ------------------------------------------------ */
+
+  .ac-fleet .device-tile__context {
+    gap: 0.35rem;
+    padding: 0.4rem 1.15rem 0.2rem;
+  }
+
+  .ac-fleet .device-tile__context span {
+    overflow: hidden;
+    max-width: 100%;
+    border: 1px solid var(--ac-border-strong);
+    border-radius: 999px;
+    background: var(--ac-glass-strong);
+    color: var(--ac-ink-muted);
+    padding: 0.15rem 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.02em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Card actions -------------------------------------------------------------- */
+
+  .ac-fleet .device-tile__actions {
+    gap: 0.35rem;
+    padding: 0.65rem 1.15rem 0.9rem;
+  }
+
+  .ac-fleet .environment-tile__management-actions {
+    border-top: 1px solid var(--ac-border);
+    margin-top: 0.35rem;
+    padding-top: 0.55rem;
+  }
+
+  /* ==========================================================================
+     The inventory grid
+     ========================================================================== */
+
+  .ac-fleet .device-grid,
+  .ac-fleet .environment-grid {
+    gap: 1rem;
+  }
+
+  /* ==========================================================================
+     Empty states
+     ========================================================================== */
+
+  .ac-fleet .devices-empty {
+    border: 1px solid var(--ac-border);
+    border-radius: 1.25rem;
+    background: var(--ac-glass);
+  }
+
+  .ac-fleet .devices-empty__signal {
+    border: 1px solid var(--ac-border-strong);
+    border-radius: 1rem;
+    background: var(--ac-glass-strong);
+    color: var(--ac-ink);
+  }
+
+  .ac-fleet .devices-empty__actions {
+    gap: 0.75rem;
+  }
+
+  .ac-fleet .devices-empty__action {
+    border: 1px solid var(--ac-border);
+    border-radius: 1rem;
+    background: var(--ac-glass);
+    transition:
+      border-color 160ms ease,
+      background 160ms ease,
+      transform 160ms ease;
+  }
+
+  .ac-fleet .devices-empty__action:hover,
+  .ac-fleet .devices-empty__action:focus-visible {
+    border-color: color-mix(in srgb, var(--ac-ink) 34%, var(--ac-border));
+    background: var(--ac-glass-strong);
+    transform: translateY(-1px);
+  }
+
+  .ac-fleet .devices-empty__action-icon {
+    border: 1px solid var(--ac-border-strong);
+    border-radius: 0.75rem;
+    background: var(--ac-glass-strong);
+    color: var(--ac-ink);
+  }
+
+  .ac-fleet .environment-empty__hint {
+    border: 1px solid var(--ac-border);
+    border-radius: 999px;
+    background: var(--ac-glass);
+    padding: 0 0.7rem;
+  }
+
+  /* ==========================================================================
+     The one-time credential banner
+     ========================================================================== */
+
+  .ac-fleet .credential-banner {
+    border: 1px solid color-mix(in srgb, var(--ac-warning) 30%, var(--ac-border));
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--ac-warning) 6%, var(--ac-glass));
+    padding: 0.85rem 1rem;
+  }
+
+  .ac-fleet .credential-banner__icon {
+    border-radius: 0.75rem;
+  }
+
+  /* ==========================================================================
+     Access-path cards
+     --------------------------------------------------------------------------
+     The access picker is the clearest "featured tier" case in the fleet: one
+     option is selected at a time, so the selected card earns the brighter
+     hairline and the soft glow.
+     ========================================================================== */
+
+  .ac-fleet .environment-access-card {
+    border: 1px solid var(--ac-border);
+    border-radius: 1rem;
+    background: var(--ac-glass);
+    transition:
+      border-color 160ms ease,
+      background 160ms ease,
+      box-shadow 160ms ease,
+      transform 160ms ease;
+  }
+
+  .ac-fleet .environment-access-card:hover {
+    border-color: var(--ac-border-strong);
+    background: var(--ac-glass-strong);
+    transform: translateY(-1px);
+  }
+
+  .ac-fleet .environment-access-card[data-active] {
+    border-color: color-mix(in srgb, var(--ac-ink) 34%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--ac-ink) 9%, transparent),
+      color-mix(in srgb, var(--ac-ink) 3%, transparent)
+    );
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--ac-ink) 6%, transparent),
+      0 0 24px color-mix(in srgb, var(--ac-ink) 10%, transparent);
+  }
+
+  .ac-fleet .environment-access-card__icon {
+    border: 1px solid var(--ac-border-strong);
+    border-radius: 999px;
+    background: var(--ac-glass-strong);
+    color: var(--ac-ink-muted);
+  }
+
+  .ac-fleet .environment-access-card[data-active] .environment-access-card__icon {
+    border-color: color-mix(in srgb, var(--ac-ink) 34%, transparent);
+    background: color-mix(in srgb, var(--ac-ink) 10%, transparent);
+    color: var(--ac-ink);
+  }
+
+  .ac-fleet .environment-access-card strong {
+    font-family: var(--ac-display);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+
+  .ac-fleet .environment-access-card > span:last-child {
+    color: var(--ac-ink-muted);
+  }
+
+  /* The guidance card keeps its tone, in a hairline rather than a slab. */
+  .ac-fleet .environment-access-guide {
+    border: 1px solid var(--ac-border);
+    border-radius: 1rem;
+    background: var(--ac-glass);
+  }
+
+  .ac-fleet .environment-access-guide[data-tone="success"] {
+    border-color: color-mix(in srgb, var(--ac-success) 28%, var(--ac-border));
+    background: color-mix(in srgb, var(--ac-success) 6%, var(--ac-glass));
+  }
+
+  .ac-fleet .environment-access-guide[data-tone="warning"] {
+    border-color: color-mix(in srgb, var(--ac-warning) 30%, var(--ac-border));
+    background: color-mix(in srgb, var(--ac-warning) 6%, var(--ac-glass));
+  }
+
+  .ac-fleet .environment-access-guide[data-tone="info"] {
+    border-color: color-mix(in srgb, var(--ac-info) 28%, var(--ac-border));
+    background: color-mix(in srgb, var(--ac-info) 6%, var(--ac-glass));
+  }
+
+  /* ==========================================================================
+     The connection-health stack
+     ========================================================================== */
+
+  .ac-fleet .environment-health-stack {
+    border: 1px solid var(--ac-border);
+    border-radius: 1rem;
+    background: var(--ac-glass);
+    padding: 0.85rem;
+  }
+
+  .ac-fleet .environment-health-stack__heading {
+    color: var(--ac-ink-faint);
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .ac-fleet .environment-health-stack__heading small {
+    color: var(--ac-ink-faint);
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    letter-spacing: 0.1em;
+  }
+
+  .ac-fleet .environment-health-layer {
+    border: 1px solid var(--ac-border);
+    border-radius: 0.75rem;
+    background: var(--ac-glass);
+  }
+
+  /* Inside a tile the health stack is inset like every other block; inside
+     the editor it stays full width. */
+  .ac-fleet .environment-tile .environment-health-stack {
+    margin: 0.85rem 1.15rem 0;
+  }
+
+  /* ==========================================================================
+     Controller gateways
+     ========================================================================== */
+
+  .ac-fleet .environment-tile__gateways {
+    margin: 0.85rem 1.15rem 0;
+    border-top: 1px solid var(--ac-border);
+    padding-top: 0.8rem;
+  }
+
+  .ac-fleet .environment-tile__gateways-heading > span {
+    color: var(--ac-ink-faint);
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .ac-fleet .environment-tile__gateway-list {
+    border: 1px solid var(--ac-border);
+    border-radius: 0.85rem;
+    background: var(--ac-glass);
+  }
+
+  .ac-fleet .environment-tile__error {
+    margin: 0.7rem 1.15rem 0;
+    border-radius: 0.75rem;
+    background: color-mix(in srgb, var(--ac-danger) 8%, transparent);
+  }
+
+  /* ==========================================================================
+     Archived environments
+     ========================================================================== */
+
+  .ac-fleet .environment-archive {
+    border: 1px solid var(--ac-border);
+    border-radius: 1.25rem;
+    background: var(--ac-glass);
+    padding: 1rem;
+  }
+
+  .ac-fleet .environment-archive__row {
+    border: 1px solid var(--ac-border);
+    border-radius: 0.9rem;
+    background: var(--ac-glass);
+  }
+
+  .ac-fleet .environment-archive__icon {
+    border: 1px solid var(--ac-border);
+    border-radius: 0.75rem;
+    background: var(--ac-glass-strong);
+  }
+
+  /* ==========================================================================
+     The topbar action cluster
+     --------------------------------------------------------------------------
+     A hairline glass dock that holds the fleet's own calls to action, the way
+     the marketing navigation holds its links.
+     ========================================================================== */
+
+  .device-action-cluster.ac-fleet-cluster,
+  .environment-action-cluster.ac-fleet-cluster {
+    gap: 0.2rem;
+  }
+
+  .device-action-cluster.ac-fleet-cluster {
+    padding: 0.2rem;
+    border: 1px solid var(--ac-border);
+    border-radius: 999px;
+    background: var(--ac-glass);
+  }
+
+  .devices-topbar-actions.device-action-cluster.ac-fleet-cluster > button {
+    min-height: 1.9rem;
+  }
+
+  .environments-topbar-actions.environment-action-cluster.ac-fleet-cluster {
+    gap: 0.4rem;
+  }
+
+  /* ==========================================================================
+     Dialog chrome
+     --------------------------------------------------------------------------
+     The dialogs are portalled out of the workspace, so they carry the scope
+     themselves.
+     ========================================================================== */
+
+  /* The dialog reads with the fleet's generous radius. The narrow-screen
+     bottom sheet keeps the radius the shell gives it. */
+  @media (min-width: 641px) {
+    .ac-fleet.device-modal {
+      border-radius: 1.25rem;
+    }
+  }
+
+  .ac-fleet .device-modal__header h2 {
+    font-family: var(--ac-display);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1.16;
+  }
+
+  .ac-fleet .device-modal__header .ac-eyebrow {
+    margin: 0 0 0.35rem;
+  }
+
+  /* The editor tabs read as a segmented pill switch, inset to the width of
+     the panel they sit above. */
+  .ac-fleet .device-editor__tabs {
+    margin: 0.65rem 1.25rem 0;
+    gap: 0.2rem;
+    border: 1px solid var(--ac-border);
+    border-radius: 999px;
+    background: var(--ac-glass);
+    padding: 0.2rem;
+  }
+
+  .ac-fleet .device-editor__tabs button {
+    border-radius: 999px;
+    padding: 0.4rem 0.8rem;
+  }
+
+  .ac-fleet .device-editor__tabs button:hover {
+    background: var(--ac-glass-strong);
+    color: var(--ac-ink);
+  }
+
+  .ac-fleet .device-editor__tabs button[data-active] {
+    background: var(--ac-glass-strong);
+    color: var(--ac-ink);
+    box-shadow: inset 0 0 0 1px var(--ac-border-strong);
+  }
+
+  .ac-fleet .device-editor__tabs button[data-active]::after {
+    display: none;
+  }
+
+  /* ==========================================================================
+     Pixel-face headings inside the fleet surfaces
+     ========================================================================== */
+
+  .ac-fleet .device-flow__intro h3,
+  .ac-fleet .device-flow__result h3,
+  .ac-fleet .controls-editor__heading h3,
+  .ac-fleet .firmware-editor__hero h3,
+  .ac-fleet .device-gateway-switch > header h3,
+  .ac-fleet .device-gateway-empty h3 {
+    font-family: var(--ac-display);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+
+  /* The controller preview keeps its own display semantics, but the heading
+     beside the preview label speaks in the pixel face. */
+  .ac-fleet .controller-preview__heading strong {
+    font-family: var(--ac-display);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+
+  /* A card eyebrow still reads as an eyebrow next to a heading that has its
+     own paragraph rule. */
+  .ac-fleet .firmware-editor__hero .ac-eyebrow,
+  .ac-fleet .controller-preview__heading .ac-eyebrow {
+    margin: 0;
+    color: var(--ac-ink-faint);
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  /* ==========================================================================
+     The remote-access readiness panel
+     --------------------------------------------------------------------------
+     The same hairline glass surface as the fleet cards. It is shared with the
+     onboarding and settings workspaces, so it carries its own scope rather
+     than the workspace one.
+     ========================================================================== */
+
+  .ac-readiness {
+    overflow: hidden;
+    border: 1px solid var(--ac-border);
+    border-radius: 1rem;
+    background: var(--ac-glass);
+  }
+
+  .ac-readiness__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-bottom: 1px solid var(--ac-border);
+    padding: 0.7rem 0.9rem;
+  }
+
+  .ac-readiness__title {
+    margin: 0;
+    color: var(--ac-ink);
+    font-family: var(--ac-display);
+    font-size: 0.8125rem;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  .ac-readiness__meta {
+    margin: 0.2rem 0 0;
+    color: var(--ac-ink-faint);
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.04em;
+  }
+
+  .ac-readiness__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ac-readiness__step {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding: 0.65rem 0.9rem;
+  }
+
+  .ac-readiness__step + .ac-readiness__step {
+    border-top: 1px solid var(--ac-border);
+  }
+
+  .ac-readiness__mark {
+    display: grid;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 auto;
+    place-items: center;
+    margin-top: 0.15rem;
+    border-width: 1px;
+    border-radius: 999px;
+  }
+
+  .ac-readiness__label {
+    display: block;
+    color: var(--ac-ink);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+
+  .ac-readiness__detail {
+    display: block;
+    margin-top: 0.2rem;
+    color: var(--ac-ink-muted);
+    font-size: 0.6875rem;
+    line-height: 1.5;
+  }
+
+  /* ==========================================================================
+     Responsive
+     ========================================================================== */
+
+  @media (max-width: 640px) {
+    /* One column, and a track that cannot push past the viewport: the fleet
+       grid's own minimum used to overflow narrow screens. */
+    .ac-fleet .device-grid,
+    .ac-fleet .environment-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ac-fleet .device-tile__metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ac-fleet .device-tile__header,
+    .ac-fleet .device-tile__metrics,
+    .ac-fleet .device-tile__context,
+    .ac-fleet .device-tile__actions {
+      padding-inline: 0.9rem;
+    }
+
+    .ac-fleet .device-tile__actions {
+      flex-wrap: wrap;
+    }
+
+    .ac-fleet .device-tile__actions button {
+      min-width: calc(50% - 0.2rem);
+    }
+
+    /* The editor body tightens its own padding on narrow screens; the pill
+       switch follows it. */
+    .ac-fleet .device-editor__tabs {
+      margin-inline: 1rem;
+    }
+  }
+
+  /* ==========================================================================
+     Reduced motion
+     ========================================================================== */
+
+  @media (prefers-reduced-motion: reduce) {
+    .ac-fleet .device-tile,
+    .ac-fleet .environment-access-card,
+    .ac-fleet .devices-empty__action {
+      transition: none !important;
+    }
+
+    .ac-fleet .device-tile:hover,
+    .ac-fleet .device-tile:focus-visible,
+    .ac-fleet .environment-access-card:hover,
+    .ac-fleet .devices-empty__action:hover,
+    .ac-fleet .devices-empty__action:focus-visible {
+      transform: none !important;
+    }
+  }
+}

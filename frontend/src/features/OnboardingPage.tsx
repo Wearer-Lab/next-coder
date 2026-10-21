@@ -53,6 +53,9 @@ import {
   remoteAccessReady,
 } from "./RemoteAccessReadiness";
 import { ConnectEnvironmentDialog, EnvironmentHealthStack } from "./EnvironmentsPage";
+// The wizard's half of the "intelligence design" system: the black canvas,
+// hairline glass cards, the pixel display face and the glowing white pill.
+import "./intelligence-onboarding.css";
 
 interface OnboardingPageProps {
   controller: Controller;
@@ -497,8 +500,8 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
     <div className="onboarding-workspace">
       <aside className="onboarding-rail" aria-label="Setup progress">
         <div className="onboarding-rail__intro">
-          <p className="eyebrow">Initial setup</p>
-          <h2>Get to first run</h2>
+          <p className="ac-eyebrow">Initial setup</p>
+          <h2 className="ac-display-title">Get to first run</h2>
           <p>Connect the T3 host, prove the workspace, then choose how you’ll operate it.</p>
         </div>
         <div
@@ -547,8 +550,8 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
       <section className="onboarding-stage">
         <header className="onboarding-stage__header">
           <div>
-            <p className="eyebrow">Step {stepIndex + 1} of {onboardingSteps.length}</p>
-            <h1 ref={headingRef} tabIndex={-1}>{onboardingSteps[stepIndex]?.label}</h1>
+            <p className="ac-eyebrow">Step {stepIndex + 1} of {onboardingSteps.length}</p>
+            <h1 className="ac-display-title" ref={headingRef} tabIndex={-1}>{onboardingSteps[stepIndex]?.label}</h1>
           </div>
           <StatusBadge
             tone={c.onboardingReadiness?.ready ? "success" : "info"}
@@ -556,7 +559,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
           />
         </header>
 
-        <div className="onboarding-stage__body">
+        <div className={cn("onboarding-stage__body", activeStep === "welcome" && "onboarding-stage__body--center")}>
           {activeStep === "welcome" ? (
             <WelcomeStep
               error={stepError}
@@ -933,7 +936,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
                   {registeredSecretAvailable ? (
                     <div className="onboarding-secret">
                       <div>
-                        <p className="eyebrow">One-time credential</p>
+                        <p className="ac-eyebrow">One-time credential</p>
                         <dl className="grid gap-3 sm:grid-cols-2">
                           <Metric label="Device ID" value={c.deviceSecret?.id} />
                           <Metric label="Secret" value={c.deviceSecret?.secret} />
@@ -1046,7 +1049,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
               {c.authConfig?.deploymentMode !== "cloud" ? <div className="onboarding-section space-y-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="eyebrow">Optional remote console</p>
+                    <p className="ac-eyebrow">Optional remote console</p>
                     <h2 className="mt-1 font-display text-base font-semibold text-ink">
                       {gatewayRemoteReady ? "Remote access is ready" : "Finish tunnel setup on this machine"}
                     </h2>
@@ -1082,7 +1085,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
                 ) : (
                   <div className="onboarding-command">
                     <div>
-                      <p className="eyebrow">Run on the Agent Controller host</p>
+                      <p className="ac-eyebrow">Run on the Agent Controller host</p>
                       <code>{gatewayTunnelCommand}</code>
                     </div>
                     <Button
@@ -1118,6 +1121,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
                   </Button>
                 ) : null}
                 <Button
+                  className="onboarding-cta"
                   variant="primary"
                   disabled={!c.onboardingReadiness?.ready}
                   busy={c.busyAction === "onboarding-complete"}
@@ -1159,8 +1163,8 @@ function WelcomeStep({
       <div className="onboarding-welcome__mark">
         <Rocket className="size-7" />
       </div>
-      <p className="eyebrow">Agent Controller setup</p>
-      <h2>From sign-in to a working agent thread</h2>
+      <p className="ac-eyebrow">Agent Controller setup</p>
+      <h2 className="ac-display-title">From sign-in to a working agent thread</h2>
       <p className="onboarding-welcome__copy">
         We’ll configure the T3 host, verify its network path, select a workspace and model,
         launch the first thread, and connect a controller if you use one.
@@ -1172,7 +1176,7 @@ function WelcomeStep({
       </div>
       <StepError message={error} />
       <div className="flex flex-wrap justify-center gap-2">
-        <Button variant="primary" size="lg" onClick={onStart}>
+        <Button className="onboarding-cta" variant="primary" size="lg" onClick={onStart}>
           Start setup <ArrowRight className="size-4" />
         </Button>
         <Button size="lg" variant="ghost" onClick={onExit}>Exit for now</Button>
@@ -1206,7 +1210,7 @@ function StepLead({
     <div className="onboarding-step-lead">
       <div className="onboarding-step-lead__icon"><Icon className="size-5" /></div>
       <div>
-        <h2>{title}</h2>
+        <h2 className="ac-display-title">{title}</h2>
         <p>{description}</p>
       </div>
       {action ? <div className="onboarding-step-lead__action">{action}</div> : null}
@@ -1276,7 +1280,7 @@ function StepActions({
       <Button variant="ghost" onClick={onBack}>
         <ArrowLeft className="size-4" /> Back
       </Button>
-      <Button variant="primary" disabled={primaryDisabled} busy={busy} onClick={onPrimary}>
+      <Button className="onboarding-cta" variant="primary" disabled={primaryDisabled} busy={busy} onClick={onPrimary}>
         {primaryLabel} <PrimaryIcon className="size-4" />
       </Button>
     </div>
@@ -1306,7 +1310,7 @@ function ProjectSummary({ project }: { project: T3Project | null }) {
   return (
     <div className="onboarding-project-summary">
       <div>
-        <p className="eyebrow">Live workspace</p>
+        <p className="ac-eyebrow">Live workspace</p>
         <strong>{project.title ?? project.name ?? project.id}</strong>
         <code>{project.workspaceRoot ?? project.id}</code>
       </div>

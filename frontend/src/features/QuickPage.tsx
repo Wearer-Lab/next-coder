@@ -28,6 +28,7 @@ import {
   useFileAttachment,
 } from "./Composer";
 import { MediaCaptureDialog } from "./MediaCapture";
+import "./intelligence-dashboard.css";
 
 interface QuickPageProps {
   controller: Controller;
@@ -230,11 +231,41 @@ export function QuickPage({ controller: c, onNavigate }: QuickPageProps) {
 
   return (
     <div className="dashboard-home">
-      <section className="dashboard-home__workspace" aria-labelledby="dashboard-workspace-title">
+      {/*
+        The metric strip. The signed-out pages put their numbers between the hero and the
+        features, and the dashboard reads the same way: the four counts that describe the whole
+        surface — how many environments are paired, how many threads the selected one reported, how
+        many commands are waiting for a decision, and how many actions are saved — in one
+        glanceable band, before the working panels.
+      */}
+      <div className="dashboard-home__summary ac-glass-strong">
+        <div className="ac-stat">
+          <span className="ac-stat__glyph" aria-hidden="true">#</span>
+          <span className="ac-stat__value">{c.environments.length}</span>
+          <span className="ac-stat__label">environments</span>
+        </div>
+        <div className="ac-stat">
+          <span className="ac-stat__glyph" aria-hidden="true">&gt;</span>
+          <span className="ac-stat__value">{c.threads.length}</span>
+          <span className="ac-stat__label">threads</span>
+        </div>
+        <div className="ac-stat">
+          <span className="ac-stat__glyph" aria-hidden="true">%</span>
+          <span className="ac-stat__value">{c.pendingApprovals.length}</span>
+          <span className="ac-stat__label">awaiting decision</span>
+        </div>
+        <div className="ac-stat">
+          <span className="ac-stat__glyph" aria-hidden="true">*</span>
+          <span className="ac-stat__value">{c.actions?.length ?? 0}</span>
+          <span className="ac-stat__label">saved actions</span>
+        </div>
+      </div>
+
+      <section className="dashboard-home__workspace ac-glass" aria-labelledby="dashboard-workspace-title">
         <div className="dashboard-home__section-heading">
           <div>
-            <p className="eyebrow">Current workspace</p>
-            <h2 id="dashboard-workspace-title">{workspaceTitle}</h2>
+            <p className="eyebrow ac-eyebrow">Current workspace</p>
+            <h2 className="ac-display-title" id="dashboard-workspace-title">{workspaceTitle}</h2>
           </div>
           <StatusBadge
             tone={!selectedEnvironment ? "warning" : selectedThread?.status === "running" ? "live" : "success"}
@@ -311,11 +342,11 @@ export function QuickPage({ controller: c, onNavigate }: QuickPageProps) {
         </div>
       </section>
 
-      <section className="dashboard-home__attention" aria-labelledby="dashboard-attention-title">
+      <section className="dashboard-home__attention ac-glass" aria-labelledby="dashboard-attention-title">
         <div className="dashboard-home__section-heading">
           <div>
-            <p className="eyebrow">Needs attention</p>
-            <h2 id="dashboard-attention-title">
+            <p className="eyebrow ac-eyebrow">Needs attention</p>
+            <h2 className="ac-display-title" id="dashboard-attention-title">
               {c.pendingApprovals.length
                 ? `${c.pendingApprovals.length} ${c.pendingApprovals.length === 1 ? "approval" : "approvals"}`
                 : "All clear"}
@@ -369,13 +400,12 @@ export function QuickPage({ controller: c, onNavigate }: QuickPageProps) {
         )}
       </section>
 
-      <section className="dashboard-home__actions" aria-labelledby="dashboard-actions-title">
+      <section className="dashboard-home__actions ac-glass" aria-labelledby="dashboard-actions-title">
         <div className="dashboard-home__section-heading">
           <div>
-            <p className="eyebrow">Quick actions</p>
-            <h2 id="dashboard-actions-title">Saved actions</h2>
+            <p className="eyebrow ac-eyebrow">Quick actions</p>
+            <h2 className="ac-display-title" id="dashboard-actions-title">Saved actions</h2>
           </div>
-          <StatusBadge tone="neutral" label={`${c.actions?.length ?? 0} saved`} />
         </div>
 
         {savedActions.length ? (

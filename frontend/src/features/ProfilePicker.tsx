@@ -2,6 +2,7 @@ import { Check, Minus, ShieldAlert } from "lucide-react";
 
 import type { DeviceProfile } from "../types";
 import { cn } from "../ui";
+import "./intelligence-control.css";
 
 /**
  * Human wording for the capability ids returned by GET /v1/device-profiles. These mirror
@@ -109,8 +110,8 @@ export function ProfilePicker({
     : null;
 
   return (
-    <fieldset className={cn("min-w-0", className)}>
-      <legend className="text-xs font-semibold text-ink-muted">{legend}</legend>
+    <fieldset className={cn("ic-scope ic-picker min-w-0", className)}>
+      <legend className="ac-eyebrow">{legend}</legend>
       {description ? (
         <p className="mt-1 text-xs leading-relaxed text-ink-faint">{description}</p>
       ) : null}
@@ -136,10 +137,10 @@ export function ProfilePicker({
               />
               <span className="min-w-0">
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-display text-sm font-semibold">{profile.label ?? profile.id}</span>
+                  <span className="ic-title text-sm">{profile.label ?? profile.id}</span>
                   <span className="font-mono text-[10px] text-ink-faint">{profile.id}</span>
                   {profile.id === assignedProfileId ? (
-                    <span className="rounded border border-control bg-surface-inset px-1.5 py-0.5 text-[10px] font-semibold text-ink-muted">
+                    <span className="profile-assigned">
                       assigned
                     </span>
                   ) : null}
@@ -157,7 +158,7 @@ export function ProfilePicker({
       </div>
       {diff && (diff.granted.length > 0 || diff.revoked.length > 0) ? (
         <div
-          className="mt-3 rounded-lg border border-warning/25 bg-warning/8 p-3 text-xs"
+          className="profile-diff ic-note mt-3 border border-warning/25 bg-warning/8 p-3 text-xs"
           role="status"
         >
           <p className="flex items-center gap-1.5 font-semibold text-warning-strong">

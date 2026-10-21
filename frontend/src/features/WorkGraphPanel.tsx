@@ -4,6 +4,7 @@ import { formatRelativeTime } from "../format";
 import type { LiveThreadState, LiveThreadStatus } from "../liveThread";
 import type { WorkNode, WorkStatus } from "../workGraph";
 import { StatusBadge } from "../ui";
+import "./intelligence-control.css";
 
 export interface WorkGraphPanelProps {
   state: LiveThreadState | null;
@@ -27,7 +28,7 @@ export function WorkGraphPanel({ state, status }: WorkGraphPanelProps) {
 
   return (
     <details
-      className="work-inspector"
+      className="work-inspector ic-scope ic-work"
       data-connection={connection.tone}
       aria-label="Agents and work inspector"
     >
@@ -38,7 +39,7 @@ export function WorkGraphPanel({ state, status }: WorkGraphPanelProps) {
             : <GitFork className="size-4" />}
         </span>
         <span className="work-inspector__summary">
-          <strong>Agents &amp; work</strong>
+          <strong className="ic-title">Agents &amp; work</strong>
           <small>
             {!state.hasSnapshot
               ? "Waiting for the authoritative task snapshot"
@@ -140,7 +141,7 @@ function WorkNodeRow({ node, missingParent }: { node: WorkNode; missingParent: b
       <summary>
         <span className="work-node__rail" aria-hidden="true" />
         <span className="work-node__copy">
-          <strong>{node.label}</strong>
+          <strong className="ic-title">{node.label}</strong>
           <small>{metadata || kindLabel(node.kind)}</small>
         </span>
         <StatusBadge tone={workStatusTone(node.status)} label={workStatusLabel(node.status)} />

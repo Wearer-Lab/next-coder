@@ -80,6 +80,9 @@ import {
   type ComposerMode,
 } from "./Composer";
 import { WorkGraphPanel } from "./WorkGraphPanel";
+// The Operations workspace speaks the console's "intelligence design" language: a black
+// canvas, hairline glass cards, a pixel display face and glowing pill calls to action.
+import "./intelligence-operate.css";
 
 function statusTone(status?: string) {
   if (status === "approval_required") return "warning" as const;
@@ -512,9 +515,9 @@ export function OperatePage({ controller }: { controller: Controller }) {
   // Not yet reported for this environment means the fetch has not settled, which reads as loading.
   const selectedWorkspaceLoadState = workspaceStatus ?? "loading";
   const contextToolbar = (
-    <div className="thread-context-toolbar" aria-label="Command context">
+    <div className="thread-context-toolbar context-strip" aria-label="Command context">
       <label className="thread-context-control">
-        <span>Environment</span>
+        <span className="ac-eyebrow">Environment</span>
         <select
           aria-label="Environment"
           value={c.selectedEnvironmentId}
@@ -527,7 +530,7 @@ export function OperatePage({ controller }: { controller: Controller }) {
         </select>
       </label>
       <label className="thread-context-control">
-        <span>Project</span>
+        <span className="ac-eyebrow">Project</span>
         <select
           aria-label="Project"
           value={c.selectedProjectId}
@@ -543,7 +546,7 @@ export function OperatePage({ controller }: { controller: Controller }) {
         </select>
       </label>
       <label className="thread-context-control">
-        <span>Thread</span>
+        <span className="ac-eyebrow">Thread</span>
         <select
           aria-label="Thread"
           value={c.selectedThreadId}
@@ -557,7 +560,7 @@ export function OperatePage({ controller }: { controller: Controller }) {
         </select>
       </label>
       <label className="thread-context-control">
-        <span>Harness</span>
+        <span className="ac-eyebrow">Harness</span>
         <select
           aria-label="Agent harness"
           value={providerInstance}
@@ -581,7 +584,7 @@ export function OperatePage({ controller }: { controller: Controller }) {
         </select>
       </label>
       <label className="thread-context-control">
-        <span>Model</span>
+        <span className="ac-eyebrow">Model</span>
         <select
           aria-label="Model"
           value={model}
@@ -640,7 +643,7 @@ export function OperatePage({ controller }: { controller: Controller }) {
       <div className="thread-workspace">
         <div className="thread-feed">
           <div className="thread-empty-state">
-          <h2>
+          <h2 className="ac-display-title">
             {!c.selectedEnvironmentId
               ? "Connect an environment to begin"
               : workspaceFailed
@@ -852,7 +855,9 @@ export function OperatePage({ controller }: { controller: Controller }) {
               {threadMessages.map((message) => (
                 <article key={message.id} className="thread-message" data-role={message.role}>
                   <header>
-                    <span>{message.role === "user" ? "You" : message.role === "assistant" ? "Agent" : message.role}</span>
+                    <span className="ac-eyebrow">
+                      {message.role === "user" ? "You" : message.role === "assistant" ? "Agent" : message.role}
+                    </span>
                     <span>
                       <ActivityOrb activity={streamingActivity(message.streaming)} />
                       {message.createdAt ? <time>{formatRelativeTime(message.createdAt)}</time> : null}
@@ -901,7 +906,7 @@ export function OperatePage({ controller }: { controller: Controller }) {
           ) : (
             <div className="thread-feed__empty">
               <Bot className="size-5" />
-              <p>{c.selectedThreadId ? "This thread is ready" : "Start a new thread"}</p>
+              <p className="ac-display-title">{c.selectedThreadId ? "This thread is ready" : "Start a new thread"}</p>
               <span>
                 {c.selectedThreadId
                   ? "Send the next instruction from the composer below."
@@ -1314,7 +1319,7 @@ function LiveThreadEntryView({ entry }: { entry: LiveThreadEntry }) {
         data-streaming={entry.streaming ? "true" : undefined}
       >
         <header>
-          <span>
+          <span className="ac-eyebrow">
             {entry.role === "user" ? "You" : entry.role === "assistant" ? "Agent" : entry.role}
           </span>
           <span>
@@ -1330,7 +1335,7 @@ function LiveThreadEntryView({ entry }: { entry: LiveThreadEntry }) {
   if (entry.kind === "activity") {
     return (
       <div className="thread-activity" data-tone={entry.tone}>
-        <span className="thread-activity__kind">{entry.activityKind}</span>
+        <span className="thread-activity__kind ac-eyebrow">{entry.activityKind}</span>
         <p>{entry.summary}</p>
         {entry.at ? <time>{formatRelativeTime(entry.at)}</time> : null}
       </div>

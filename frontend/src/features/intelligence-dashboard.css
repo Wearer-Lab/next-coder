@@ -1,0 +1,519 @@
+/* ==========================================================================
+   The dashboard, in the "intelligence design" language.
+
+   The system already exists and this file adds nothing to it:
+
+     · features/landing.css — the signed-out pages: a black canvas, hairline
+       glass cards, the pixel display face and a metric strip of pixel glyphs
+       with tabular values;
+     · intelligence.css — the console's shared half: the palette, the
+       `.ac-display*` type, `.ac-eyebrow`, `.ac-glass` and the `.ac-stat`
+       label/glyph/value triple.
+
+   What is left for the dashboard is arrangement: the same hairline glass
+   cards, the same 1.25rem radius, the same mono micro-labels, and a metric
+   strip that reads the way the marketing one does.
+
+   The rules are deliberately unlayered. The legacy sheet declares the
+   dashboard inside `@layer components` and the dashboard is a lazily loaded
+   chunk, so the two sheets can be evaluated in either order; an unlayered
+   rule outranks every layered one whatever the order is, which means the
+   redesign cannot land half-applied. Every selector here is scoped under
+   `.dashboard-home`, so these rules cannot reach the rest of the console.
+
+   Nothing here animates. The only transitions are colour and border colour,
+   and the console's global reduced-motion rule already collapses them.
+   ========================================================================== */
+
+/* The frame ---------------------------------------------------------------- */
+
+/* The legacy sheet drew the dashboard as one bordered box with rules between
+   its panels. The panels are cards now, so the box is gone and the canvas
+   shows through. */
+.dashboard-home {
+  display: grid;
+  width: min(100%, 1060px);
+  grid-template-columns: minmax(0, 1.45fr) minmax(19rem, 0.75fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    "summary   summary"
+    "workspace actions"
+    "attention actions";
+  align-items: start;
+  gap: 1rem;
+  margin: 0 auto;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+
+.dashboard-home__workspace {
+  grid-area: workspace;
+}
+
+.dashboard-home__attention {
+  grid-area: attention;
+}
+
+.dashboard-home__actions {
+  grid-area: actions;
+  align-self: start;
+}
+
+/* The three working panels. `.ac-glass` carries the hairline and the fill;
+   the border is restated because the legacy sheet still draws a rule between
+   its panels, and the radius and the padding are the console's own rhythm.
+   The selector is deliberately specific: the legacy sheet's phone rules sit
+   outside any cascade layer, so specificity is what settles them. */
+.dashboard-home > section.dashboard-home__workspace,
+.dashboard-home > section.dashboard-home__attention,
+.dashboard-home > section.dashboard-home__actions {
+  min-width: 0;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--ac-border);
+  border-radius: 1.25rem;
+}
+
+/* The metric strip --------------------------------------------------------- */
+
+/* The four counts that describe the whole surface, in the order the marketing
+   page lays its own strip out: a pixel glyph, a tabular value, a faint label.
+   `.ac-glass-strong` gives it the hairline edge and the fill. */
+.dashboard-home__summary {
+  grid-area: summary;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+  gap: clamp(0.75rem, 2vw, 1.5rem);
+  padding: 0.9rem 1.5rem;
+  border-radius: 1.25rem;
+}
+
+.dashboard-home__summary .ac-stat__glyph {
+  font-size: 1.5rem;
+  color: var(--ac-ink);
+}
+
+.dashboard-home__summary .ac-stat__value {
+  font-size: 1.125rem;
+  font-weight: 500;
+}
+
+.dashboard-home__summary .ac-stat__label {
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+/* Headings ----------------------------------------------------------------- */
+
+.dashboard-home__section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* The mono, uppercase, faint label the console uses for its small headings. */
+.dashboard-home__section-heading .eyebrow {
+  margin: 0 0 0.45rem;
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+/* `.ac-display-title` is the right primitive, but the legacy
+   `.dashboard-home__section-heading h2` rule out-specifies it, so the pixel
+   face is restated here at a specificity that wins. */
+.dashboard-home__section-heading h2 {
+  margin: 0;
+  color: var(--ac-ink);
+  font-family: var(--ac-display);
+  font-size: clamp(1.05rem, 1.7vw, 1.3rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  /* The pixel face sets a very narrow word space, which reads as a missing
+     space at console sizes. A little extra tracking puts it back. */
+  word-spacing: 0.14em;
+  line-height: 1.2;
+}
+
+.dashboard-home__workspace .dashboard-home__section-heading h2 {
+  font-size: clamp(1.15rem, 2vw, 1.5rem);
+}
+
+.dashboard-home__description {
+  margin: 0.6rem 0 0;
+  color: var(--ac-ink-muted);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+/* Environment and thread, chosen where they are used ------------------------ */
+
+.dashboard-home__pickers {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+}
+
+.dashboard-home__pickers label {
+  display: grid;
+  min-width: 0;
+  gap: 0.3rem;
+}
+
+.dashboard-home__pickers label > span {
+  overflow: hidden;
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* A pill, like every other control the design language uses. */
+.dashboard-home__pickers select {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.4rem;
+  border: 1px solid var(--ac-border-strong);
+  border-radius: 999px;
+  background: var(--ac-glass);
+  color: var(--ac-ink);
+  padding: 0 1.7rem 0 0.9rem;
+  font-size: 0.78rem;
+}
+
+.dashboard-home__pickers select:hover:not(:disabled) {
+  border-color: var(--ac-ink-faint);
+  background: var(--ac-glass-strong);
+  color: var(--ac-ink);
+}
+
+.dashboard-home__pickers select:focus {
+  border-color: var(--ac-focus);
+  background: var(--ac-glass-strong);
+  color: var(--ac-ink);
+}
+
+/* The composer -------------------------------------------------------------- */
+
+.dashboard-composer {
+  display: grid;
+  min-width: 0;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+}
+
+/* A dark inset well inside the glass card, the way the marketing page draws
+   its terminal. */
+.dashboard-composer .composer-shell {
+  border: 1px solid var(--ac-border-strong);
+  border-radius: 1rem;
+  background: rgb(0 0 0 / 30%);
+  box-shadow: none;
+}
+
+.dashboard-composer .composer-shell:focus-within {
+  border-color: var(--ac-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac-focus) 14%, transparent);
+}
+
+.dashboard-composer .composer-footer {
+  border-top: 1px solid var(--ac-border);
+  background: rgb(255 255 255 / 3%);
+}
+
+.dashboard-composer .composer-inline-action {
+  border-radius: 999px;
+}
+
+.dashboard-composer .composer-inline-action:hover:not(:disabled) {
+  border-color: var(--ac-border-strong);
+  background: var(--ac-glass);
+  color: var(--ac-ink);
+}
+
+.dashboard-composer__blocked {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--ac-ink-muted);
+  font-size: 0.78rem;
+}
+
+.dashboard-composer__blocked span {
+  min-width: 0;
+}
+
+.dashboard-home__workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.dashboard-home__context {
+  color: var(--ac-ink-faint);
+  font-size: 0.72rem;
+}
+
+/* Lists --------------------------------------------------------------------- */
+
+/* An empty panel is a quiet hairline box, not a rule with a gap under it. */
+.dashboard-home__empty-row {
+  display: flex;
+  min-height: 5.25rem;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-top: 1.1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--ac-border);
+  border-radius: 1rem;
+  background: var(--ac-glass);
+  color: var(--ac-ink-muted);
+  font-size: 0.8rem;
+}
+
+.dashboard-approval-list,
+.dashboard-action-list {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+  border-top: 0;
+}
+
+/* A glass tile. The approval tile is framed by the live beam, whose radius is
+   16px, so the tile keeps the same corner. */
+.dashboard-approval-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--ac-border);
+  border-radius: 1rem;
+  background: var(--ac-glass);
+}
+
+.dashboard-approval-row__copy {
+  min-width: 0;
+}
+
+.dashboard-approval-row__copy > div {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: capitalize;
+}
+
+.dashboard-approval-row__copy time {
+  margin-left: auto;
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.dashboard-approval-row__copy p {
+  overflow: hidden;
+  margin: 0.4rem 0 0;
+  color: var(--ac-ink);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-approval-row__actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.dashboard-action-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3.4rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--ac-border);
+  border-radius: 1rem;
+  background: var(--ac-glass);
+}
+
+/* The round icon chip the marketing cards use. */
+.dashboard-action-row__icon {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  place-items: center;
+  border: 1px solid var(--ac-border-strong);
+  border-radius: 50%;
+  background: var(--ac-glass-strong);
+  color: var(--ac-ink);
+}
+
+.dashboard-action-row__icon svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.dashboard-action-row strong,
+.dashboard-action-row small {
+  display: block;
+}
+
+.dashboard-action-row strong {
+  overflow: hidden;
+  color: var(--ac-ink);
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-action-row small {
+  margin-top: 0.15rem;
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Buttons -------------------------------------------------------------------- */
+
+/* The secondary calls to action in the dashboard become hairline glass pills.
+   The primary button is already a white, glowing pill through the shared
+   palette, so it is left alone. */
+.dashboard-home__pickers button,
+.dashboard-home__workspace-actions button,
+.dashboard-home__empty-row button,
+.dashboard-approval-list > button {
+  border-color: var(--ac-border-strong);
+  background: var(--ac-glass);
+  color: var(--ac-ink);
+}
+
+.dashboard-home__pickers button:hover:not(:disabled),
+.dashboard-home__workspace-actions button:hover:not(:disabled),
+.dashboard-home__empty-row button:hover:not(:disabled),
+.dashboard-approval-list > button:hover:not(:disabled) {
+  border-color: var(--ac-ink-faint);
+  background: var(--ac-glass-strong);
+  color: var(--ac-ink);
+}
+
+/* Responsive ----------------------------------------------------------------- */
+
+@media (max-width: 820px) {
+  /* The doubled class settles the phone layout against the legacy sheet's
+     unlayered phone rules without relying on which sheet lands last. */
+  .dashboard-home.dashboard-home {
+    width: calc(100% - 1.5rem);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-template-areas:
+      "summary"
+      "workspace"
+      "attention"
+      "actions";
+    margin-block: 0.75rem;
+  }
+
+  .dashboard-home__actions {
+    align-self: start;
+  }
+}
+
+@media (max-width: 540px) {
+  .dashboard-home__summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem 1rem;
+  }
+
+  /* The legacy sheet's phone padding for the panels is unlayered and
+     out-specifies the card rule, so the phone padding is restated here. */
+  .dashboard-home > section.dashboard-home__workspace,
+  .dashboard-home > section.dashboard-home__attention,
+  .dashboard-home > section.dashboard-home__actions {
+    padding: 1rem 1.1rem;
+  }
+
+  .dashboard-home__workspace-actions,
+  .dashboard-home__empty-row,
+  .dashboard-approval-row {
+    align-items: stretch;
+    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-home__empty-row {
+    display: flex;
+  }
+
+  .dashboard-home__empty-row button,
+  .dashboard-home__workspace-actions button {
+    width: 100%;
+  }
+
+  .dashboard-approval-row__actions > button {
+    flex: 1;
+  }
+
+  /* Everything else in the dashboard stacks at this width; the composer must
+     not, or its footer doubles in height and the first approval row falls
+     below the fold. */
+  .dashboard-composer .composer-footer {
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  /* The legacy sheet lets the send button fall back to `width: auto` on a
+     phone, which collapses the icon button to the width of its glyph. The
+     square footprint is kept. */
+  .dashboard-composer .composer-footer__send button {
+    width: auto;
+    min-width: 2.25rem;
+  }
+
+  .dashboard-composer__blocked {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-home *,
+  .dashboard-home *::before,
+  .dashboard-home *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

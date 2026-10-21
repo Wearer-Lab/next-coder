@@ -108,6 +108,21 @@ void textRight(int16_t right, int16_t y, uint8_t size, uint8_t grey, const Strin
   text((int16_t)(right - w), y, size, grey, value);
 }
 
+void textAccent(int16_t x, int16_t y, uint8_t size, const String& value) {
+  if (value.length() == 0) return;
+  g().setTextWrap(false);
+  g().setTextSize(size);
+  g().setTextColor(panelRgb(kAccentRgb));
+  g().setCursor(x, y);
+  g().print(value);
+}
+
+void textRightAccent(int16_t right, int16_t y, uint8_t size, const String& value) {
+  if (value.length() == 0) return;
+  const int16_t w = (int16_t)(value.length() * 6 * size);
+  textAccent((int16_t)(right - w), y, size, value);
+}
+
 size_t wrapText(const String& value, size_t cols, String* out, size_t maxLines) {
   size_t lines = 0;
   size_t i = 0;
@@ -149,15 +164,26 @@ void button(const Rect& r, const String& label, bool primary, bool enabled, uint
   // tray had already been removed — but two kSurface capsules eight pixels apart across the full
   // width of a 240 px screen read as one band, and a disabled primary made it two. An outline
   // composites against whatever it is standing on and adds no surface to the page at all.
-  const int16_t fill = (primary && enabled) ? (int16_t)kBright : -1;
-  const int16_t stroke = enabled ? (primary ? -1 : (int16_t)kMuted) : (int16_t)kHair;
-  const uint8_t ink = enabled ? (primary ? kBg : kText) : kHair;
-  capsule(r, fill, stroke, 1.3f, primary ? 1.4f : 1.2f, bg);
-
   const size_t cols = r.w > 16 ? (size_t)((r.w - 14) / 6) : 1;
   const String shown = fit(label, cols);
   const int16_t tw = (int16_t)(shown.length() * 6);
-  text((int16_t)(r.x + (r.w - tw) / 2), (int16_t)(r.y + (r.h - 8) / 2), 1, ink, shown);
+  const int16_t tx = (int16_t)(r.x + (r.w - tw) / 2);
+  const int16_t ty = (int16_t)(r.y + (r.h - 8) / 2);
+
+  if (primary && enabled) {
+    // The design's call to action: a filled pill. On the reference page that pill is white and
+    // glowing; on this panel it carries the product's accent instead, because the accent is the
+    // one chromatic signal the device has and the action is the one thing that should spend it.
+    // The label is the ground colour, so it reads as cut out of the pill rather than painted on.
+    accentCapsule(r, bg);
+    text(tx, ty, 1, kBg, shown);
+    return;
+  }
+
+  const int16_t stroke = enabled ? (int16_t)kMuted : (int16_t)kHair;
+  const uint8_t ink = enabled ? kText : kHair;
+  capsule(r, -1, stroke, 1.3f, 1.2f, bg);
+  text(tx, ty, 1, ink, shown);
 }
 
 void divider(int16_t x, int16_t y, int16_t w, uint8_t grey, uint8_t bg) {
@@ -193,8 +219,64 @@ void chevron(int16_t cx, int16_t cy, float size, int8_t dir, uint8_t grey, float
   }
 }
 
-void marker(int16_t x, int16_t y, int16_t h, uint8_t grey, uint8_t bg) {
-  displaySoftRoundRect(x, y, 4, h, 2.0f, bg, (int16_t)grey, -1, 0.0f, 1.1f);
+// ---------------------------------------------------------------------------------------------
+// The accent
+// ---------------------------------------------------------------------------------------------
+
+void accentCapsule(const Rect& r, uint8_t bg) {
+  displaySoftRoundRectRgb(r.x, r.y, r.w, r.h, r.h * 0.5f, greyRgb(bg), (int32_t)kAccentRgb, -1,
+                           0.0f, 1.4f);
+}
+
+void accentOutline(const Rect& r, float strokeWidth, uint8_t bg) {
+  displaySoftRoundRectRgb(r.x, r.y, r.w, r.h, r.h * 0.5f, greyRgb(bg), -1, (int32_t)kAccentRgb,
+                           strokeWidth, 1.3f);
+}
+
+void accentMarker(int16_t x, int16_t y, int16_t h, uint8_t bg) {
+  displaySoftRoundRectRgb(x, y, 4, h, 2.0f, greyRgb(bg), (int32_t)kAccentRgb, -1, 0.0f, 1.1f);
+}
+
+void accentDot(int16_t cx, int16_t cy, float radius, uint8_t bg) {
+  const int16_t d = (int16_t)(radius * 2.0f + 2.0f);
+  displaySoftRoundRectRgb((int16_t)(cx - d / 2), (int16_t)(cy - d / 2), d, d, d * 0.5f,
+                           greyRgb(bg), (int32_t)kAccentRgb, -1, 0.0f, 1.1f);
+}
+
+void accentPixel(int16_t x, int16_t y, int16_t size, uint8_t bg) {
+  displaySoftRoundRectRgb(x, y, size, size, 1.5f, greyRgb(bg), (int32_t)kAccentRgb, -1, 0.0f,
+                           1.1f);
+}
+
+void pixel(int16_t x, int16_t y, int16_t size, uint8_t grey, uint8_t bg) {
+  displaySoftRoundRect(x, y, size, size, 1.5f, bg, (int16_t)grey, -1, 0.0f, 1.1f);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The metric rhythm
+// ---------------------------------------------------------------------------------------------
+
+void statLine(int16_t x, int16_t y, const String& value, const String& caption,
+              uint8_t valueTone) {
+  // The glyph sits beside the value, not above it: the console stacks its stat blocks because it
+  // has a column to stack them in, and a 240 px screen has a row.
+  pixel(x, y + 4, 6, kHair);
+  const int16_t vw = (int16_t)(value.length() * 6 * 2);
+  text((int16_t)(x + 14), y, 2, valueTone, value);
+  // The caption is bottom-aligned with the value it belongs to, which is what makes the pair read
+  // as one line rather than as two things that happen to be beside each other. It is the console's
+  // muted label, not a whisper: it is the only thing that says what the number is.
+  if (caption.length() > 0) {
+    text((int16_t)(x + 14 + vw + 8), (int16_t)(y + 7), 1, kMuted, caption);
+  }
+}
+
+void factRow(int16_t x, int16_t y, const String& value, const String& caption,
+             uint8_t valueTone, bool accent) {
+  if (accent) accentPixel(x, y, 6);
+  else pixel(x, y, 6, kHair);
+  text((int16_t)(x + 14), y, 1, valueTone, value);
+  text((int16_t)(x + 14), (int16_t)(y + 11), 1, kMuted, caption);
 }
 
 }  // namespace uip

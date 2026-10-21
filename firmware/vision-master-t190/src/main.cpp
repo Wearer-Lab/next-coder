@@ -56,6 +56,23 @@ constexpr uint8_t kVisibleRows = 4;
 constexpr uint32_t kButtonHoldMs = 1500;
 constexpr uint32_t kRecoveryHoldMs = 10000;
 
+// The "intelligence design" palette, in the RGB565 words the ST7789 speaks. A black ground,
+// white ink, one lilac accent, and muted greys that carry every other distinction.
+//
+// The accent is the ONLY chromatic signal on the screen. It marks the live target, the active
+// row and the cursor, exactly the way the console's accent marks its live pill. Everything that
+// used to be a vendor colour - cyan titles, yellow state, blue rules, green body - collapses into
+// ink or grey, so the lilac is always the thing the eye lands on. Failures keep a semantic red:
+// a monochrome screen must never hide an error.
+constexpr uint16_t kInk = ST77XX_WHITE;   // #ffffff, the console's --ac-ink
+constexpr uint16_t kAccent = 0xB55F;      // #b7a8ff, the console's --ac-accent
+constexpr uint16_t kMuted = 0x9CD3;       // #9b9b9e, the console's --ac-ink-muted
+constexpr uint16_t kFaint = 0x6B4D;       // #6b6b6f, the console's --ac-ink-faint
+constexpr uint16_t kDanger = 0xE30D;      // #e2616e, the console's --ac-danger
+
+// The one word a list screen uses for the bound environment, folder or thread.
+constexpr const char* kActiveLabel = "ACTIVE";
+
 DeviceStore store;
 Provisioning provisioning;
 GatewayClient gateway;
@@ -90,6 +107,7 @@ size_t selectedControl = 0;
 String resultTitle;
 String resultLine1;
 String resultLine2;
+bool resultIsError = false;
 bool dirty = true;
 uint32_t seenGatewayRevision = 0;
 uint32_t seenBrowseRevision = 0;
@@ -155,24 +173,28 @@ void beginDisplay() {
 #endif
 }
 
-void drawHeader(const String& title, const String& state) {
+void drawHeader(const String& title, const String& state, uint16_t stateColor = kMuted) {
 #if ENABLE_T190_DISPLAY
   tft.fillScreen(ST77XX_BLACK);
-  tft.setTextColor(ST77XX_CYAN);
+  // The title is the display headline: bright ink, not a vendor colour.
+  tft.setTextColor(kInk);
   tft.setTextSize(1);
   tft.setCursor(8, 7);
   tft.print(clipped(title, 31));
-  tft.setTextColor(ST77XX_YELLOW);
+  // The state marker on the right is a quiet label. It only turns accent when the screen is
+  // reporting something live, and red when it is reporting a failure.
+  tft.setTextColor(stateColor);
   tft.setCursor(248, 7);
   tft.print(clipped(state, 10));
-  tft.drawFastHLine(8, 21, kScreenWidth - 16, ST77XX_BLUE);
+  tft.drawFastHLine(8, 21, kScreenWidth - 16, kFaint);
 #else
   (void)title;
   (void)state;
+  (void)stateColor;
 #endif
 }
 
-void drawLine(uint16_t y, const String& value, uint16_t color = ST77XX_WHITE,
+void drawLine(uint16_t y, const String& value, uint16_t color = kInk,
               uint8_t textSize = 1) {
 #if ENABLE_T190_DISPLAY
   tft.setTextColor(color);
@@ -189,8 +211,9 @@ void drawLine(uint16_t y, const String& value, uint16_t color = ST77XX_WHITE,
 
 void drawFooter(const String& value) {
 #if ENABLE_T190_DISPLAY
-  tft.drawFastHLine(8, 149, kScreenWidth - 16, ST77XX_BLUE);
-  drawLine(156, value, ST77XX_GREEN);
+  // The footer rule is a hairline, not a band, and the footer line is a quiet hint.
+  tft.drawFastHLine(8, 149, kScreenWidth - 16, kFaint);
+  drawLine(156, value, kMuted);
 #else
   (void)value;
 #endif
@@ -204,11 +227,15 @@ void drawRows(size_t count, RowText label, RowText metadata) {
   for (size_t row = 0; row < kVisibleRows && pageStart + row < count; row += 1) {
     const size_t index = pageStart + row;
     const uint16_t y = 31 + static_cast<uint16_t>(row * 28);
+    // The cursor row is the accent. It is the only place on a list screen that says "you are here".
     drawLine(y, String(index == cursor ? "> " : "  ") + clipped(label(index), 30),
-             index == cursor ? ST77XX_YELLOW : ST77XX_WHITE);
+             index == cursor ? kAccent : kInk);
 #if ENABLE_T190_DISPLAY
     const String meta = clipped(metadata(index), 10);
-    tft.setTextColor(index == cursor ? ST77XX_YELLOW : ST77XX_GREEN);
+    // The bound environment/folder/thread is the live target, so it keeps the accent even when
+    // the cursor sits on another row. Every other metadata value is a quiet label.
+    const bool active = meta == kActiveLabel;
+    tft.setTextColor(index == cursor || active ? kAccent : kMuted);
     tft.setCursor(252, y);
     tft.print(meta);
 #endif
@@ -217,19 +244,25 @@ void drawRows(size_t count, RowText label, RowText metadata) {
 
 void renderProvisioning() {
   const ProvisioningStatus& status = provisioning.status();
-  drawHeader("DEVICE SETUP", upper(String(provisioningStateName(status.state))));
+  // The marker stays quiet while the device is merely waiting, turns accent while it is doing
+  // something, and keeps a semantic red when the join has failed.
+  uint16_t stateColor = kMuted;
+  if (status.state == ProvisioningState::Provisioning
+      || status.state == ProvisioningState::Connecting) stateColor = kAccent;
+  if (status.state == ProvisioningState::Failed) stateColor = kDanger;
+  drawHeader("DEVICE SETUP", upper(String(provisioningStateName(status.state))), stateColor);
   if (status.state == ProvisioningState::Provisioning) {
-    drawLine(36, "JOIN WI-FI:", ST77XX_YELLOW);
-    drawLine(55, status.apName, ST77XX_WHITE, 2);
-    drawLine(87, status.portalUrl);
-    drawLine(108, clipped(status.detail, 48));
+    drawLine(36, "JOIN WI-FI:", kAccent);
+    drawLine(55, status.apName, kInk, 2);
+    drawLine(87, status.portalUrl, kInk);
+    drawLine(108, clipped(status.detail, 48), kMuted);
   } else if (status.state == ProvisioningState::Connecting) {
-    drawLine(46, "Joining saved Wi-Fi", ST77XX_WHITE, 2);
-    drawLine(83, status.detail);
+    drawLine(46, "Joining saved Wi-Fi", kInk, 2);
+    drawLine(83, status.detail, kMuted);
   } else {
-    drawLine(46, "Wi-Fi unavailable", ST77XX_RED, 2);
-    drawLine(83, status.detail);
-    drawLine(105, "Setup portal will reopen");
+    drawLine(46, "Wi-Fi unavailable", kDanger, 2);
+    drawLine(83, status.detail, kMuted);
+    drawLine(105, "Setup portal will reopen", kMuted);
   }
   drawFooter("Credentials never leave this device");
 }
@@ -238,29 +271,30 @@ void renderGatewayBoundary() {
   switch (gateway.link()) {
     case GatewayLink::NoIdentity:
       drawHeader("DEVICE IDENTITY", "BLOCKED");
-      drawLine(42, "FACTORY ID REQUIRED", ST77XX_RED, 2);
-      drawLine(79, "Flash an NVS factory seed.");
-      drawLine(99, "Owner setup cannot create identity.");
+      drawLine(42, "FACTORY ID REQUIRED", kDanger, 2);
+      drawLine(79, "Flash an NVS factory seed.", kMuted);
+      drawLine(99, "Owner setup cannot create identity.", kMuted);
       drawFooter("Service required");
       return;
     case GatewayLink::Unclaimed:
       drawHeader("CLAIM THIS DEVICE", "UNCLAIMED");
-      drawLine(34, "Sign in, then enter:");
+      drawLine(34, "Sign in, then enter:", kMuted);
+      // The claim code is the one live thing on this screen.
       drawLine(57, gateway.claimCode().length() ? gateway.claimCode() : String("REQUESTING CODE"),
-               ST77XX_YELLOW, 2);
-      drawLine(92, "Device: " + shortId(store.deviceId()));
-      drawLine(111, "Gateway remains account authority.");
+               kAccent, 2);
+      drawLine(92, "Device: " + shortId(store.deviceId()), kMuted);
+      drawLine(111, "Gateway remains account authority.", kMuted);
       drawFooter("Code is cached; it does not rotate");
       return;
     case GatewayLink::Revoked:
       drawHeader("ACCESS REMOVED", "REVOKED");
-      drawLine(42, "Credential rejected", ST77XX_RED, 2);
+      drawLine(42, "Credential rejected", kDanger, 2);
 #if ENABLE_T190_EXTERNAL_ENCODER
-      drawLine(82, "Hold the external button 10s");
-      drawLine(101, "to reset network setup.");
+      drawLine(82, "Hold the external button 10s", kMuted);
+      drawLine(101, "to reset network setup.", kMuted);
 #else
-      drawLine(82, "External recovery input disabled.");
-      drawLine(101, "Use the service/flash path.");
+      drawLine(82, "External recovery input disabled.", kMuted);
+      drawLine(101, "Use the service/flash path.", kMuted);
 #endif
       drawFooter("Identity is never erased locally");
       return;
@@ -272,15 +306,17 @@ void renderGatewayBoundary() {
 void renderHome() {
   const bool live = gateway.link() == GatewayLink::Claimed;
   drawHeader(gateway.display().title.length() ? gateway.display().title : String("Agent Controller"),
-             live ? upper(gateway.display().state) : String("OFFLINE"));
+             live ? upper(gateway.display().state) : String("OFFLINE"),
+             live ? kAccent : kMuted);
   drawLine(31, "ENV  " + clipped(browse.environmentLabel().length()
     ? browse.environmentLabel() : shortId(gateway.context().environmentId), 36));
   drawLine(53, "DIR  " + clipped(browse.projectLabel().length()
     ? browse.projectLabel() : String("Not loaded"), 36));
-  drawLine(75, "TASK " + clipped(gateway.selectedThreadLabel(), 36), ST77XX_YELLOW);
+  // The selected task is the live target of the controller.
+  drawLine(75, "TASK " + clipped(gateway.selectedThreadLabel(), 36), kAccent);
   drawLine(99, clipped(gateway.display().line1, 48));
   drawLine(119, contextSyncPending ? String("Refreshing authoritative target...")
-                                    : clipped(gateway.display().line2, 48));
+                                    : clipped(gateway.display().line2, 48), kMuted);
 #if ENABLE_T190_EXTERNAL_ENCODER
   drawFooter(live ? "PRESS: MENU  HOLD 10S: RECOVERY" : "Cached state - PRESS for menu");
 #else
@@ -422,7 +458,7 @@ void renderApprovalDecision() {
   static const char* labels[] = {"Approve", "Deny", "Keep pending"};
   for (size_t index = 0; index < 3; index += 1) {
     drawLine(65 + index * 24, String(index == cursor ? "> " : "  ") + labels[index],
-             index == cursor ? ST77XX_YELLOW : ST77XX_WHITE);
+             index == cursor ? kAccent : kInk);
   }
   drawFooter(cursor == 0 && approval && approval->risk == "high"
     ? "HOLD: APPROVE HIGH RISK" : "PRESS: CHOOSE");
@@ -432,32 +468,34 @@ void renderResponse() {
   const ThreadResponse& response = gateway.response();
   drawHeader(screenName(screen), upper(response.state));
   for (size_t index = 0; index < response.lineCount; index += 1) {
-    drawLine(35 + index * 25, response.lines[index], index == 0 ? ST77XX_YELLOW : ST77XX_WHITE);
+    drawLine(35 + index * 25, response.lines[index], index == 0 ? kAccent : kInk);
   }
-  drawLine(119, "Page " + String(response.page + 1) + "/" + String(response.pageCount));
+  drawLine(119, "Page " + String(response.page + 1) + "/" + String(response.pageCount), kMuted);
   drawFooter("ROTATE: PAGE  PRESS: BACK");
 }
 
 void renderConfirm() {
   drawHeader(screenName(screen), "HOLD");
   if (screen == Screen::ConfirmReset) {
-    drawLine(37, "Erase Wi-Fi and cached setup?", ST77XX_YELLOW, 2);
-    drawLine(84, "Identity remains on this device.");
+    drawLine(37, "Erase Wi-Fi and cached setup?", kAccent, 2);
+    drawLine(84, "Identity remains on this device.", kMuted);
   } else {
     const DeviceControl* row = gateway.control(selectedControl);
-    drawLine(37, row ? clipped(row->label, 25) : String("Action is stale"), ST77XX_YELLOW, 2);
+    drawLine(37, row ? clipped(row->label, 25) : String("Action is stale"), kAccent, 2);
     drawLine(84, row && row->requiresThread ? gateway.selectedThreadLabel()
-                                             : String("Gateway policy still applies"));
+                                             : String("Gateway policy still applies"), kMuted);
   }
-  drawLine(113, "HOLD 1.5S TO CONFIRM");
+  drawLine(113, "HOLD 1.5S TO CONFIRM", kMuted);
   drawFooter("TAP: CANCEL");
 }
 
 void renderResult() {
   drawHeader(resultTitle.length() ? resultTitle : String("RESULT"), "STATUS");
-  drawLine(40, clipped(resultLine1, 25), ST77XX_YELLOW, 2);
-  drawLine(82, clipped(resultLine2, 48));
-  drawLine(107, "Remote work continues unless stopped.");
+  // The emphasis line is the accent, except when the gateway refused the work: a failure keeps
+  // the semantic red so the monochrome treatment cannot make it read as ordinary.
+  drawLine(40, clipped(resultLine1, 25), resultIsError ? kDanger : kAccent, 2);
+  drawLine(82, clipped(resultLine2, 48), kMuted);
+  drawLine(107, "Remote work continues unless stopped.", kMuted);
   drawFooter("PRESS: HOME");
 }
 
@@ -494,15 +532,20 @@ void showPending(const String& title, const String& detail) {
   resultTitle = title;
   resultLine1 = "CONTACTING GATEWAY";
   resultLine2 = detail;
+  resultIsError = false;
   screen = Screen::Result;
   dirty = true;
   render();
 }
 
-void showResult(const String& title, const String& line1, const String& line2) {
+// `isError` is a colour decision, not a behaviour one: it only tells the renderer that this
+// particular outcome is a failure and must keep the semantic red.
+void showResult(const String& title, const String& line1, const String& line2,
+                bool isError = false) {
   resultTitle = title;
   resultLine1 = line1;
   resultLine2 = line2;
+  resultIsError = isError;
   screen = Screen::Result;
   dirty = true;
 }
@@ -510,7 +553,8 @@ void showResult(const String& title, const String& line1, const String& line2) {
 void showDispatchResult(const DispatchResult& result) {
   if (!result.accepted) {
     showResult("ACTION FAILED", result.httpStatus == 404 ? String("STALE / UNAVAILABLE")
-                                                         : String("NOT ACCEPTED"), result.detail);
+                                                         : String("NOT ACCEPTED"), result.detail,
+               true);
     return;
   }
   const String state = result.status.length() ? upper(result.status) : String("ACCEPTED");
@@ -783,13 +827,13 @@ void setup() {
 
   beginDisplay();
   drawHeader("AGENT CONTROLLER", "BOOT");
-  drawLine(52, "Starting secure controller", ST77XX_WHITE, 2);
-  drawLine(89, "Loading device identity...");
+  drawLine(52, "Starting secure controller", kInk, 2);
+  drawLine(89, "Loading device identity...", kMuted);
 
   if (!store.begin()) {
-    drawHeader("DEVICE STORAGE", "FAILED");
-    drawLine(50, "NVS unavailable", ST77XX_RED, 2);
-    drawLine(88, "Check the partition table.");
+    drawHeader("DEVICE STORAGE", "FAILED", kDanger);
+    drawLine(50, "NVS unavailable", kDanger, 2);
+    drawLine(88, "Check the partition table.", kMuted);
     Serial.println("FATAL: NVS unavailable");
     return;
   }

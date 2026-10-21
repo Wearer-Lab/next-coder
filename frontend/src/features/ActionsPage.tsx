@@ -22,6 +22,7 @@ import { clearDurableMutationRequest, durableMutationRequest } from "../requestI
 import type { JsonRecord, SavedAction, SavedActionStep, SavedActionType } from "../types";
 import { Button, EmptyState, Field, StatusBadge, cn, useConfirm } from "../ui";
 import { mediaLabel } from "./MediaCapture";
+import "./intelligence-control.css";
 
 const actionKinds: Array<{
   value: SavedActionType;
@@ -199,11 +200,11 @@ export function ActionsPage({ controller: c }: { controller: Controller }) {
   };
 
   return (
-    <div className="actions-workspace">
+    <div className="actions-workspace ic-scope ic-actions">
       <header className="actions-header">
         <div>
-          <p className="eyebrow">Reusable operations</p>
-          <h2 className="font-display text-xl font-semibold tracking-[-0.025em]">Actions library</h2>
+          <p className="ac-eyebrow">Reusable operations</p>
+          <h2 className="ac-display-title">Actions library</h2>
           <p>Author once, then assign it to compatible controllers. On hardware it appears inside an opened thread, never in the root menu.</p>
         </div>
         <Button variant="primary" onClick={() => setDraft(emptyDraft())}><Plus className="size-4" /> New action</Button>
@@ -338,7 +339,7 @@ function ActionEditor({
       <section className="action-editor" role="dialog" aria-modal="true" aria-labelledby="action-editor-title">
         <header>
           <div>
-            <p className="eyebrow">{draft.id ? "Edit definition" : "New reusable operation"}</p>
+            <p className="ac-eyebrow">{draft.id ? "Edit definition" : "New reusable operation"}</p>
             <h2 id="action-editor-title">{draft.id ? draft.label : "Create action"}</h2>
           </div>
           <Button size="icon" variant="ghost" aria-label="Close action editor" onClick={onClose}><X className="size-4" /></Button>

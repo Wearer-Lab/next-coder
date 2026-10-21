@@ -35,6 +35,19 @@ constexpr uint8_t kBright = 255;    // the one thing on the screen that matters
 constexpr size_t kCols1 = 38;
 constexpr size_t kCols2 = 19;
 
+// THE ACCENT.
+//
+// The console's palette carries one chromatic signal — a violet, #b7a8ff — and spends it on the
+// things that are true rather than on decoration: live, selected, act now. This panel is a
+// monochrome screen on a black canvas, which is the same ground the console and the marketing
+// pages are drawn on, so the same discipline applies here.
+//
+// There is no second colour. Anything violet on the glass means one of three things: this is
+// live, this is selected, or this is the thing to press. Everything else is the grey ramp above.
+//
+// The colour itself lives in display.h, next to the panel's polarity, because that is where a
+// colour has to be correct to be written at all.
+
 struct Rect {
   int16_t x, y, w, h;
 };
@@ -77,6 +90,11 @@ void textCentered(int16_t y, uint8_t size, uint8_t grey, const String& value);
 void textCenteredIn(const Rect& r, int16_t y, uint8_t size, uint8_t grey, const String& value);
 void textRight(int16_t right, int16_t y, uint8_t size, uint8_t grey, const String& value);
 
+// The accent, as ink. The only coloured text on the panel, and it says the same thing everywhere:
+// this is the live thing, the selected thing, or the thing to press.
+void textAccent(int16_t x, int16_t y, uint8_t size, const String& value);
+void textRightAccent(int16_t right, int16_t y, uint8_t size, const String& value);
+
 // Word wrap into a caller-owned array. Returns the number of lines written. A word longer than the
 // column count is broken rather than allowed to run off the edge — a URL or a file path is exactly
 // the kind of unbroken token an assistant reply is full of.
@@ -113,7 +131,50 @@ void dot(int16_t cx, int16_t cy, float radius, uint8_t grey, uint8_t bg = kBg);
 void chevron(int16_t cx, int16_t cy, float size, int8_t dir, uint8_t grey, float thickness = 2.0f,
              uint8_t bg = kBg);
 
-// The marker beside the selected row of a list: a short vertical capsule, not a filled rectangle.
-void marker(int16_t x, int16_t y, int16_t h, uint8_t grey, uint8_t bg = kBg);
+// The marker beside the selected row of a list is the ACCENT one, below: a selected row is a
+// statement about right now, and right now is what the accent is for.
+
+// ---------------------------------------------------------------------------------------------
+// The accent
+// ---------------------------------------------------------------------------------------------
+//
+// The same three states the console gives the accent, in the shapes this panel already has. A
+// filled accent shape is an action; an outlined one is a live state; a small accent mark is a
+// selection. Nothing else on the glass is ever violet.
+
+// A filled accent pill. The design's call to action, in the product's colour.
+void accentCapsule(const Rect& r, uint8_t bg = kBg);
+
+// An accent outline with nothing behind it: a control or a state that is marked, not pressed.
+void accentOutline(const Rect& r, float strokeWidth = 1.6f, uint8_t bg = kBg);
+
+// The accent marker beside the selected row of a list.
+void accentMarker(int16_t x, int16_t y, int16_t h, uint8_t bg = kBg);
+
+// A small accent dot: the live/attention mark beside a status row.
+void accentDot(int16_t cx, int16_t cy, float radius, uint8_t bg = kBg);
+
+// A small accent square: the device's pixel glyph, used as a metric marker.
+void accentPixel(int16_t x, int16_t y, int16_t size, uint8_t bg = kBg);
+
+// The greyscale twin of accentPixel(), for the markers that are not saying anything.
+void pixel(int16_t x, int16_t y, int16_t size, uint8_t grey, uint8_t bg = kBg);
+
+// ---------------------------------------------------------------------------------------------
+// The metric rhythm
+// ---------------------------------------------------------------------------------------------
+//
+// The console shows a strip of metrics where each one is a marker glyph, a tabular value and a
+// faint caption. A 240 px screen has room for that rhythm rather than a table, so the same
+// three-part shape is what the device's summary rows are built from.
+
+// A metric line: a marker glyph, a large value, and a faint caption beside it. The value is the
+// answer and the caption only names it, which is the order the console's stat strip reads in.
+void statLine(int16_t x, int16_t y, const String& value, const String& caption, uint8_t valueTone);
+
+// A fact row: the same rhythm at size 1, because a device id is thirty characters long and will
+// not survive being doubled. The caption sits under the value, indented to it.
+void factRow(int16_t x, int16_t y, const String& value, const String& caption, uint8_t valueTone,
+             bool accent);
 
 }  // namespace uip

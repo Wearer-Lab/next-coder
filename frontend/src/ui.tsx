@@ -47,7 +47,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 ) {
   const variants: Record<ButtonVariant, string> = {
     primary:
-      "border-primary bg-primary text-primary-foreground hover:bg-primary-hover",
+      "border-transparent bg-primary text-primary-foreground shadow-[0_0_18px_rgb(255_255_255/16%)] hover:bg-primary-hover",
     secondary:
       "border-control-strong bg-surface-raised text-ink hover:bg-surface-inset",
     ghost: "border-transparent bg-transparent text-ink-muted hover:bg-surface-inset hover:text-ink",
@@ -57,9 +57,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       "border-transparent bg-transparent text-danger hover:border-danger/20 hover:bg-danger/8",
   };
   const sizes: Record<ButtonSize, string> = {
-    sm: "min-h-8 px-2.5 text-xs",
-    md: "min-h-9 px-3 text-sm",
-    lg: "min-h-11 px-4 text-sm",
+    sm: "min-h-8 px-3 text-xs",
+    md: "min-h-9 px-3.5 text-sm",
+    lg: "min-h-11 px-5 text-sm",
     icon: "size-9 p-0",
   };
 
@@ -68,7 +68,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ref={ref}
       type="button"
       className={cn(
-        "relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md border font-semibold outline-none transition-[background,border-color,color,box-shadow] duration-150 focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+        "relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full border font-semibold outline-none transition-[background,border-color,color,box-shadow] duration-150 focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
         variants[variant],
         sizes[size],
         className,
@@ -105,7 +105,7 @@ export function Panel({ children, className, elevated = false, ...props }: Panel
   return (
     <section
       className={cn(
-        "relative min-w-0 rounded-lg border border-control bg-surface text-ink",
+        "relative min-w-0 rounded-xl border border-control bg-surface/70 text-ink backdrop-blur-sm",
         elevated && "bg-surface-raised shadow-raised",
         className,
       )}
@@ -134,8 +134,8 @@ export function SectionHeader({
   return (
     <div className={cn("flex items-start justify-between gap-4", compact ? "p-4" : "p-5 sm:p-6")}>
       <div className="min-w-0">
-        {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
-        <h2 className={cn("font-display font-semibold tracking-[-0.02em]", compact ? "text-lg" : "text-xl")}>
+        {eyebrow ? <p className="ac-eyebrow">{eyebrow}</p> : null}
+        <h2 className={cn("ac-display-title", compact ? "text-base" : "text-xl")}>
           {title}
         </h2>
         {description ? <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-muted">{description}</p> : null}
@@ -195,7 +195,7 @@ export function StatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex min-h-6 items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium whitespace-nowrap",
+        "inline-flex min-h-6 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium whitespace-nowrap",
         config.shell,
         className,
       )}
@@ -236,7 +236,7 @@ export function EmptyState({
       <div className="mb-4 grid size-10 place-items-center rounded-lg border border-control bg-surface-inset text-ink-muted">
         <Icon className="size-5" aria-hidden="true" />
       </div>
-      <h3 className="font-display text-base font-semibold">{title}</h3>
+      <h3 className="ac-display-title text-base">{title}</h3>
       <p className="mt-1 max-w-sm text-sm leading-relaxed text-ink-muted">{description}</p>
       {action ? <div className="mt-4">{action}</div> : null}
     </div>

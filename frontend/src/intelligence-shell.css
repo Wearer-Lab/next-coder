@@ -1,0 +1,492 @@
+/* ==========================================================================
+   The console's app shell, restyled in the "intelligence design" language.
+
+   The signed-out marketing pages (features/landing.css) already speak it:
+   a black canvas, a white pill navigation, a pixel display face, glowing white
+   calls to action and hairline glass cards. This file brings the shell — the
+   rail, the topbar, the phone bar — into the same family, so the console does
+   not change character the moment a signed-in user lands in it.
+
+   Two deliberate choices:
+
+     1. These rules are *unlayered*. Tailwind v4 keeps its utilities in a
+        cascade layer, and a layered rule loses to any utility — which would
+        make it impossible to restyle an element that carries, say,
+        `font-display`, without editing the component that owns it. Unlayered
+        rules win, so the shell can be restyled from the outside and the markup
+        can stay exactly as it was.
+
+     2. Everything is scoped under `.app-shell`. The marketing pages are a
+        separate surface with their own stylesheet; nothing here may leak into
+        them. The one exception is the route fallback, which the marketing
+        pages also render, and that is scoped the same way.
+
+   The shell keeps its own information architecture and every existing class
+   name; only surfaces, rhythm, colour and type change here.
+   ========================================================================== */
+
+.app-shell {
+  /* Hairlines and fills, expressed against the ink so they follow the theme
+     instead of being hardcoded to white. */
+  --shell-line: color-mix(in srgb, var(--ac-ink) 9%, transparent);
+  --shell-line-strong: color-mix(in srgb, var(--ac-ink) 17%, transparent);
+  --shell-fill: color-mix(in srgb, var(--ac-ink) 3.5%, transparent);
+  --shell-fill-strong: color-mix(in srgb, var(--ac-ink) 8%, transparent);
+  --shell-glow: 0 0 22px rgb(255 255 255 / 12%);
+}
+
+/* The light theme inverts the glow: a white halo on a pale rail is nothing. */
+html:not(.dark)[data-theme="light"] .app-shell {
+  --shell-glow: 0 0 22px rgb(12 12 16 / 14%);
+}
+
+/* And the mark inverts with it: a white circle on a pale rail has no edge. */
+html:not(.dark)[data-theme="light"] .app-shell .brand-mark {
+  background: var(--ac-ink);
+  color: var(--ac-canvas);
+  box-shadow: 0 4px 14px rgb(12 12 16 / 16%);
+}
+
+/* The rail ----------------------------------------------------------------- */
+
+.app-shell .sidebar {
+  border-right: 1px solid var(--shell-line-strong);
+  background:
+    linear-gradient(180deg, var(--shell-fill), transparent 22rem),
+    color-mix(in srgb, var(--ac-sidebar) 88%, transparent);
+}
+
+/* The brand ---------------------------------------------------------------- */
+
+.app-shell .sidebar__brand {
+  border-bottom: 1px solid var(--shell-line);
+  padding: 0 0.9rem;
+}
+
+/* The mark is the marketing logo button: a white circle with the glyph
+   punched out of it in ink. */
+.app-shell .brand-mark {
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #0b0b0b;
+  box-shadow:
+    0 4px 14px rgb(0 0 0 / 30%),
+    0 0 20px rgb(255 255 255 / 10%);
+  transition: transform 0.24s ease, box-shadow 0.24s ease;
+}
+
+.app-shell .brand-mark svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.app-shell .brand-mark:hover {
+  transform: scale(1.04);
+}
+
+.app-shell .brand-copy {
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-shell .brand-copy__name {
+  color: var(--ac-sidebar-ink);
+  font-family: var(--ac-display);
+  font-size: 0.82rem;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.app-shell .brand-copy__meta {
+  margin-top: 0;
+  border: 1px solid var(--shell-line-strong);
+  border-radius: 999px;
+  background: var(--shell-fill-strong);
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.16em;
+  padding: 0.15rem 0.45rem;
+}
+
+/* The search field --------------------------------------------------------- */
+
+.app-shell .sidebar-search {
+  min-height: 2.4rem;
+  margin: 0.6rem 0.75rem 0.5rem;
+  border: 1px solid var(--shell-line);
+  border-radius: 999px;
+  background: var(--shell-fill);
+  padding: 0 0.75rem;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.app-shell .sidebar-search:hover {
+  border-color: var(--shell-line-strong);
+  color: var(--ac-sidebar-ink);
+}
+
+.app-shell .sidebar-search:focus-within {
+  border-color: var(--shell-line-strong);
+  background: var(--shell-fill-strong);
+  color: var(--ac-sidebar-ink);
+}
+
+.app-shell .sidebar-search kbd {
+  border: 1px solid var(--shell-line);
+  border-radius: 999px;
+  background: var(--shell-fill-strong);
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  padding: 0.15rem 0.4rem;
+}
+
+/* The navigation ----------------------------------------------------------- */
+
+.app-shell .sidebar__nav {
+  padding: 0.4rem 0.7rem 1rem;
+}
+
+.app-shell .sidebar__section-heading {
+  margin: 0.95rem 0 0.4rem;
+  color: var(--ac-ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.app-shell .sidebar__section-actions button {
+  border-radius: 50%;
+}
+
+/* Nav items are pills; the active one is lit from within, the way the
+   marketing navigation marks the current page. */
+.app-shell .nav-item {
+  position: relative;
+  min-height: 2.35rem;
+  margin: 0.1rem 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ac-sidebar-muted);
+  padding: 0.35rem 0.65rem;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.app-shell .nav-item:hover,
+.app-shell .nav-item:focus-visible {
+  border-color: var(--shell-line);
+  background: var(--shell-fill);
+  color: var(--ac-sidebar-ink);
+}
+
+.app-shell .nav-item[data-active] {
+  border-color: var(--shell-line-strong);
+  background: var(--shell-fill-strong);
+  color: var(--ac-ink);
+  box-shadow: var(--shell-glow);
+}
+
+.app-shell .nav-count {
+  min-width: 1.25rem;
+  height: 1.15rem;
+  border: 1px solid var(--shell-line);
+  border-radius: 999px;
+  background: var(--shell-fill);
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+}
+
+.app-shell .nav-count--warning {
+  border-color: color-mix(in srgb, var(--ac-warning) 34%, transparent);
+  background: color-mix(in srgb, var(--ac-warning) 14%, transparent);
+  color: var(--ac-warning-strong);
+}
+
+/* The resource tree -------------------------------------------------------- */
+
+/* The tree is the rail's one card: hairline edge, translucent fill, generous
+   corners, and hairline separators between the resources it holds. */
+.app-shell .resource-tree {
+  gap: 0.1rem;
+  margin: 0 0.3rem;
+  border: 1px solid var(--shell-line);
+  border-radius: 1rem;
+  background: var(--shell-fill);
+  padding: 0.3rem;
+}
+
+.app-shell .resource-tree > .resource-group + .resource-group {
+  margin-top: 0.15rem;
+  border-top: 1px solid var(--shell-line);
+  padding-top: 0.15rem;
+}
+
+.app-shell .resource-project + .resource-project,
+.app-shell .resource-thread + .resource-thread {
+  border-top: 1px solid var(--shell-line);
+}
+
+.app-shell .resource-row,
+.app-shell .resource-thread,
+.app-shell .resource-empty {
+  border-radius: 0.6rem;
+}
+
+/* A calmer hover: the row lifts a hair and nothing else moves. */
+.app-shell .resource-row:hover,
+.app-shell .resource-row:focus-visible,
+.app-shell .resource-thread:hover,
+.app-shell .resource-thread:focus-within,
+.app-shell .resource-empty:hover,
+.app-shell .resource-empty:focus-visible {
+  background: color-mix(in srgb, var(--ac-ink) 2.5%, transparent);
+  color: var(--ac-sidebar-ink);
+}
+
+.app-shell .resource-row[data-active],
+.app-shell .resource-thread[data-active] {
+  background: color-mix(in srgb, var(--ac-ink) 6%, transparent);
+  color: var(--ac-sidebar-ink);
+}
+
+.app-shell .resource-row[data-active] {
+  box-shadow: inset 0 0 0 1px var(--shell-line-strong);
+}
+
+.app-shell .resource-row__label {
+  font-weight: 500;
+}
+
+/* The inline actions sit straight on the row; a fill of their own would draw a
+   second box inside the card. */
+.app-shell .resource-row-inline-actions button {
+  background: transparent;
+}
+
+.app-shell .resource-row-inline-actions button:hover,
+.app-shell .resource-row-inline-actions button:focus-visible {
+  background: var(--shell-fill-strong);
+}
+
+.app-shell .resource-thread__menu-trigger {
+  border-radius: 50%;
+}
+
+/* The account chip --------------------------------------------------------- */
+
+.app-shell .account-chip {
+  min-height: 2.6rem;
+  gap: 0.6rem;
+  border: 1px solid var(--shell-line);
+  border-radius: 999px;
+  background: var(--shell-fill);
+  color: var(--ac-sidebar-ink);
+  padding: 0.35rem 0.6rem;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.app-shell .account-chip:hover,
+.app-shell .account-chip:focus-visible {
+  border-color: var(--shell-line-strong);
+  background: var(--shell-fill-strong);
+  color: var(--ac-sidebar-ink);
+}
+
+/* The collapsed rail keeps its own geometry. -------------------------------- */
+
+.app-shell[data-sidebar-collapsed] .nav-item {
+  padding-inline: 0;
+}
+
+.app-shell[data-sidebar-collapsed] .account-chip {
+  width: 2.5rem;
+  height: 2.5rem;
+  min-height: 0;
+  padding: 0;
+}
+
+/* The topbar ---------------------------------------------------------------- */
+
+.app-shell .topbar {
+  position: sticky;
+  top: 0;
+  border-bottom: 1px solid var(--shell-line-strong);
+  background: color-mix(in srgb, var(--ac-canvas) 74%, transparent);
+  padding: 0 1rem 0 1.15rem;
+  backdrop-filter: blur(14px) saturate(140%);
+}
+
+.app-shell .topbar__title-line {
+  gap: 0.6rem;
+}
+
+/* The context chip is a pill: hairline edge, glass fill, mono label. It stays
+   a single line and truncates rather than pushing the actions off the bar. */
+.app-shell .topbar__context {
+  display: inline-block;
+  max-width: 13rem;
+  min-height: 1.75rem;
+  overflow: hidden;
+  vertical-align: middle;
+  border: 1px solid var(--shell-line-strong);
+  border-radius: 999px;
+  background: var(--shell-fill-strong);
+  color: var(--ac-ink-muted);
+  padding: 0.25rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.04em;
+  line-height: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The bar's own buttons become glass pills with a hairline edge. */
+.app-shell .topbar-icon-button {
+  border: 1px solid var(--shell-line);
+  background: var(--shell-fill);
+  color: var(--ac-ink-muted);
+}
+
+.app-shell .topbar-icon-button:hover {
+  border-color: var(--shell-line-strong);
+  background: var(--shell-fill-strong);
+  color: var(--ac-ink);
+}
+
+/* The primary action in the bar is the marketing's glowing white pill, with
+   the ink inverted for the light theme automatically. */
+.app-shell .topbar-add-action {
+  border-color: transparent;
+  background: var(--ac-ink);
+  color: var(--ac-canvas);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--ac-ink) 24%, transparent);
+  transition: transform 0.24s ease, box-shadow 0.24s ease;
+}
+
+.app-shell .topbar-add-action:hover:not(:disabled) {
+  background: var(--ac-ink);
+  color: var(--ac-canvas);
+  transform: translateY(-1px);
+  box-shadow: 0 0 30px color-mix(in srgb, var(--ac-ink) 34%, transparent);
+}
+
+/* The phone bar ------------------------------------------------------------ */
+
+@media (max-width: 820px) {
+  .app-shell .sidebar {
+    background: color-mix(in srgb, var(--ac-sidebar) 92%, transparent);
+    box-shadow: 24px 0 60px rgb(0 0 0 / 45%);
+    backdrop-filter: blur(18px) saturate(130%);
+  }
+
+  /* The phone bar is a floating pill, so it needs the tighter padding of the
+     phone layout and the context chip stays out of the way entirely. */
+  .app-shell .topbar {
+    padding-inline: 0.55rem;
+  }
+
+  .app-shell .topbar__context {
+    display: none;
+  }
+
+  /* The content clears the floating pill, not a full-bleed bar. */
+  .app-shell .workspace__content {
+    padding-bottom: calc(var(--mobile-nav-height) + 1.5rem);
+  }
+
+  .app-shell .mobile-nav {
+    inset: auto 0.7rem calc(0.7rem + env(safe-area-inset-bottom));
+    height: auto;
+    min-height: var(--mobile-nav-height);
+    align-items: center;
+    gap: 0.15rem;
+    border: 1px solid var(--shell-line-strong);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ac-surface-raised) 76%, transparent);
+    padding: 0.4rem;
+    box-shadow: 0 18px 44px rgb(0 0 0 / 45%);
+    backdrop-filter: blur(16px) saturate(140%);
+  }
+
+  .app-shell .mobile-nav button {
+    position: relative;
+    min-height: 3rem;
+    border-radius: 999px;
+    color: var(--ac-ink-muted);
+    padding: 0.3rem 0.25rem;
+  }
+
+  .app-shell .mobile-nav button[data-active] {
+    color: var(--ac-ink);
+  }
+
+  /* The marketing navigation marks the current page with a dot cluster; the
+     phone bar marks it the same way, under the label. */
+  .app-shell .mobile-nav button[data-active]::after {
+    position: absolute;
+    left: 50%;
+    bottom: 0.22rem;
+    width: 3px;
+    height: 3px;
+    border-radius: 999px;
+    background: var(--ac-ink);
+    content: "";
+    transform: translateX(-50%);
+    box-shadow: -5px 0 0 var(--ac-ink), 5px 0 0 var(--ac-ink);
+  }
+
+  .app-shell .nav-liquid__pill {
+    border-radius: 999px;
+  }
+}
+
+/* The route fallback -------------------------------------------------------- */
+
+.app-shell .page-route-loading {
+  display: grid;
+  min-height: 12rem;
+  place-items: center;
+  margin: 1.25rem;
+  border: 1px solid var(--shell-line);
+  border-radius: 1rem;
+  background: var(--shell-fill);
+  color: var(--ac-ink-muted);
+  padding: 2.5rem 1.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+}
+
+/* Motion -------------------------------------------------------------------- */
+
+/* Without a backdrop filter a translucent bar is just a smudge, so the shell
+   falls back to an opaque surface. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app-shell .topbar,
+  .app-shell .mobile-nav {
+    background: var(--ac-surface-raised);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell .brand-mark,
+  .app-shell .topbar-add-action,
+  .app-shell .nav-item,
+  .app-shell .sidebar-search,
+  .app-shell .account-chip,
+  .app-shell .topbar-icon-button {
+    transition: none !important;
+    transform: none !important;
+  }
+}

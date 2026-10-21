@@ -1,0 +1,440 @@
+/* ==========================================================================
+   The Media and Activity workspaces, in the console's half of the
+   "intelligence design" system.
+
+   The signed-out front door (features/landing.css) sets the language: a black
+   canvas, hairline glass cards, glowing white pills, a pixel display face and
+   a metric strip of pixel glyphs. This file applies the same language to the
+   two console workspaces that are lists rather than posters — the media
+   library and the activity / audit trail.
+
+   Three rules shaped the work:
+
+     1. The rules are unlayered on purpose. The legacy sheet keeps its rules in
+        @layer components and Tailwind's utilities live in their own layer;
+        an unlayered rule beats both, so a restyle here does not have to
+        fight a utility class for the same property (the media rows carry
+        `px-5 py-4`, the switcher items carry `text-xs`). Scope stays tight —
+        every selector hangs off .media-workspace or .activity-workspace.
+
+     2. Nothing animates on its own. The library can hold many items and the
+        audit list is long, so there is no keyframe, no scroll-driven effect
+        and no per-item transform. Only short colour / border / transform
+        transitions on hover, all of them switched off under
+        prefers-reduced-motion.
+
+     3. Everything is a token. --ac-* already carries the dark and the light
+        palette, so these surfaces follow the console's theme instead of
+        hard-coding the marketing pages' black.
+   ========================================================================== */
+
+/* The shared tokens both workspaces read ---------------------------------- */
+
+.media-workspace,
+.activity-workspace {
+  --il-line: var(--ac-border);
+  --il-line-strong: var(--ac-border-strong);
+  --il-glass: var(--ac-glass);
+  --il-glass-strong: var(--ac-glass-strong);
+  --il-radius: 1.15rem;
+  --il-radius-lg: 1.25rem;
+}
+
+/* ==========================================================================
+   Media library
+   ========================================================================== */
+
+/* The header: a pixel title, a quiet lede, and the actions as pills. The
+   buttons already carry the pill shape; what was missing was the hairline
+   and the glow the marketing calls to action has. */
+.media-library-header {
+  align-items: flex-end;
+  gap: 1.25rem;
+  padding: 0 0 0.25rem;
+}
+
+.media-library-header h2 {
+  margin: 0.3rem 0 0;
+  font-family: var(--ac-display);
+  font-size: clamp(1.3rem, 2.6vw, 1.85rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.16;
+  color: var(--ac-ink);
+}
+
+.media-library-header > div:first-child > p:last-child {
+  max-width: 40rem;
+  margin: 0.6rem 0 0;
+  color: var(--ac-ink-muted);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+}
+
+.media-library-header__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.media-library-header__actions > button {
+  border-radius: 999px;
+  transition:
+    transform 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.media-library-header__actions > button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+/* The panel the tiles sit in: a hairline glass card, not a flat surface.
+
+   The backdrop blur the shared Panel primitive carries is dropped here and in
+   the two activity surfaces: a long, scrolling list behind a backdrop filter
+   costs a snapshot per frame, and the marketing pages get their depth from a
+   flat translucent fill over black instead. */
+.media-library {
+  border-radius: var(--il-radius-lg);
+  border-color: var(--il-line);
+  background: var(--il-glass);
+  --tw-backdrop-blur: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* The list itself: tiles, not rows. The divide is gone; each capture is its
+   own hairline card. */
+.media-library__grid {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.media-library__item {
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+  border: 1px solid var(--il-line-strong);
+  border-radius: var(--il-radius);
+  background: var(--il-glass);
+  transition: border-color 0.2s ease;
+}
+
+/* Hover only brightens the hairline — the tile never moves, so a long library
+   does not reflow under the pointer. */
+.media-library__item:hover {
+  border-color: color-mix(in srgb, var(--ac-ink) 26%, transparent);
+}
+
+/* The kind glyph: the marketing feature icon, in miniature. It sits with the
+   name at the top of the tile, not floating in the middle of it. */
+.media-library__icon {
+  align-self: start;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  border-color: var(--il-line-strong);
+  background: var(--il-glass-strong);
+  color: var(--ac-ink);
+}
+
+.media-library__name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ac-ink);
+}
+
+/* The record of the file: mono, faint, and kept out of the way. */
+.media-library__id {
+  margin-top: 0.4rem;
+  color: var(--ac-ink-faint);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+/* The metadata lines: quiet, generous, and never competing with the name. */
+.media-library__meta {
+  margin-top: 0.3rem;
+  color: var(--ac-ink-muted);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.media-library__item textarea {
+  border-radius: 0.75rem;
+  border-color: var(--il-line);
+  background: var(--ac-surface-inset);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+/* The two notices that carry a decision: the same hairline card, one step
+   brighter than the tile they sit in. */
+.media-library__notice {
+  border-radius: 0.85rem;
+  border-color: var(--il-line);
+  background: var(--il-glass-strong);
+}
+
+/* Empty and awaiting-content boxes: a dashed hairline, never a filled slab. */
+.media-library__placeholder,
+.media-library__preview {
+  border-radius: 0.85rem;
+  border-color: var(--il-line-strong);
+  background: transparent;
+  color: var(--ac-ink-muted);
+}
+
+.media-library__image {
+  border-radius: 0.85rem;
+  border-color: var(--il-line);
+}
+
+.media-library__audio {
+  border-radius: 0.75rem;
+}
+
+/* ==========================================================================
+   Activity and audit trail
+   ========================================================================== */
+
+/* The list panel: one hairline glass card, the way the marketing feature
+   grid is one field of hairline cards. The backdrop blur is dropped for the
+   same reason as the media panel: it is a long, scrolling surface. */
+.activity-workspace .activity-list {
+  border-radius: var(--il-radius-lg);
+  border-color: var(--il-line);
+  background: var(--il-glass);
+  box-shadow: none;
+  --tw-backdrop-blur: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* The toolbar under the title: a hairline rule, no slab of inset colour. */
+.activity-workspace .activity-list__toolbar {
+  gap: 0.75rem;
+  border-top-color: var(--il-line);
+  border-bottom-color: var(--il-line);
+  background: transparent;
+  padding: 0.75rem 1.25rem;
+}
+
+.activity-workspace .activity-list__status,
+.activity-workspace .activity-list__strip {
+  border-bottom-color: var(--il-line);
+  border-color: var(--il-line);
+  background: transparent;
+  padding: 0.9rem 1.25rem;
+}
+
+/* The intent switcher: the marketing navigation pill, dark surface, hairline
+   edge, and the active link marked the way the nav marks it — with a small
+   dot under the label and a soft white glow. */
+.activity-workspace .intent-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.25rem;
+  border: 1px solid var(--il-line-strong);
+  border-radius: 999px;
+  background: var(--ac-surface-inset);
+}
+
+.activity-workspace .intent-switcher__item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.85rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ac-ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.18s ease,
+    background 0.18s ease;
+}
+
+.activity-workspace .intent-switcher__item:hover,
+.activity-workspace .intent-switcher__item:focus-visible {
+  color: var(--ac-ink);
+}
+
+.activity-workspace .intent-switcher__item[data-active] {
+  background: var(--il-glass-strong);
+  color: var(--ac-ink);
+  box-shadow:
+    0 0 0 1px var(--ac-border-strong),
+    0 0 18px rgb(255 255 255 / 10%);
+}
+
+.activity-workspace .intent-switcher__item[data-active]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0.2rem;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translateX(-50%);
+}
+
+/* The counts in the switcher are pills too. */
+.activity-workspace .nav-count {
+  min-width: 1.35rem;
+  height: 1.2rem;
+  padding-inline: 0.3rem;
+  border: 1px solid var(--il-line-strong);
+  border-radius: 999px;
+  background: var(--il-glass-strong);
+  color: var(--ac-ink-muted);
+  font-size: 0.58rem;
+}
+
+/* The warning count keeps the ink colour for the number itself: the tint
+   carries the warning, and a fixed amber text would vanish on the light
+   theme's pale fill. */
+.activity-workspace .nav-count--warning {
+  border-color: color-mix(in srgb, var(--ac-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--ac-warning) 16%, transparent);
+  color: var(--ac-ink);
+}
+
+/* The rows read like the marketing FAQ list: hairline-separated, generous,
+   quiet. */
+.activity-workspace .activity-list__rows > * {
+  border-top: 1px solid var(--il-line);
+}
+
+.activity-workspace .activity-list__rows > *:first-child {
+  border-top: 0;
+}
+
+.activity-workspace .activity-list__row {
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+}
+
+/* The title of a row speaks in the pixel display face, the way the marketing
+   section headings do. */
+.activity-workspace .activity-list__title {
+  font-family: var(--ac-display);
+  font-size: 0.9375rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--ac-ink);
+}
+
+/* The body of a row is quiet and generous — it is read, not scanned. */
+.activity-workspace .activity-list__copy {
+  margin-top: 0.5rem;
+  max-width: 62ch;
+  color: var(--ac-ink-muted);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+
+.activity-workspace .activity-list__meta {
+  margin-top: 0.4rem;
+  color: var(--ac-ink-muted);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.activity-workspace .activity-list__stamp {
+  margin-top: 0.4rem;
+  color: var(--ac-ink-faint);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   The command trace — the developer landing page's terminal
+   ========================================================================== */
+
+.activity-workspace .activity-trace__panel {
+  border-radius: var(--il-radius-lg);
+  border-color: var(--il-line-strong);
+  background: var(--il-glass);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 40%);
+  --tw-backdrop-blur: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* The title bar: a hairline edge under a slightly brighter surface. */
+.activity-workspace .activity-trace__panel > div:first-child {
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--il-line);
+  border-radius: var(--il-radius-lg) var(--il-radius-lg) 0 0;
+  background: var(--il-glass-strong);
+}
+
+/* The transcript: the terminal body. Dark in both themes, because a terminal
+   is dark. */
+.activity-workspace .activity-trace__transcript {
+  padding: 1.15rem;
+  border-top: 0;
+  border-bottom: 1px solid var(--il-line);
+  background: var(--ac-console);
+  color: var(--ac-console-ink);
+}
+
+.activity-workspace .activity-trace__transcript p {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.75;
+  color: var(--ac-console-ink);
+}
+
+/* The transitions under the transcript: the same hairline rows as the list. */
+.activity-workspace .activity-trace__events > * {
+  padding: 1rem 1.15rem;
+  border-top: 1px solid var(--il-line);
+}
+
+.activity-workspace .activity-trace__events > *:first-child {
+  border-top: 0;
+}
+
+.activity-workspace .activity-trace__event-title {
+  font-family: var(--ac-display);
+  font-size: 0.875rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--ac-ink);
+}
+
+/* ==========================================================================
+   Motion
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .media-library-header__actions > button,
+  .media-library__item,
+  .activity-workspace .intent-switcher__item {
+    transition: none !important;
+  }
+
+  .media-library-header__actions > button:hover:not(:disabled) {
+    transform: none !important;
+  }
+}

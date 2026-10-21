@@ -33,6 +33,7 @@ import {
   useConfirm,
 } from "../ui";
 import { MediaCaptureDialog, mediaLabel, mediaOriginLabel } from "./MediaCapture";
+import "./intelligence-library.css";
 
 interface HandoffMint {
   handoff: CompanionHandoff;
@@ -201,7 +202,7 @@ export function MediaPage({ controller: c, companionCode = null }: { controller:
     <div className="page-stack media-workspace media-library-workspace">
       <header className="media-library-header">
         <div>
-          <p className="eyebrow">Library</p>
+          <p className="eyebrow ac-eyebrow">Library</p>
           <h2>Media context</h2>
           <p>Uploads and captures available to attach from Operations.</p>
         </div>
@@ -277,17 +278,17 @@ export function MediaPage({ controller: c, companionCode = null }: { controller:
 
       <Panel className="media-library overflow-hidden">
         {c.media.length ? (
-          <div className="divide-y divide-control">
+          <div className="media-library__grid">
             {c.media.map((item) => {
               const job = latestJobFor(item.id);
               return (
-              <article key={item.id} className="grid gap-4 p-4 lg:grid-cols-[auto_minmax(180px,0.55fr)_minmax(260px,1fr)_auto] lg:items-center">
-                <div className="grid size-10 place-items-center rounded-lg border border-control bg-surface-inset text-primary">
+              <article key={item.id} className="media-library__item grid gap-4 p-4 lg:grid-cols-[auto_minmax(180px,0.55fr)_minmax(260px,1fr)_auto] lg:items-center">
+                <div className="media-library__icon grid size-10 place-items-center rounded-lg border border-control bg-surface-inset text-primary">
                   {item.kind === "audio" ? <FileAudio className="size-5" /> : <FileImage className="size-5" />}
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-semibold">{mediaLabel(item)}</p>
+                    <p className="media-library__name truncate text-sm font-semibold">{mediaLabel(item)}</p>
                     <StatusBadge
                       tone={item.processing?.lastError ? "danger" : item.processing?.transcriptionStatus === "processing" ? "warning" : "success"}
                       label={formatMediaProcessing(item)}
@@ -300,7 +301,7 @@ export function MediaPage({ controller: c, companionCode = null }: { controller:
                     here, next to the id, because it is the record of the file and a name that is
                     derived must never be mistaken for the one that was given.
                   */}
-                  <p className="mt-1 truncate font-mono text-[11px] text-ink-faint">
+                  <p className="media-library__id truncate font-mono text-[11px] text-ink-faint">
                     {item.originalName ? `${item.originalName} · ${item.id}` : item.id}
                   </p>
                   {/*
@@ -308,11 +309,11 @@ export function MediaPage({ controller: c, companionCode = null }: { controller:
                     capture was taken, and "24 Aug 19:32" plus "16m ago" is one fact printed twice.
                     What is left is what the name cannot say — the container and how big it is.
                   */}
-                  <p className="mt-1 text-xs text-ink-muted">
+                  <p className="media-library__meta text-xs text-ink-muted">
                     {item.contentType} · {item.sizeBytes ?? 0} B
                   </p>
-                  <p className="mt-1 text-xs text-ink-muted">Origin: {mediaOriginLabel(item)}</p>
-                  <p className="mt-1 text-xs text-ink-muted">
+                  <p className="media-library__meta text-xs text-ink-muted">Origin: {mediaOriginLabel(item)}</p>
+                  <p className="media-library__meta text-xs text-ink-muted">
                     {formatMediaExpiry(item.expiresAt)}
                   </p>
                 </div>
@@ -341,7 +342,7 @@ export function MediaPage({ controller: c, companionCode = null }: { controller:
                         actionable half — "failed" alone sent people to the server logs.
                       */}
                       {job?.stage === "failed" ? (
-                        <div className="mt-2 rounded-lg border border-control bg-surface-inset p-2 text-xs">
+                        <div className="media-library__notice mt-2 rounded-lg border border-control bg-surface-inset p-2 text-xs">
                           <p className="font-semibold text-ink">Transcription failed</p>
                           <p className="mt-1 text-ink-muted">{mediaJobFailureLabel(job)}</p>
                           {job.lastError ? (
@@ -350,7 +351,7 @@ export function MediaPage({ controller: c, companionCode = null }: { controller:
                         </div>
                       ) : null}
                       {job?.transcriptChange?.contentPreserved === false ? (
-                        <div className="mt-2 rounded-lg border border-control bg-surface-inset p-2 text-xs">
+                        <div className="media-library__notice mt-2 rounded-lg border border-control bg-surface-inset p-2 text-xs">
                           <p className="font-semibold text-ink">Cleanup changed the wording</p>
                           <p className="mt-1 text-ink-muted">
                             Heard: <span className="font-mono">{job.rawTranscript}</span>
@@ -365,7 +366,7 @@ export function MediaPage({ controller: c, companionCode = null }: { controller:
                       ) : null}
                     </>
                   ) : (
-                    <div className="rounded-lg border border-dashed border-control p-4 text-center text-xs text-ink-muted">
+                    <div className="media-library__placeholder rounded-lg border border-dashed border-control p-4 text-center text-xs text-ink-muted">
                       Image context is ready to attach from Operations.
                     </div>
                   )}
@@ -466,7 +467,7 @@ function MediaPreview({ controller, item }: { controller: Controller; item: Medi
 
   if (!url) {
     return (
-      <div className="mb-3 rounded-lg border border-dashed border-control p-3 text-center text-xs text-ink-muted">
+      <div className="media-library__preview mb-3 rounded-lg border border-dashed border-control p-3 text-center text-xs text-ink-muted">
         {error ? <p role="alert" className="mb-2 text-danger">{error}</p> : null}
         <Button size="sm" variant="secondary" busy={loading} onClick={() => void load()}>
           {error ? "Retry preview" : `Load ${item.kind} preview`}
@@ -476,12 +477,12 @@ function MediaPreview({ controller, item }: { controller: Controller; item: Medi
     );
   }
   return item.kind === "audio" ? (
-    <audio className="mb-3 w-full" controls preload="metadata" src={url}>
+    <audio className="media-library__audio mb-3 w-full" controls preload="metadata" src={url}>
       Audio preview is unavailable in this browser.
     </audio>
   ) : (
     <img
-      className="mb-3 max-h-56 w-full rounded-lg border border-control bg-black/20 object-contain"
+      className="media-library__image mb-3 max-h-56 w-full rounded-lg border border-control bg-black/20 object-contain"
       src={url}
       alt={`Preview of ${mediaLabel(item)}`}
       loading="lazy"

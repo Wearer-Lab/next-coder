@@ -564,7 +564,8 @@ void drawDisplay() {
     frame.icon = acui::Icon::Home;
     frame.listMode = true;
     constexpr size_t actionCount = 3;  // Threads + Gateway + Firmware.
-    frame.title += " " + String(selectedActionIndex + 1) + "/" + String(actionCount);
+    // The position marker has its own header slot; the title stays a headline.
+    frame.position = String(selectedActionIndex + 1) + "/" + String(actionCount);
     frame.state = "READY";
     for (size_t actionIndex = 0; actionIndex < actionCount; actionIndex += 1) {
       acui::Row& output = frame.rows[frame.rowCount++];
@@ -591,7 +592,7 @@ void drawDisplay() {
     frame.icon = acui::Icon::Thread;
     frame.listMode = threadOptionCount > 0;
     if (threadOptionCount > 0) {
-      frame.title += " " + String(selectedThreadIndex + 1) + "/" + String(threadOptionCount);
+      frame.position = String(selectedThreadIndex + 1) + "/" + String(threadOptionCount);
       frame.state = displayModel.state == "switching" || displayModel.state == "error"
           || displayModel.state == "active"
         ? displayModel.state
@@ -622,7 +623,7 @@ void drawDisplay() {
     const size_t threadActionCount = menuCount + 1;  // Latest response + assigned actions.
     frame.listMode = true;
     if (threadActionCount > 0) {
-      frame.title += " " + String(selectedMenuIndex + 1) + "/" + String(threadActionCount);
+      frame.position = String(selectedMenuIndex + 1) + "/" + String(threadActionCount);
       frame.state = "READY";
       const size_t pageStart = (static_cast<size_t>(selectedMenuIndex) / 3) * 3;
       for (size_t row = 0; row < 3 && pageStart + row < threadActionCount; row += 1) {
@@ -665,7 +666,7 @@ void drawDisplay() {
       frame.listMode = followUpActionCount > 0;
       frame.state = followUpActionCount > 0 ? String("SELECT") : String("EMPTY");
       if (followUpActionCount > 0) {
-        frame.title += " " + String(selectedFollowUpIndex + 1) + "/" + String(followUpActionCount);
+        frame.position = String(selectedFollowUpIndex + 1) + "/" + String(followUpActionCount);
         for (size_t i = 0; i < followUpActionCount; i += 1) {
           acui::Row& output = frame.rows[frame.rowCount++];
           output.label = followUpActions[i].label;
@@ -684,7 +685,7 @@ void drawDisplay() {
       frame.icon = acui::Icon::Agent;
       frame.state = responseState;
       frame.textPageMode = true;
-      frame.title += " " + String(responsePage + 1) + "/" + String(responsePageCount);
+      frame.position = String(responsePage + 1) + "/" + String(responsePageCount);
       frame.textLineCount = responseLineCount;
       for (size_t i = 0; i < responseLineCount; i += 1) frame.textLines[i] = responseLines[i];
       frame.footerLabel = followUpActionCount > 0 ? String("ROTATE:PAGE OK:ACTIONS") : String("ROTATE:PAGE OK:REFRESH");
@@ -696,7 +697,7 @@ void drawDisplay() {
     const size_t profileCount = deviceStore.gatewayProfileCount();
     frame.listMode = profileCount > 0;
     if (profileCount > 0) {
-      frame.title += " " + String(selectedGatewayProfileIndex + 1) + "/" + String(profileCount);
+      frame.position = String(selectedGatewayProfileIndex + 1) + "/" + String(profileCount);
       frame.state = "SELECT";
     } else {
       frame.state = displayModel.state;

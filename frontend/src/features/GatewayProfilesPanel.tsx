@@ -15,6 +15,7 @@ import { useState } from "react";
 import type { Controller } from "../controller";
 import type { GatewayProfile, GatewayProfileMode, RemoteAccessStatus } from "../types";
 import { Button, Field, Panel, SectionHeader, StatusBadge, useConfirm } from "../ui";
+import "./intelligence-control.css";
 
 interface GatewayProfileDraft {
   id?: string;
@@ -136,7 +137,7 @@ export function GatewayProfilesPanel({ controller: c }: { controller: Controller
   };
 
   return (
-    <Panel elevated className="gateway-profiles-panel overflow-hidden">
+    <Panel elevated className="gateway-profiles-panel ic-panel overflow-hidden">
       <SectionHeader
         eyebrow="Controller routing"
         title="Gateway profiles"
@@ -192,12 +193,12 @@ export function GatewayProfilesPanel({ controller: c }: { controller: Controller
 
       {draft ? (
         <div className="gateway-profile-form" role="dialog" aria-modal="true" aria-labelledby="gateway-profile-form-title">
-          <header><div><p className="eyebrow">Trusted origin</p><h3 id="gateway-profile-form-title">{draft.id ? "Edit gateway profile" : "Add gateway profile"}</h3></div><Button size="icon" variant="ghost" aria-label="Close gateway profile editor" onClick={() => setDraft(null)}><X className="size-4" /></Button></header>
+          <header><div><p className="ac-eyebrow">Trusted origin</p><h3 id="gateway-profile-form-title" className="ic-title">{draft.id ? "Edit gateway profile" : "Add gateway profile"}</h3></div><Button size="icon" variant="ghost" aria-label="Close gateway profile editor" onClick={() => setDraft(null)}><X className="size-4" /></Button></header>
           <div className="gateway-profile-form__body">
             <Field label="Profile label" htmlFor="gateway-profile-label"><input id="gateway-profile-label" autoFocus value={draft.label} onChange={(event) => setDraft({ ...draft, label: event.target.value })} placeholder="Studio LAN" /></Field>
             <Field label="Access mode" htmlFor="gateway-profile-mode"><select id="gateway-profile-mode" value={draft.mode} onChange={(event) => setDraft({ ...draft, mode: event.target.value as GatewayProfileMode })}><option value="lan">LAN</option><option value="tailnet">Private Tailnet</option><option value="custom">Custom HTTPS</option></select></Field>
             <Field label="Gateway origin" htmlFor="gateway-profile-url" error={urlError}><input id="gateway-profile-url" type="url" value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder={draft.mode === "tailnet" ? "https://gateway.example.ts.net" : draft.mode === "lan" ? "http://192.168.1.25:3996" : "https://gateway.example.com"} /></Field>
-            <div className="gateway-profile-form__note"><CheckCircle2 className="size-4" /><span>Only an origin is stored. Credentials, paths, query strings, fragments, and unsafe URL schemes are rejected.</span></div>
+            <div className="gateway-profile-form__note ic-note"><CheckCircle2 className="size-4" /><span>Only an origin is stored. Credentials, paths, query strings, fragments, and unsafe URL schemes are rejected.</span></div>
           </div>
           <footer><Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button><Button variant="primary" disabled={!draft.label.trim() || Boolean(urlError)} busy={c.busyAction === (draft.id ? `update-gateway-profile-${draft.id}` : "create-gateway-profile")} onClick={() => void save()}><Save className="size-4" /> Save profile</Button></footer>
         </div>

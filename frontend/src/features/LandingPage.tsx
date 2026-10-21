@@ -7,7 +7,6 @@ import {
   GalleryVerticalEnd,
   KeyRound,
   ListChecks,
-  LogIn,
   Monitor,
   Radio,
   ScrollText,
@@ -20,8 +19,16 @@ import {
 } from "lucide-react";
 
 import type { AuthConfig, ClerkBridge } from "../types";
-import { Button } from "../ui";
-import { LandingBrand, MarketingSwitch, Shot } from "./landingChrome";
+import {
+  LandingBackdrop,
+  LandingButton,
+  LandingNav,
+  MarketingSwitch,
+  Shot,
+  StatStrip,
+  TrustRow,
+  revealStyle,
+} from "./landingChrome";
 
 interface LandingPageProps {
   authConfig: AuthConfig;
@@ -193,81 +200,90 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
   const clerkReady = Boolean(authConfig.clerk?.enabled && clerk);
   const checkingSession = clerkReady && !clerk?.loaded;
 
+  const headerActions = clerkReady ? (
+    <>
+      <LandingButton variant="dark" size="sm" disabled={checkingSession} onClick={() => clerk?.openSignIn()}>
+        Sign in
+      </LandingButton>
+      <LandingButton variant="primary" size="sm" disabled={checkingSession} onClick={() => clerk?.openSignUp()}>
+        Create account
+      </LandingButton>
+    </>
+  ) : null;
+
+  const heroActions = clerkReady ? (
+    <div className="landing__actions landing__reveal" style={revealStyle("0.28s")}>
+      <LandingButton size="lg" variant="primary" disabled={checkingSession} onClick={() => clerk?.openSignUp()}>
+        <Sparkles className="size-4" />
+        {checkingSession ? "Checking session…" : "Create your account"}
+      </LandingButton>
+      <LandingButton size="lg" variant="secondary" disabled={checkingSession} onClick={() => clerk?.openSignIn()}>
+        I already have one
+      </LandingButton>
+    </div>
+  ) : (
+    // A self-hoster who has not finished wiring Clerk needs the reason, not a dead button.
+    <div className="landing__notice landing__reveal" style={revealStyle("0.28s")} role="status">
+      <CircleAlert className="size-4 shrink-0" aria-hidden="true" />
+      <div>
+        <p className="font-semibold">Sign-in is not configured on this gateway.</p>
+        <p className="mt-1 text-xs leading-relaxed">
+          Set <code>CLERK_PUBLISHABLE_KEY</code> and <code>CLERK_SECRET_KEY</code> in the gateway
+          environment, then restart the service.
+        </p>
+      </div>
+    </div>
+  );
+
   return (
     <div className="landing">
-      <header className="landing__bar">
-        <div className="landing__bar-inner">
-          <LandingBrand />
+      <LandingBackdrop video />
 
-          <nav className="landing__nav" aria-label="Page sections">
-            {navLinks.map((link) => (
-              <a key={link.href} href={link.href}>
-                {link.label}
-              </a>
-            ))}
-          </nav>
-
-          {clerkReady ? (
-            <div className="landing__bar-actions">
-              <Button variant="ghost" size="sm" disabled={checkingSession} onClick={() => clerk?.openSignIn()}>
-                <LogIn className="size-4" /> Sign in
-              </Button>
-              <Button variant="primary" size="sm" disabled={checkingSession} onClick={() => clerk?.openSignUp()}>
-                Create account
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      </header>
+      <LandingNav links={navLinks} actions={headerActions} />
 
       <main className="landing__main" id="main-content">
         <section className="landing__section landing__section--hero">
           <div className="landing__inner landing__hero">
             <div className="landing__hero-copy">
-              <p className="eyebrow eyebrow--accent">Remote control for your own agents</p>
-              <h1>Drive T3 Code from a controller, or from anywhere.</h1>
-              <p className="landing__lede">
+              <div className="landing__reveal" style={revealStyle("0.05s")}>
+                <TrustRow icons={[TerminalSquare, Monitor, Smartphone, Radio]}>
+                  Remote control for your own agents
+                </TrustRow>
+              </div>
+
+              <h1 className="landing__hero-title landing__reveal" style={revealStyle("0.1s")}>
+                Drive T3 Code from a controller, or from anywhere.
+              </h1>
+
+              <p className="landing__lede landing__reveal" style={revealStyle("0.2s")}>
                 Agent Controller is the control plane between you and the T3 Code environment on your
                 own machine. It authenticates you, applies your policy, and dispatches the command. It
                 never runs the agent itself — your code and your models stay where they already are.
               </p>
 
-              {clerkReady ? (
-                <div className="landing__actions">
-                  <Button size="lg" variant="primary" disabled={checkingSession} onClick={() => clerk?.openSignUp()}>
-                    <Sparkles className="size-4" />
-                    {checkingSession ? "Checking session…" : "Create your account"}
-                  </Button>
-                  <Button size="lg" variant="secondary" disabled={checkingSession} onClick={() => clerk?.openSignIn()}>
-                    I already have one
-                  </Button>
-                </div>
-              ) : (
-                // A self-hoster who has not finished wiring Clerk needs the reason, not a dead button.
-                <div className="landing__notice" role="status">
-                  <CircleAlert className="size-4 shrink-0" aria-hidden="true" />
-                  <div>
-                    <p className="font-semibold">Sign-in is not configured on this gateway.</p>
-                    <p className="mt-1 text-xs leading-relaxed">
-                      Set <code>CLERK_PUBLISHABLE_KEY</code> and <code>CLERK_SECRET_KEY</code> in the
-                      gateway environment, then restart the service.
-                    </p>
-                  </div>
-                </div>
-              )}
+              {heroActions}
 
-              <p className="landing__reassure">
+              <p className="landing__reassure landing__reveal" style={revealStyle("0.36s")}>
                 <ShieldCheck className="size-3.5 shrink-0" aria-hidden="true" />
                 Every command is policy-screened, and risky ones wait for your approval.
               </p>
             </div>
 
-            <div className="landing__hero-shots" aria-hidden="true">
-              <Shot icon={Radio} ratio="16 / 11" caption="product shot — controller on a desk beside a laptop" />
-              <div className="landing__hero-shots-row">
-                <Shot icon={Smartphone} ratio="4 / 3" caption="phone in hand" />
-                <Shot icon={Monitor} ratio="4 / 3" caption="console screenshot" />
-              </div>
+            <div className="landing__hero-shots landing__reveal" style={revealStyle("0.44s")} aria-hidden="true">
+              <Shot icon={Radio} caption="product shot — controller on a desk beside a laptop" />
+              <Shot icon={Smartphone} caption="phone in hand" />
+              <Shot icon={Monitor} caption="console screenshot" />
+            </div>
+
+            <div className="landing__reveal" style={revealStyle("0.52s")}>
+              <StatStrip
+                stats={[
+                  { glyph: ">", value: steps.length, label: "Steps to first run" },
+                  { glyph: "*", value: features.length, label: "Control-plane capabilities" },
+                  { glyph: "#", value: tiers.length, label: "Ways to deploy" },
+                  { glyph: "%", value: 100, suffix: "%", label: "Credentials stay local" },
+                ]}
+              />
             </div>
           </div>
         </section>
@@ -285,7 +301,7 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
                   <li key={step.title}>
                     <div className="landing__step-head">
                       <div className="landing__step-icon" aria-hidden="true">
-                        <Icon className="size-4" />
+                        <Icon />
                       </div>
                       <span className="landing__step-index" aria-hidden="true">Step {index + 1}</span>
                     </div>
@@ -304,7 +320,7 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
           aria-labelledby="hardware-title"
         >
           <div className="landing__inner landing__hardware">
-            <Shot icon={Radio} ratio="1 / 1" caption={'hero shot — 2.13" e-ink face, encoder detail'} />
+            <Shot icon={Radio} ratio="4 / 3" caption={'hero shot — 2.13" e-ink face, encoder detail'} />
             <div>
               <p className="eyebrow eyebrow--accent">The controller</p>
               <h2 id="hardware-title" className="landing__hardware-title">
@@ -349,7 +365,7 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
                 return (
                   <article key={feature.title}>
                     <div className="landing__feature-icon" aria-hidden="true">
-                      <Icon className="size-4" />
+                      <Icon />
                     </div>
                     <h3>{feature.title}</h3>
                     <p>{feature.body}</p>
@@ -396,23 +412,23 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
                   </ul>
                   {tier.cta.kind === "signup" ? (
                     clerkReady ? (
-                      <Button
+                      <LandingButton
                         className="landing__tier-cta"
                         variant="primary"
                         disabled={checkingSession}
                         onClick={() => clerk?.openSignUp()}
                       >
                         {tier.cta.label}
-                      </Button>
+                      </LandingButton>
                     ) : null
                   ) : tier.cta.kind === "anchor" ? (
                     <a className="landing__tier-cta landing__tier-cta--link" href={tier.cta.href}>
                       {tier.cta.label}
                     </a>
                   ) : (
-                    <Button className="landing__tier-cta" disabled title={tier.cta.note}>
+                    <LandingButton className="landing__tier-cta" disabled title={tier.cta.note}>
                       {tier.cta.label}
-                    </Button>
+                    </LandingButton>
                   )}
                 </article>
               ))}

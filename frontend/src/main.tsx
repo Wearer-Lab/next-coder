@@ -11,6 +11,9 @@ import App from "./App";
 import { registerServiceWorker } from "./pwa";
 import type { AuthConfig, ClerkBridge } from "./types";
 import "./styles.css";
+// The console's half of the "intelligence design" system. Imported last so its palette and
+// primitives win over the legacy sheet on equal specificity.
+import "./intelligence.css";
 
 async function loadAuthConfig(): Promise<AuthConfig> {
   try {

@@ -73,6 +73,16 @@ if (typeof HTMLCanvasElement !== "undefined") {
     : null) as HTMLCanvasElement["getContext"];
 }
 
+// The marketing backdrop is a looping <video>. jsdom implements the media element but not the
+// decoding behind it, so every play() logs "Not implemented" and every pause() throws. The
+// component only asks the browser to start and stop the loop, so a no-op pair is the whole
+// surface the tests need.
+if (typeof HTMLMediaElement !== "undefined") {
+  HTMLMediaElement.prototype.play = () => Promise.resolve();
+  HTMLMediaElement.prototype.pause = () => {};
+  HTMLMediaElement.prototype.load = () => {};
+}
+
 // Several of the motion primitives ask the browser about `prefers-reduced-motion` before they
 // animate anything. jsdom ships no `matchMedia`, and the app's own callers all guard with `?.`,
 // so nothing needed one until now.

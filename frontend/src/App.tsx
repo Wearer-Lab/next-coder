@@ -64,6 +64,10 @@ import {
   useConfirm,
 } from "./ui";
 
+// The shell's own half of the "intelligence design" system. Imported here so the
+// stylesheet travels with the shell it dresses.
+import "./intelligence-shell.css";
+
 // Feature workspaces are deliberately route chunks. The controller and shell stay mounted while
 // only the surface a user opens is downloaded and parsed; a 100 KiB device editor should not tax a
 // first visit to Operations or the signed-out landing page.
@@ -959,7 +963,7 @@ function AppContent({ authConfig, clerk = null }: AppProps) {
         <header className="topbar">
           <div className="flex min-w-0 items-center gap-3">
             <IconButton
-              className="mobile-menu-trigger"
+              className="mobile-menu-trigger topbar-icon-button"
               variant="ghost"
               icon={Menu}
               label="Open navigation"
@@ -967,8 +971,8 @@ function AppContent({ authConfig, clerk = null }: AppProps) {
             />
             <div className="min-w-0">
               <div className="topbar__title-line">
-                <h1 className="truncate font-display text-base font-semibold sm:text-lg">{topbarTitle}</h1>
-                <span className="topbar__context">{topbarContext}</span>
+                <h1 className="ac-display-title truncate">{topbarTitle}</h1>
+                <span className="ac-pill topbar__context">{topbarContext}</span>
               </div>
             </div>
           </div>
@@ -1014,6 +1018,7 @@ function AppContent({ authConfig, clerk = null }: AppProps) {
               </>
             ) : null}
             <Button
+              className="topbar-icon-button"
               variant="ghost"
               size="icon"
               aria-label="Refresh gateway data"
@@ -1029,6 +1034,7 @@ function AppContent({ authConfig, clerk = null }: AppProps) {
                 : <RefreshCw className="size-4" aria-hidden="true" />}
             </Button>
             <IconButton
+              className="topbar-icon-button"
               variant="ghost"
               icon={theme === "dark" ? Sun : Moon}
               label={theme === "dark" ? "Use light theme" : "Use dark theme"}

@@ -18,6 +18,7 @@ import type {
   T3CompatibilityStatus,
 } from "../types";
 import { Button, EmptyState, Metric, Panel, SectionHeader, StatusBadge } from "../ui";
+import "./intelligence-control.css";
 
 const STATUS_LABELS: Record<T3CompatibilityStatus, string> = {
   unchecked: "Not checked",
@@ -113,7 +114,7 @@ export function T3CompatibilityPanel({ controller: c }: { controller: Controller
           : "Not checked";
 
   return (
-    <Panel elevated className="overflow-hidden">
+    <Panel elevated className="ic-panel overflow-hidden">
       <SectionHeader
         eyebrow="Compatibility"
         title="T3 Code versions"
@@ -122,7 +123,7 @@ export function T3CompatibilityPanel({ controller: c }: { controller: Controller
       />
 
       {overview?.release.alert ? (
-        <div className="mx-5 mt-1 flex items-start gap-3 rounded-lg border border-warning/25 bg-warning/8 p-3 text-sm text-warning" role="alert">
+        <div className="ic-note mx-5 mt-1 flex items-start gap-3 border border-warning/25 bg-warning/8 p-3 text-sm text-warning" role="alert">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <div>
             <p className="font-semibold">New T3 Code release needs review</p>
@@ -157,9 +158,9 @@ export function T3CompatibilityPanel({ controller: c }: { controller: Controller
         )}
       </div>
 
-      <div className="grid gap-4 border-t border-control bg-surface-inset/25 p-5 lg:grid-cols-[1fr_auto] lg:items-end">
+      <div className="ic-metrics-band grid gap-4 border-t border-control p-5 lg:grid-cols-[1fr_auto] lg:items-end">
         <div>
-          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <dl className="ic-metrics grid grid-cols-2 gap-4 sm:grid-cols-3">
             <Metric label="Latest release" value={overview?.release.latestVersion ?? "Unavailable"} />
             <Metric label="Minimum supported" value={overview?.release.minimumVersion ?? "0.0.28"} />
             <Metric label="Recommended" value={overview?.release.recommendedVersion ?? "0.0.28"} />
@@ -170,7 +171,7 @@ export function T3CompatibilityPanel({ controller: c }: { controller: Controller
             </p>
           ) : null}
           {overview?.release.recommendedVersion ? (
-            <div className="mt-4 flex max-w-xl items-center gap-2 rounded-md border border-control bg-console p-1.5 pl-3">
+            <div className="ic-console ic-console--inline mt-4 flex max-w-xl items-center gap-2">
               <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-xs text-console-ink">
                 npm install --global t3@{overview.release.recommendedVersion}
               </code>
@@ -205,7 +206,7 @@ function CompatibilityRow({ result }: { result: T3CompatibilityResult }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Server className="size-4 text-ink-muted" aria-hidden="true" />
-            <h3 className="font-display text-sm font-semibold">{result.environmentLabel}</h3>
+            <h3 className="ic-title text-sm">{result.environmentLabel}</h3>
             <StatusBadge tone={statusTone(result.status)} label={STATUS_LABELS[result.status]} />
           </div>
           <p className="mt-2 font-mono text-xs text-ink-muted">
@@ -253,7 +254,7 @@ function CompatibilityRow({ result }: { result: T3CompatibilityResult }) {
       ) : null}
 
       {result.checks.length ? (
-        <details className="mt-3 rounded-md border border-control bg-surface-inset/35 px-3 py-2">
+        <details className="t3-compat-detail mt-3">
           <summary className="cursor-pointer text-xs font-semibold text-ink-muted outline-none focus-visible:ring-2 focus-visible:ring-focus">
             {result.checks.filter((check) => check.passed).length}/{result.checks.length} read-only contract checks passed
           </summary>

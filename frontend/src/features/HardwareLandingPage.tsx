@@ -13,8 +13,13 @@ import {
 import { useState, type FormEvent } from "react";
 
 import type { AuthConfig, ClerkBridge } from "../types";
-import { Button } from "../ui";
-import { LandingBrand, MarketingSwitch, Shot } from "./landingChrome";
+import {
+  LandingBackdrop,
+  LandingButton,
+  LandingNav,
+  Shot,
+  marketingPageLinks,
+} from "./landingChrome";
 
 interface HardwareLandingPageProps {
   authConfig: AuthConfig;
@@ -82,10 +87,10 @@ function RequestUnitForm({ onRequestUnit }: { onRequestUnit?: (email: string) =>
       <div className="hardland__capture">
         <div className="hardland__capture-row">
           <input type="email" placeholder="you@yourcompany.com" disabled aria-label="Email address" />
-          <Button variant="primary" disabled title="Reservations are not open yet.">
+          <LandingButton variant="primary" disabled title="Reservations are not open yet.">
             Request a unit
             <ArrowRight className="size-4" aria-hidden="true" />
-          </Button>
+          </LandingButton>
         </div>
         <p className="hardland__capture-note" role="status">
           <Mail className="size-3.5 shrink-0" aria-hidden="true" />
@@ -125,10 +130,10 @@ function RequestUnitForm({ onRequestUnit }: { onRequestUnit?: (email: string) =>
               placeholder="you@yourcompany.com"
               aria-label="Email address"
             />
-            <Button type="submit" variant="primary" busy={state === "sending"}>
+            <LandingButton type="submit" variant="primary" busy={state === "sending"}>
               Request a unit
               <ArrowRight className="size-4" aria-hidden="true" />
-            </Button>
+            </LandingButton>
           </div>
           <p className="hardland__capture-note">
             <Mail className="size-3.5 shrink-0" aria-hidden="true" />
@@ -151,22 +156,19 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
   const checkingSession = clerkReady && !clerk?.loaded;
 
   return (
-    <div className="landing landing--console hardland">
-      <header className="landing__bar landing__bar--plain">
-        <div className="landing__bar-inner">
-          <LandingBrand badge={null} />
-          <div className="landing__bar-actions">
-            <MarketingSwitch current="early-access" />
-            <span className="hardland__batch">{batch.label}</span>
-          </div>
-        </div>
-      </header>
+    <div className="landing hardland">
+      <LandingBackdrop />
+
+      <LandingNav
+        links={marketingPageLinks("early-access")}
+        actions={<span className="hardland__batch">{batch.label}</span>}
+      />
 
       <main className="landing__main" id="main-content">
         <section className="landing__section hardland__hero">
           <div className="landing__inner hardland__hero-grid">
             <div>
-              <p className="eyebrow eyebrow--primary">Early access</p>
+              <p className="eyebrow eyebrow--accent">Early access</p>
               <h1>A knob for the agent that's already running.</h1>
               <p className="landing__lede">
                 Two hundred and fifty units of the first hardware controller. E-ink face, one
@@ -193,7 +195,7 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
             </div>
 
             <div className="hardland__hero-media">
-              <Shot icon={Radio} ratio="1 / 1" caption="hero shot — controller, three-quarter view" />
+              <Shot icon={Radio} ratio="4 / 3" caption="hero shot — controller, three-quarter view" />
               <div className="hardland__eink-card">
                 <p className="eyebrow">On the e-ink face</p>
                 <div className="hardland__eink" aria-label="Simulated controller screen">
@@ -213,7 +215,7 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
               return (
                 <article key={spec.title}>
                   <div className="landing__step-icon" aria-hidden="true">
-                    <Icon className="size-4" />
+                    <Icon />
                   </div>
                   <h3>{spec.title}</h3>
                   <p>{spec.body}</p>
@@ -226,6 +228,7 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
         <section className="landing__section" aria-labelledby="no-hardware-title">
           <div className="landing__inner hardland__closer">
             <div>
+              <p className="eyebrow eyebrow--accent">No hardware</p>
               <h2 id="no-hardware-title">No hardware? Still works.</h2>
               <p>
                 The gateway and the web console are available now, free while nightly. Pair a T3
@@ -233,7 +236,7 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
                 phone for the thread you keep coming back to.
               </p>
               {clerkReady ? (
-                <Button
+                <LandingButton
                   size="lg"
                   variant="secondary"
                   disabled={checkingSession}
@@ -241,7 +244,7 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
                 >
                   <TerminalSquare className="size-4" />
                   Use the console instead
-                </Button>
+                </LandingButton>
               ) : (
                 <a className="landing__link-button" href="#/developers">
                   <TerminalSquare className="size-4" aria-hidden="true" />

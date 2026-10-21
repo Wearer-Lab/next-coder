@@ -18,20 +18,50 @@ namespace {
 
 extern "C" uint8_t ImageBW[ALLSCREEN_BYTES];
 
+// The panel shows 250 x 122 of paper; the driver's rows 122..127 stay blank.
+// The screen keeps one coordinate contract: a left control rail (0..43) and a
+// content pane (47..247) split by a single hairline.
 constexpr uint16_t kCanvasWidth = 250;
 constexpr uint16_t kCanvasHeight = 122;
 constexpr uint16_t kControlRailRight = 43;
 constexpr uint16_t kContentLeft = 47;
-constexpr uint16_t kHeaderBottom = 22;
-constexpr uint16_t kFooterTop = 102;
+constexpr uint16_t kContentRight = 247;
+
+// The header is one hairline-separated band holding two rows: a small mono
+// eyebrow (state on the left, position marker on the right) and the display
+// title. The body below it holds three list rows or two detail lines.
+constexpr uint16_t kEyebrowY = 1;
+constexpr uint16_t kTitleY = 14;
+constexpr uint16_t kHeaderRuleY = 30;
+constexpr uint16_t kBodyTop = 31;
+constexpr uint16_t kRowPitch = 23;
+constexpr uint16_t kRowInset = 5;
+constexpr uint16_t kContextRuleY = 102;
+constexpr uint16_t kContextTextY = 106;
+
+// The columns of a list row: the cursor marker, the 12 x 12 capability glyph,
+// and the label. The metadata field is right-aligned against the content edge.
+constexpr uint16_t kRowCursorX = 48;
+constexpr uint16_t kRowGlyphX = 59;
+constexpr uint16_t kRowLabelX = 77;
+
+// The panel ships two bitmap faces and no others: 6 x 12 mono for labels and
+// 8 x 16 for the display headline. Nothing new is embedded.
 constexpr uint8_t kFontSmall = 12;
 constexpr uint8_t kFontBody = 16;
+constexpr uint8_t kSmallCharWidth = 6;
+constexpr uint8_t kBodyCharWidth = 8;
 
 // EPD_DrawPoint's color convention is inverted in the vendor driver when the
 // landscape transform is active. WHITE clears a framebuffer bit and therefore
-// paints visible black ink on the physical panel.
+// paints visible black ink on the physical panel; BLACK sets it and leaves
+// bare paper.
 void ink(uint16_t x, uint16_t y) {
   if (x < kCanvasWidth && y < kCanvasHeight) EPD_DrawPoint(x, y, WHITE);
+}
+
+void paper(uint16_t x, uint16_t y) {
+  if (x < kCanvasWidth && y < kCanvasHeight) EPD_DrawPoint(x, y, BLACK);
 }
 
 void inkLine(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
@@ -46,11 +76,11 @@ void inkLine(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
   EPD_DrawLine(x0, y0, x1, y1, WHITE);
 }
 
-void inkRect(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-  inkLine(x0, y0, x1, y0);
-  inkLine(x0, y1, x1, y1);
-  inkLine(x0, y0, x0, y1);
-  inkLine(x1, y0, x1, y1);
+// A filled band. Used for the selected row only: a 1-bit panel cannot dim a
+// label, so the active row earns the design's inverted pill by laying ink
+// down and printing its label back out in paper.
+void inkFill(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+  for (uint16_t y = y0; y <= y1 && y < kCanvasHeight; y += 1) inkLine(x0, y, x1, y);
 }
 
 // Original Agent Controller glyph set. Each icon is a purpose-built 12 x 12
@@ -127,46 +157,68 @@ const uint8_t* bitmapFor(Icon icon) {
   }
 }
 
-void drawIcon(uint16_t x, uint16_t y, Icon icon) {
+// The inverted form paints only the glyph, because the ink field behind it is
+// already laid down: the glyph reads as paper inside a black block.
+void drawIcon(uint16_t x, uint16_t y, Icon icon, bool inverted = false) {
   const uint8_t* bitmap = bitmapFor(icon);
   for (uint8_t row = 0; row < 12; row += 1) {
     const uint16_t bits = static_cast<uint16_t>(bitmap[row * 2]) << 8 | bitmap[row * 2 + 1];
     for (uint8_t col = 0; col < 12; col += 1) {
-      if ((bits & (0x8000 >> col)) != 0) ink(x + col, y + row);
+      if ((bits & (0x8000 >> col)) == 0) continue;
+      if (inverted) {
+        paper(x + col, y + row);
+      } else {
+        ink(x + col, y + row);
+      }
     }
   }
 }
 
-void text(uint16_t x, uint16_t y, const String& value, uint8_t size) {
-  EPD_ShowString(x, y, value.c_str(), BLACK, size);
+// The driver paints every pixel of a glyph cell, so paper text is the exact
+// inverse of ink text and needs the ink field behind it.
+void text(uint16_t x, uint16_t y, const String& value, uint8_t size, bool inverted = false) {
+  EPD_ShowString(x, y, value.c_str(), inverted ? WHITE : BLACK, size);
 }
 
 String upperState(const String& input) {
-  String state = safeLabel(input, 9);
+  String state = safeLabel(input, 12);
   state.toUpperCase();
   if (state.length() == 0) state = "IDLE";
   return state;
 }
 
-void renderHeader(const Frame& frame) {
-  drawIcon(49, 5, frame.icon);
-  const String state = upperState(frame.state);
-  const uint16_t stateWidth = state.length() * 6;
-  const uint16_t stateX = 247 - stateWidth - 3;
-  inkRect(stateX - 3, 3, 247, 19);
-  text(stateX, 5, state, kFontSmall);
+// The title is the screen's display headline, so it wears the larger face and
+// one case, the way the console's display titles do.
+String upperTitle(const String& input, size_t maxChars) {
+  String title = safeLabel(input, maxChars);
+  title.toUpperCase();
+  return title;
+}
 
-  const uint16_t titleX = 67;
-  const size_t titleChars = stateX > titleX + 4 ? (stateX - titleX - 4) / 6 : 10;
-  text(titleX, 5, safeLabel(frame.title, titleChars), kFontSmall);
-  inkLine(kContentLeft, kHeaderBottom, 247, kHeaderBottom);
-  // Two small terminal ticks establish the product's original AC// motif.
-  inkLine(47, 2, 53, 2);
-  inkLine(47, 2, 47, 8);
+void renderHeader(const Frame& frame) {
+  // Eyebrow row: the state word on the left, the position marker on the right.
+  // Both are small mono, the way the design sets its status labels.
+  const String state = upperState(frame.state);
+  text(kContentLeft, kEyebrowY, state, kFontSmall);
+
+  const String position = safeLabel(frame.position, 8);
+  if (position.length() > 0) {
+    const uint16_t width = position.length() * kSmallCharWidth;
+    text(kContentRight - width - 1, kEyebrowY, position, kFontSmall);
+  }
+
+  // Title row: the status glyph keeps the header's left cell, and the
+  // headline takes the rest of the band.
+  const uint16_t titleX = kContentLeft + 17;
+  const size_t titleChars = (kContentRight - titleX) / kBodyCharWidth;
+  drawIcon(kContentLeft + 2, kTitleY + 2, frame.icon);
+  text(titleX, kTitleY, upperTitle(frame.title, titleChars), kFontBody);
+
+  inkLine(kContentLeft, kHeaderRuleY, kContentRight, kHeaderRuleY);
 }
 
 uint16_t centeredRailTextX(const String& value) {
-  const uint16_t width = value.length() * 6;
+  const uint16_t width = value.length() * kSmallCharWidth;
   return width < kControlRailRight ? (kControlRailRight - width) / 2 : 2;
 }
 
@@ -175,6 +227,11 @@ void renderControlRail(const Frame& frame) {
   // MENU at the top, the three rotary switches at center, and EXIT at the bottom.
   // Keeping the labels at those same heights lets the display teach the hardware without a legend.
   inkLine(kControlRailRight, 2, kControlRailRight, 119);
+  // Two short hairlines give the rail the same structure as the content pane:
+  // MENU above, the rotary cluster in the middle, BACK below.
+  inkLine(6, 26, 37, 26);
+  inkLine(6, 96, 37, 96);
+
   const String menu = safeLabel(frame.menuLabel, 6);
   const String back = safeLabel(frame.backLabel, 6);
   text(centeredRailTextX(menu), 5, menu, kFontSmall);
@@ -186,71 +243,64 @@ void renderControlRail(const Frame& frame) {
   text(centeredRailTextX(back), 106, back, kFontSmall);
 }
 
-void renderList(const Frame& frame) {
-  constexpr uint16_t kRowY[3] = {27, 52, 77};
+// List rows and the Home summary share one grid: cursor column, glyph, label,
+// right-aligned metadata. A hairline separates consecutive rows.
+void renderRows(const Frame& frame, bool interactive) {
   for (size_t i = 0; i < frame.rowCount && i < 3; i += 1) {
     const Row& row = frame.rows[i];
-    const uint16_t y = kRowY[i];
-    if (row.selected) {
-      inkLine(kContentLeft, y - 2, 247, y - 2);
-      inkLine(kContentLeft, y + 20, 247, y + 20);
-      text(48, y + 2, ">", kFontSmall);
-    } else {
-      text(48, y + 2, row.disabled ? "x" : " ", kFontSmall);
-    }
-    drawIcon(59, y + 2, row.icon);
+    const uint16_t top = kBodyTop + i * kRowPitch;
+    const uint16_t rowTextY = top + kRowInset;
+    const bool selected = interactive && row.selected;
+
+    // The active row is the device's inverted pill: an ink block whose label
+    // is printed back out in paper.
+    if (selected) inkFill(kContentLeft, top + 1, kContentRight, top + 20);
+
+    // A disabled row keeps its marker in the cursor column, printed in the
+    // row's own polarity so it survives the inversion.
+    if (row.disabled) text(kRowCursorX, rowTextY, "x", kFontSmall, selected);
+
+    drawIcon(kRowGlyphX, rowTextY, row.icon, selected);
 
     const String meta = safeLabel(row.meta, 8);
-    const uint16_t metaWidth = meta.length() * 6;
-    const uint16_t metaX = meta.length() > 0 ? 247 - metaWidth - 3 : 247;
-    if (meta.length() > 0) text(metaX, y + 2, meta, kFontSmall);
-    const uint16_t labelX = 77;
-    const size_t labelChars = metaX > labelX + 4 ? (metaX - labelX - 4) / 6 : 12;
-    text(labelX, y + 2, safeLabel(row.label, labelChars), kFontSmall);
-  }
-}
+    const uint16_t metaWidth = meta.length() * kSmallCharWidth;
+    const uint16_t metaX = meta.length() > 0 ? kContentRight - metaWidth - 1 : kContentRight + 1;
+    if (meta.length() > 0) text(metaX, rowTextY, meta, kFontSmall, selected);
 
-void renderSummary(const Frame& frame) {
-  constexpr uint16_t kRowY[3] = {27, 52, 77};
-  for (size_t i = 0; i < frame.rowCount && i < 3; i += 1) {
-    const Row& row = frame.rows[i];
-    const uint16_t y = kRowY[i];
-    drawIcon(50, y + 2, row.icon);
+    const size_t labelChars = metaX > kRowLabelX + 4 ? (metaX - kRowLabelX - 4) / kSmallCharWidth : 8;
+    text(kRowLabelX, rowTextY, safeLabel(row.label, labelChars), kFontSmall, selected);
 
-    const String meta = safeLabel(row.meta, 8);
-    const uint16_t metaWidth = meta.length() * 6;
-    const uint16_t metaX = meta.length() > 0 ? 247 - metaWidth - 3 : 247;
-    if (meta.length() > 0) text(metaX, y + 2, meta, kFontSmall);
-    const uint16_t labelX = 67;
-    const size_t labelChars = metaX > labelX + 4 ? (metaX - labelX - 4) / 6 : 14;
-    text(labelX, y + 2, safeLabel(row.label, labelChars), kFontSmall);
-    if (i + 1 < frame.rowCount) inkLine(kContentLeft, y + 22, 247, y + 22);
+    if (i + 1 < frame.rowCount) inkLine(kContentLeft, top + 22, kContentRight, top + 22);
   }
 }
 
 void renderDetail(const Frame& frame) {
   // A terminal prompt is decoration with meaning: '$' is gateway/system output,
   // while '>' is the currently relevant next fact. It remains ASCII-only.
-  text(50, 34, "$", kFontBody);
-  text(66, 34, safeLabel(frame.line1, 22), kFontBody);
-  text(50, 64, ">", kFontBody);
-  text(66, 64, safeLabel(frame.line2, 22), kFontBody);
-  inkLine(50, 91, 63, 91);
-  inkLine(50, 94, 56, 94);
+  text(kContentLeft + 1, 36, "$", kFontBody);
+  text(kContentLeft + 15, 36, safeLabel(frame.line1, 22), kFontBody);
+  text(kContentLeft + 1, 66, ">", kFontBody);
+  text(kContentLeft + 15, 66, safeLabel(frame.line2, 22), kFontBody);
+  inkLine(kContentLeft + 1, 88, kContentLeft + 14, 88);
+  inkLine(kContentLeft + 1, 91, kContentLeft + 8, 91);
 }
 
 void renderTextPage(const Frame& frame) {
-  constexpr uint16_t kLineY[3] = {30, 54, 78};
+  constexpr uint16_t kLineY[3] = {34, 58, 82};
   for (size_t index = 0; index < frame.textLineCount && index < 3; index += 1) {
-    text(50, kLineY[index], safeLabel(frame.textLines[index], 31), kFontSmall);
+    text(kContentLeft + 1, kLineY[index], safeLabel(frame.textLines[index], 31), kFontSmall);
   }
 }
 
 void renderContextFooter(const Frame& frame) {
-  inkLine(kContentLeft, kFooterTop, 247, kFooterTop);
-  if (frame.footerLabel.length() > 0) text(50, 106, safeLabel(frame.footerLabel, 32), kFontSmall);
-  else if (frame.listMode) text(50, 106, "ROTATE:MOVE", kFontSmall);
-  else if (frame.summaryMode) text(50, 106, "OK:STATUS MENU:ACTIONS", kFontSmall);
+  inkLine(kContentLeft, kContextRuleY, kContentRight, kContextRuleY);
+  if (frame.footerLabel.length() > 0) {
+    text(kContentLeft + 1, kContextTextY, safeLabel(frame.footerLabel, 32), kFontSmall);
+  } else if (frame.listMode) {
+    text(kContentLeft + 1, kContextTextY, "ROTATE:MOVE", kFontSmall);
+  } else if (frame.summaryMode) {
+    text(kContentLeft + 1, kContextTextY, "OK:STATUS MENU:ACTIONS", kFontSmall);
+  }
 }
 
 }  // namespace
@@ -273,8 +323,8 @@ void render(const Frame& frame) {
   memset(ImageBW, 0xFF, ALLSCREEN_BYTES);
   renderControlRail(frame);
   renderHeader(frame);
-  if (frame.listMode) renderList(frame);
-  else if (frame.summaryMode) renderSummary(frame);
+  if (frame.listMode) renderRows(frame, true);
+  else if (frame.summaryMode) renderRows(frame, false);
   else if (frame.textPageMode) renderTextPage(frame);
   else renderDetail(frame);
   renderContextFooter(frame);

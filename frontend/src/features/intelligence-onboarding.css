@@ -1,0 +1,831 @@
+/* ==========================================================================
+   Setup, claim and recovery, in the console's half of the "intelligence
+   design" system.
+
+   The signed-out front door (features/landing.css) sets the language: a black
+   canvas, hairline glass cards, glowing white pills, a pixel display face and
+   mono small labels. This file applies the same vocabulary to the three
+   screens an operator meets before the product is working — the claim
+   landing, the setup wizard and the workspace recovery dialog.
+
+   Three rules shaped the work:
+
+     1. The rules are unlayered on purpose. The legacy sheet keeps its rules
+        in @layer components and Tailwind's utilities live in their own
+        layer; an unlayered rule beats both, so a restyle here does not have
+        to fight a utility class for the same property. Scope stays tight —
+        every selector hangs off .onboarding-workspace, .claim-landing or
+        .workspace-recovery.
+
+     2. Nothing animates on its own. There is no keyframe, no scroll-driven
+        effect and no continuous repaint. The only transitions are transform
+        and box-shadow on a hover, and they are switched off under
+        prefers-reduced-motion.
+
+     3. Everything is a token. --ac-* already carries the dark and the light
+        console palette, so the wizard and the dialog follow the operator's
+        theme. The claim landing is the exception: it is a standalone arrival
+        outside the console shell, so it carries its own copy of the dark
+        palette and reads the same way whatever the theme is.
+   ========================================================================== */
+
+/* The shared tokens all three surfaces read -------------------------------- */
+
+.onboarding-workspace,
+.claim-landing,
+.workspace-recovery {
+  --io-line: var(--ac-border);
+  --io-line-strong: var(--ac-border-strong);
+  --io-glass: var(--ac-glass);
+  --io-glass-strong: var(--ac-glass-strong);
+  --io-radius: 0.9rem;
+  --io-radius-lg: 1.25rem;
+  --io-display: var(--ac-display);
+}
+
+/* The primary call to action: a white pill with the marketing glow. The
+   buttons already carry the pill shape and the white fill; what was missing
+   was the halo and the lift. The halo is the colour of the call to action
+   itself, so the light theme gets a dark halo without a second token. */
+.onboarding-cta,
+.claim-landing__cta,
+.workspace-recovery__cta {
+  transition:
+    transform 0.24s ease,
+    box-shadow 0.24s ease,
+    background 0.24s ease,
+    color 0.24s ease;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ac-ink) 16%, transparent),
+    0 0 22px color-mix(in srgb, var(--ac-ink) 26%, transparent),
+    0 0 44px color-mix(in srgb, var(--ac-ink) 10%, transparent);
+}
+
+.onboarding-cta:hover:not(:disabled),
+.claim-landing__cta:hover:not(:disabled),
+.workspace-recovery__cta:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ac-ink) 24%, transparent),
+    0 0 30px color-mix(in srgb, var(--ac-ink) 40%, transparent),
+    0 0 56px color-mix(in srgb, var(--ac-ink) 16%, transparent);
+}
+
+/* ==========================================================================
+   The claim landing
+   ========================================================================== */
+
+/* A standalone arrival: someone scanned a QR code and landed here. It is not
+   inside the console shell, so it brings its own dark palette and its own
+   black canvas. */
+.claim-landing {
+  --ac-canvas: #000000;
+  --ac-surface: #0e0f11;
+  --ac-surface-raised: #141518;
+  --ac-surface-inset: #1b1c1f;
+  --ac-ink: #ffffff;
+  --ac-ink-muted: #9b9b9e;
+  --ac-ink-faint: #6b6b6f;
+  --ac-border: rgb(255 255 255 / 8%);
+  --ac-border-strong: rgb(255 255 255 / 16%);
+  --ac-primary: #ffffff;
+  --ac-primary-hover: #e6e6e4;
+  --ac-primary-foreground: #0a0a0b;
+  --ac-glass: rgb(255 255 255 / 4%);
+  --ac-glass-strong: rgb(255 255 255 / 8%);
+  --ac-console: #050506;
+  --ac-console-ink: #f2f2f0;
+
+  position: relative;
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  overflow-y: auto;
+  padding: clamp(1rem, 5vw, 2rem);
+  background: #000000;
+  color: var(--ac-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* One quiet halo behind the card, the way the marketing pages sink into
+   black. It is a static gradient: no animation, no repaint. */
+.claim-landing::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(72% 52% at 50% 40%, rgb(255 255 255 / 7%), transparent 72%);
+  pointer-events: none;
+}
+
+/* The card: a hairline glass panel, centred. */
+.claim-landing__card {
+  position: relative;
+  display: grid;
+  gap: 0.4rem;
+  width: min(26rem, 100%);
+  padding: clamp(1.5rem, 5vw, 2.25rem);
+  border: 1px solid var(--ac-border-strong);
+  border-radius: var(--io-radius-lg);
+  background: var(--ac-glass);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 55%);
+  text-align: center;
+  justify-items: center;
+  /* The panel sits on black: a backdrop filter would cost a compositing
+     layer and change nothing. */
+  backdrop-filter: none;
+}
+
+/* The brand mark: a white disc with the glyph punched out of it. */
+.claim-landing__icon {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  margin-bottom: 0.7rem;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0b0b0b;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.3);
+}
+
+/* The two states that must never be mistaken for each other keep their own
+   colour, so success and a dead end read at a glance. */
+.claim-landing__icon[data-tone="success"] {
+  background: var(--ac-success);
+  color: #ffffff;
+}
+
+.claim-landing__icon[data-tone="danger"] {
+  background: var(--ac-danger);
+  color: #ffffff;
+}
+
+.claim-landing__title {
+  margin: 0;
+  font-family: var(--io-display);
+  font-size: clamp(1.3rem, 4vw, 1.7rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+  color: var(--ac-ink);
+}
+
+.claim-landing__subtitle {
+  margin: 0;
+}
+
+.claim-landing__body {
+  display: grid;
+  gap: 0.9rem;
+  width: 100%;
+  margin-top: 1.35rem;
+  justify-items: center;
+}
+
+.claim-landing__body > * {
+  width: 100%;
+}
+
+/* The claim code: hairline framed, mono, wide tracked. It came off a QR
+   code, so it is shown rather than typed — but it still has to be readable
+   from arm's length. */
+.claim-code {
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--ac-border-strong);
+  border-radius: var(--io-radius);
+  background: rgb(0 0 0 / 0.4);
+}
+
+.claim-code code {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--ac-ink);
+}
+
+/* The label above the field, and the field itself, follow the console's
+   quiet controls. */
+.claim-landing__body label {
+  color: var(--ac-ink-muted);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.claim-landing__body input {
+  border-radius: var(--io-radius);
+  border-color: var(--ac-border-strong);
+  background: var(--ac-surface);
+  font-size: 0.875rem;
+}
+
+.claim-landing__body input::placeholder {
+  color: var(--ac-ink-faint);
+}
+
+/* The way out of the card is quiet: a label, not a second call to action. */
+.claim-landing__body > button.text-xs {
+  border-radius: 999px;
+  min-height: 2rem;
+  padding-inline: 0.75rem;
+  color: var(--ac-ink-muted);
+  text-decoration: none;
+}
+
+.claim-landing__body > button.text-xs:hover {
+  color: var(--ac-ink);
+  background: rgb(255 255 255 / 6%);
+}
+
+@media (max-width: 420px) {
+  .claim-landing {
+    padding: 1rem;
+  }
+
+  .claim-code code {
+    font-size: 1.05rem;
+    letter-spacing: 0.16em;
+  }
+}
+
+/* ==========================================================================
+   The setup wizard
+   ========================================================================== */
+
+.onboarding-workspace {
+  background: var(--ac-canvas);
+  color: var(--ac-ink);
+}
+
+/* The rail: the same quiet sidebar the console uses, with the setup
+   progress in the marketing's hairline. */
+.onboarding-rail {
+  background: color-mix(in srgb, var(--ac-sidebar) 88%, var(--ac-canvas));
+  border-right-color: var(--io-line);
+}
+
+.onboarding-rail__intro h2 {
+  margin: 0;
+  font-family: var(--io-display);
+  font-size: 1.05rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--ac-ink);
+}
+
+.onboarding-rail__intro > p:last-child {
+  margin-top: 0.5rem;
+  color: var(--ac-ink-muted);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.onboarding-progress {
+  height: 2px;
+  background: var(--io-line-strong);
+}
+
+.onboarding-progress span {
+  background: var(--ac-primary);
+}
+
+.onboarding-steps button {
+  border-radius: 0.75rem;
+  color: var(--ac-ink-muted);
+}
+
+.onboarding-steps button:hover:not(:disabled),
+.onboarding-steps button:focus-visible {
+  border-color: var(--io-line);
+  background: var(--io-glass);
+  color: var(--ac-ink);
+}
+
+.onboarding-steps button[data-active] {
+  border-color: var(--io-line-strong);
+  background: var(--io-glass-strong);
+  color: var(--ac-ink);
+}
+
+.onboarding-step__marker {
+  font-family: var(--io-display);
+  font-size: 0.7rem;
+}
+
+.onboarding-steps button[data-active] .onboarding-step__marker {
+  border-color: var(--ac-primary);
+  background: var(--ac-primary);
+  color: var(--ac-primary-foreground);
+}
+
+.onboarding-steps strong {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: inherit;
+}
+
+.onboarding-steps small {
+  color: var(--ac-ink-faint);
+  font-size: 0.6875rem;
+}
+
+/* The stage header: a pixel title over a hairline. */
+.onboarding-stage {
+  background: var(--ac-canvas);
+}
+
+.onboarding-stage__header {
+  border-bottom-color: var(--io-line);
+  background: color-mix(in srgb, var(--ac-canvas) 82%, transparent);
+}
+
+.onboarding-stage__header h1 {
+  margin: 0;
+  border-radius: 0.25rem;
+  font-family: var(--io-display);
+  font-size: clamp(1.15rem, 2.4vw, 1.55rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+  color: var(--ac-ink);
+}
+
+/* The body is a one-column grid so a step can centre itself in the stage
+   without pulling the long steps off the top of the scroll area. The column
+   track is pinned to the container: an implicit `auto` track would size
+   itself to the step's max-content and push the card off a narrow screen. */
+.onboarding-stage__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  justify-items: stretch;
+}
+
+.onboarding-stage__body > * {
+  align-self: start;
+}
+
+.onboarding-stage__body--center > * {
+  align-self: safe center;
+}
+
+/* A step is a hairline glass card on the black canvas. */
+.onboarding-step-pane {
+  display: grid;
+  width: min(100%, 66rem);
+  gap: 1.35rem;
+  margin: 0 auto;
+  padding: clamp(1.1rem, 2.4vw, 1.9rem);
+  border: 1px solid var(--io-line);
+  border-radius: var(--io-radius-lg);
+  background: var(--io-glass);
+}
+
+.onboarding-step-pane--ready {
+  width: min(100%, 54rem);
+}
+
+/* The lead: the step title speaks in the pixel face. */
+.onboarding-step-lead {
+  gap: 0.9rem;
+  padding-bottom: 0.25rem;
+}
+
+.onboarding-step-lead__icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  border-color: var(--io-line-strong);
+  background: var(--io-glass-strong);
+  color: var(--ac-ink);
+}
+
+.onboarding-step-lead h2 {
+  margin: 0;
+  font-family: var(--io-display);
+  font-size: clamp(1.2rem, 2.2vw, 1.5rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--ac-ink);
+}
+
+.onboarding-step-lead p {
+  max-width: 46rem;
+  margin: 0.4rem 0 0;
+  color: var(--ac-ink-muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+/* Sections are separated by a hairline, not by a slab. */
+.onboarding-section {
+  border-top-color: var(--io-line);
+  padding-top: 1.15rem;
+}
+
+.onboarding-section-label span {
+  color: var(--ac-accent);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+}
+
+.onboarding-section-label h3 {
+  margin: 0;
+  color: var(--ac-ink);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* The choices are the marketing feature card, in miniature: a hairline
+   glass panel with a disc for the glyph. */
+.onboarding-choice {
+  border-color: var(--io-line);
+  border-radius: var(--io-radius);
+  background: var(--io-glass);
+  color: var(--ac-ink-muted);
+}
+
+.onboarding-choice:hover,
+.onboarding-choice:focus-visible {
+  border-color: var(--io-line-strong);
+  background: var(--io-glass-strong);
+  color: var(--ac-ink);
+}
+
+.onboarding-choice[data-selected] {
+  border-color: color-mix(in srgb, var(--ac-primary) 46%, transparent);
+  background: var(--io-glass-strong);
+  color: var(--ac-ink);
+}
+
+.onboarding-choice__icon {
+  border-color: var(--io-line-strong);
+  border-radius: 999px;
+  background: var(--io-glass-strong);
+  color: var(--ac-ink);
+}
+
+.onboarding-choice[data-selected] .onboarding-choice__icon {
+  border-color: transparent;
+  background: var(--ac-primary);
+  color: var(--ac-primary-foreground);
+}
+
+.onboarding-choice strong {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ac-ink);
+}
+
+.onboarding-choice small {
+  color: var(--ac-ink-muted);
+  font-size: 0.6875rem;
+}
+
+.onboarding-choice__check {
+  color: var(--ac-ink-faint);
+}
+
+.onboarding-choice[data-selected] .onboarding-choice__check {
+  color: var(--ac-ink);
+}
+
+/* The notice is the marketing notice: hairline, glass, quiet. */
+.onboarding-note {
+  border-color: var(--io-line-strong);
+  border-radius: var(--io-radius);
+  background: var(--io-glass);
+  color: var(--ac-ink-muted);
+}
+
+.onboarding-note svg {
+  color: var(--ac-accent);
+}
+
+/* The failure notice keeps its tone: a red hairline, not a red slab. */
+.onboarding-step-error {
+  border-color: color-mix(in srgb, var(--ac-danger) 40%, transparent);
+  border-radius: var(--io-radius);
+  background: color-mix(in srgb, var(--ac-danger) 10%, transparent);
+  color: var(--ac-danger);
+}
+
+/* The lost-credential notice keeps its warning tone. */
+.onboarding-recovery {
+  border-color: color-mix(in srgb, var(--ac-warning) 34%, transparent);
+  border-radius: var(--io-radius);
+  background: color-mix(in srgb, var(--ac-warning) 8%, transparent);
+}
+
+/* The console blocks keep their near-black fill: a command is a command. */
+.onboarding-command,
+.onboarding-secret {
+  border-color: var(--io-line-strong);
+  border-radius: var(--io-radius);
+  background: var(--ac-console);
+}
+
+.onboarding-project-summary {
+  border-color: var(--io-line);
+  border-radius: var(--io-radius);
+  background: var(--io-glass);
+}
+
+/* The readiness list: a hairline card of hairline rows. */
+.onboarding-readiness {
+  border-color: var(--io-line);
+  border-radius: var(--io-radius);
+  background: var(--io-glass);
+}
+
+.onboarding-readiness__row {
+  border-top-color: var(--io-line);
+}
+
+.onboarding-readiness__icon {
+  border-color: var(--io-line-strong);
+  background: var(--io-glass-strong);
+}
+
+.onboarding-readiness__icon--ready {
+  border-color: transparent;
+  background: var(--ac-success);
+  color: #0b0b0b;
+}
+
+/* The proven state keeps its green, on glass. */
+.onboarding-activation {
+  border-color: color-mix(in srgb, var(--ac-success) 32%, transparent);
+  border-radius: var(--io-radius);
+  background: color-mix(in srgb, var(--ac-success) 9%, transparent);
+  color: var(--ac-success);
+}
+
+/* The action rows sit on the card's own hairline. */
+.onboarding-step-actions {
+  border-top-color: var(--io-line);
+  padding-top: 1.1rem;
+}
+
+.onboarding-final-actions {
+  justify-content: flex-end;
+  gap: 0.65rem;
+  border-top: 1px solid var(--io-line);
+  padding-top: 1.1rem;
+}
+
+/* The welcome is the poster of the wizard: a glass card with a white disc. */
+.onboarding-welcome {
+  display: grid;
+  width: min(100%, 52rem);
+  min-height: 0;
+  gap: 0.9rem;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vw, 2.75rem);
+  border: 1px solid var(--io-line);
+  border-radius: var(--io-radius-lg);
+  background: var(--io-glass);
+  text-align: center;
+  justify-items: center;
+}
+
+.onboarding-welcome__mark {
+  display: grid;
+  width: 3.5rem;
+  height: 3.5rem;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ac-primary);
+  color: var(--ac-primary-foreground);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--ac-ink) 24%, transparent);
+}
+
+.onboarding-welcome h2 {
+  max-width: 34rem;
+  margin: 0;
+  font-family: var(--io-display);
+  font-size: clamp(1.5rem, 3.6vw, 2.25rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+  color: var(--ac-ink);
+}
+
+.onboarding-welcome__copy {
+  max-width: 38rem;
+  margin: 0;
+  color: var(--ac-ink-muted);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+}
+
+.onboarding-outcomes > div {
+  border-top-color: var(--io-line);
+}
+
+.onboarding-outcomes svg {
+  color: var(--ac-ink);
+}
+
+.onboarding-outcomes strong {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ac-ink);
+}
+
+.onboarding-outcomes span {
+  color: var(--ac-ink-muted);
+  font-size: 0.6875rem;
+}
+
+/* The connection source switcher, in the wizard's own scope. The same
+   switcher serves the activity and environment pages, so this rule stays
+   inside .onboarding-workspace. */
+.onboarding-workspace .intent-switcher {
+  border-color: var(--io-line-strong);
+  border-radius: 999px;
+  background: var(--io-glass-strong);
+  padding: 0.2rem;
+}
+
+.onboarding-workspace .intent-switcher__item {
+  border-radius: 999px;
+  color: var(--ac-ink-muted);
+}
+
+.onboarding-workspace .intent-switcher__item:hover,
+.onboarding-workspace .intent-switcher__item:focus-visible {
+  color: var(--ac-ink);
+}
+
+.onboarding-workspace .intent-switcher__item[data-active] {
+  background: var(--ac-primary);
+  color: var(--ac-primary-foreground);
+}
+
+/* Narrow stages ----------------------------------------------------------- */
+
+@container workspace-content (max-width: 52rem) {
+  .onboarding-rail {
+    border-bottom-color: var(--io-line);
+  }
+
+  .onboarding-rail__intro .ac-eyebrow {
+    display: none;
+  }
+
+  .onboarding-rail__intro h2 {
+    font-size: 0.9rem;
+  }
+
+  .onboarding-stage__header {
+    padding: 0.65rem 1rem;
+  }
+}
+
+@container workspace-content (max-width: 36rem) {
+  .onboarding-step-pane {
+    padding: 1rem;
+    border-radius: 1rem;
+  }
+
+  .onboarding-welcome {
+    padding: 1.25rem 1rem;
+    border-radius: 1rem;
+  }
+
+  .onboarding-step-lead {
+    grid-template-columns: 2.25rem minmax(0, 1fr);
+  }
+
+  .onboarding-step-lead__icon {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .onboarding-step-actions,
+  .onboarding-final-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .onboarding-step-actions button,
+  .onboarding-final-actions button {
+    width: 100%;
+  }
+}
+
+/* ==========================================================================
+   The workspace recovery dialog
+   ========================================================================== */
+
+.workspace-recovery {
+  background: rgb(0 0 0 / 78%);
+  backdrop-filter: blur(3px);
+}
+
+.workspace-recovery__dialog {
+  border: 1px solid var(--io-line-strong);
+  border-radius: var(--io-radius-lg);
+  background: color-mix(in srgb, var(--ac-surface-raised) 92%, transparent);
+  box-shadow: 0 30px 90px rgb(0 0 0 / 55%);
+  backdrop-filter: blur(12px);
+}
+
+.workspace-recovery__header {
+  border-bottom-color: var(--io-line);
+  padding: 1rem 1.35rem;
+}
+
+.workspace-recovery__icon {
+  border-color: color-mix(in srgb, var(--ac-warning) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ac-warning) 12%, transparent);
+  color: var(--ac-warning);
+}
+
+.workspace-recovery__eyebrow {
+  color: var(--ac-warning-strong);
+}
+
+.workspace-recovery__title {
+  margin: 0;
+  font-family: var(--io-display);
+  font-size: clamp(1.05rem, 2.2vw, 1.3rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--ac-ink);
+}
+
+.workspace-recovery__body {
+  padding: 1rem 1.35rem 1.25rem;
+}
+
+.workspace-recovery__summary {
+  border-color: color-mix(in srgb, var(--ac-danger) 34%, transparent);
+  border-radius: var(--io-radius);
+  background: color-mix(in srgb, var(--ac-danger) 10%, transparent);
+}
+
+.workspace-recovery__steps {
+  gap: 1.1rem;
+}
+
+.workspace-recovery__command {
+  border-color: var(--io-line);
+  border-radius: var(--io-radius);
+  background: var(--ac-console);
+}
+
+.workspace-recovery__status {
+  border-radius: var(--io-radius);
+}
+
+.workspace-recovery__footer {
+  border-top-color: var(--io-line);
+  padding: 1rem 1.35rem;
+}
+
+@media (max-width: 420px) {
+  .workspace-recovery__dialog {
+    border-radius: 1rem;
+  }
+
+  .workspace-recovery__header,
+  .workspace-recovery__body,
+  .workspace-recovery__footer {
+    padding-inline: 1rem;
+  }
+}
+
+/* ==========================================================================
+   Motion
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-cta,
+  .claim-landing__cta,
+  .workspace-recovery__cta,
+  .onboarding-choice,
+  .onboarding-steps button,
+  .onboarding-progress span {
+    transition: none !important;
+  }
+
+  .onboarding-cta:hover:not(:disabled),
+  .claim-landing__cta:hover:not(:disabled),
+  .workspace-recovery__cta:hover:not(:disabled) {
+    transform: none !important;
+  }
+}

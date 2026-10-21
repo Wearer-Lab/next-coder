@@ -47,6 +47,9 @@ import type {
 } from "../types";
 import { Button, Field, StatusBadge, cn, type StatusTone, useConfirm } from "../ui";
 import { EnvironmentActionCluster } from "./FeatureActionClusters";
+// The fleet half of the "intelligence design" system: hairline glass cards, the pixel display
+// face and the metric strip, scoped to the Environments workspace.
+import "./intelligence-fleet.css";
 
 interface EnvironmentsPageProps {
   controller: Controller;
@@ -396,12 +399,12 @@ export function EnvironmentsPage({
   };
 
   return (
-    <div className="environments-workspace">
+    <div className="environments-workspace ac-fleet">
       <section className="environments-overview" aria-labelledby="environments-heading">
         <div>
-          <p className="eyebrow">T3 control plane</p>
+          <p className="ac-eyebrow">T3 control plane</p>
           <div className="flex flex-wrap items-center gap-3">
-            <h2 id="environments-heading" className="font-display text-xl font-semibold tracking-[-0.025em]">
+            <h2 id="environments-heading" className="ac-display-title">
               {c.environments.length ? "Connected environments" : "Connect your first environment"}
             </h2>
             {c.environments.length ? <StatusBadge label={`${c.environments.length} paired`} /> : null}
@@ -430,6 +433,7 @@ export function EnvironmentsPage({
               )}
               gateways={environmentGatewayInventory(environment.id, c.devices ?? [], c.gatewayProfiles ?? [], c.remoteAccess ?? null)}
               busyAction={c.busyAction}
+              selected={environment.id === c.selectedEnvironmentId}
               onOpen={() => openEnvironment(environment)}
               onCheck={() => void checkEnvironment(environment)}
               onLoad={() => void loadSnapshot(environment)}
@@ -444,8 +448,8 @@ export function EnvironmentsPage({
             <span />
             <Network className="size-6" />
           </div>
-          <p className="eyebrow">No T3 hosts paired</p>
-          <h3 id="empty-environments-title" className="font-display text-xl font-semibold">Where does your agent work run?</h3>
+          <p className="ac-eyebrow">No T3 hosts paired</p>
+          <h3 id="empty-environments-title" className="ac-display-title">Where does your agent work run?</h3>
           <p className="mt-2 max-w-lg text-sm leading-relaxed text-ink-muted">
             Run one short-lived connector command on the computer where T3 Code runs. No inbound port, public T3 URL, or cloud-stored T3 token is required.
           </p>
@@ -460,8 +464,8 @@ export function EnvironmentsPage({
         <section className="environment-archive" aria-labelledby="archived-environments-heading">
           <div className="environment-archive__heading">
             <div>
-              <p className="eyebrow">Disconnected</p>
-              <h3 id="archived-environments-heading" className="font-display text-base font-semibold">Archived environments</h3>
+              <p className="ac-eyebrow">Disconnected</p>
+              <h3 id="archived-environments-heading" className="ac-display text-base">Archived environments</h3>
             </div>
             <StatusBadge label={`${archivedEnvironments.length} archived`} />
           </div>
@@ -552,6 +556,7 @@ function EnvironmentTile({
   proofReady,
   gateways,
   busyAction,
+  selected = false,
   onOpen,
   onCheck,
   onLoad,
@@ -564,6 +569,7 @@ function EnvironmentTile({
   proofReady: boolean;
   gateways: EnvironmentGateway[];
   busyAction: string | null;
+  selected?: boolean;
   onOpen: () => void;
   onCheck: () => void;
   onLoad: () => void;
@@ -576,12 +582,17 @@ function EnvironmentTile({
     callback();
   };
   return (
-    <article className="device-tile environment-tile" onClick={onOpen}>
+    <article
+      className="device-tile environment-tile"
+      data-selected={selected || undefined}
+      data-tone={status.tone}
+      onClick={onOpen}
+    >
       <button type="button" className="device-tile__header" aria-label={`Open ${environment.label}`} onClick={stop(onOpen)}>
         <div className="device-tile__glyph environment-tile__glyph"><Server className="size-5" /></div>
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h3 className="truncate font-display text-base font-semibold">{environment.label}</h3>
+            <h3 className="truncate ac-display text-[1.0625rem]">{environment.label}</h3>
             <StatusBadge tone={status.tone} label={status.label} />
           </div>
           <p className="mt-1 truncate text-xs text-ink-muted">
@@ -708,9 +719,9 @@ function EnvironmentGatewaySummary({ gateways }: { gateways: EnvironmentGateway[
 
 function EnvironmentMetric({ label, value, tone }: { label: string; value: ReactNode; tone?: "danger" }) {
   return (
-    <div className="device-tile__metric">
-      <dt>{label}</dt>
-      <dd className={tone === "danger" ? "text-danger" : undefined}>{value}</dd>
+    <div className="device-tile__metric ac-stat">
+      <dt className="ac-stat__label">{label}</dt>
+      <dd className={cn("ac-stat__value", tone === "danger" && "text-danger")}>{value}</dd>
     </div>
   );
 }
@@ -1004,7 +1015,7 @@ export function ConnectEnvironmentDialog({
             {step === 1 ? (
               <div className="environment-flow__access">
                 <div>
-                  <h3 className="font-display text-base font-semibold">Where will you run the connector?</h3>
+                  <h3 className="ac-display text-base">Where will you run the connector?</h3>
                   <p className="mt-1 text-sm text-ink-muted">Both choices create the same secure outbound connection. Only the handoff instructions differ.</p>
                 </div>
                 <Field label="Environment label" htmlFor="connect-environment-label">
@@ -1600,7 +1611,7 @@ function EnvironmentEditorDialog({
             <div className="environment-editor__section">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="font-display text-base font-semibold">Connector enrollment</p>
+                  <p className="ac-display text-base">Connector enrollment</p>
                   <p className="mt-1 text-sm leading-relaxed text-ink-muted">The connector secret and T3 credential stay on the workspace computer. A revoked secret cannot be displayed or reused.</p>
                 </div>
                 <Button size="sm" onClick={onRepair}><Cable className="size-3.5" /> Create new enrollment</Button>
@@ -1617,7 +1628,7 @@ function EnvironmentEditorDialog({
             <div className="environment-editor__section">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="font-display text-base font-semibold">Replace the legacy direct connection</p>
+                  <p className="ac-display text-base">Replace the legacy direct connection</p>
                   <p className="mt-1 text-sm leading-relaxed text-ink-muted">Managed cloud does not accept or retain a T3 URL or token. Enroll the connector on the workspace computer to restore this environment.</p>
                 </div>
                 <Button size="sm" onClick={onRepair}><Cable className="size-3.5" /> Enroll outbound connector</Button>
@@ -1627,7 +1638,7 @@ function EnvironmentEditorDialog({
             <div className="environment-editor__section">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="font-display text-base font-semibold">Replace the stored credential</p>
+                  <p className="ac-display text-base">Replace the stored credential</p>
                   <p className="mt-1 text-sm leading-relaxed text-ink-muted">Leave this empty to keep the encrypted credential unchanged.</p>
                 </div>
                 <Button size="sm" onClick={onRepair}><Cable className="size-3.5" /> Re-pair from the host</Button>
@@ -1650,7 +1661,7 @@ function EnvironmentEditorDialog({
             <div className="environment-editor__section">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="font-display text-base font-semibold">Connection telemetry</p>
+                  <p className="ac-display text-base">Connection telemetry</p>
                   <p className="mt-1 text-sm text-ink-muted">Current reachability and the last successful contact with T3.</p>
                 </div>
                 <Button size="sm" busy={c.busyAction === `check-environment-${environment.id}`} onClick={onCheck}><RefreshCw className="size-3.5" /> Check now</Button>
@@ -1671,7 +1682,7 @@ function EnvironmentEditorDialog({
               {environment.health?.lastError ? <p className="environment-editor__error" role="alert">{environment.health.lastError}</p> : null}
               <section className="device-editor__danger" aria-labelledby="environment-danger-title">
                 <div>
-                  <p id="environment-danger-title" className="font-display text-sm font-semibold text-danger">Connection danger zone</p>
+                  <p id="environment-danger-title" className="ac-display text-sm text-danger">Connection danger zone</p>
                   <p className="mt-1 text-xs text-ink-muted">Archiving disconnects this host and keeps its record in Archive. Deleting removes the record permanently. Both clear attached device defaults and disable saved actions and macros that target it.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -1686,7 +1697,7 @@ function EnvironmentEditorDialog({
             <div className="environment-editor__section">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="font-display text-base font-semibold">Projects and sessions</p>
+                  <p className="ac-display text-base">Projects and sessions</p>
                   <p className="mt-1 text-sm text-ink-muted">The live T3 snapshot for this environment.</p>
                 </div>
                 <Button size="sm" busy={c.busyAction === `environment-snapshot-${environment.id}`} onClick={onLoad}><RefreshCw className="size-3.5" /> Load snapshot</Button>
@@ -1741,7 +1752,7 @@ function EnvironmentGatewayDetails({ gateways }: { gateways: EnvironmentGateway[
     <div className="environment-editor__section environment-gateways">
       <div className="environment-gateways__intro">
         <div>
-          <p className="font-display text-base font-semibold">Controller gateways</p>
+          <p className="ac-display text-base">Controller gateways</p>
           <p className="mt-1 text-sm leading-relaxed text-ink-muted">
             Endpoints used by physical controllers assigned to this environment. The T3 connection URL is managed separately under Connection.
           </p>
@@ -1869,12 +1880,12 @@ function EnvironmentModalShell({
   if (!open) return null;
   return createPortal((
     <div className="device-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="environment-modal-title" className="device-modal" data-size={size}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="environment-modal-title" className="device-modal ac-fleet" data-size={size}>
         <header className="device-modal__header">
           <div className="min-w-0 flex-1">
-            <p className="eyebrow">{eyebrow}</p>
+            <p className="ac-eyebrow">{eyebrow}</p>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h2 id="environment-modal-title" className="truncate font-display text-lg font-semibold">{title}</h2>
+              <h2 id="environment-modal-title" className="truncate ac-display text-lg">{title}</h2>
               {headerAction}
             </div>
             {description ? <p className="mt-1 truncate text-xs text-ink-muted">{description}</p> : null}

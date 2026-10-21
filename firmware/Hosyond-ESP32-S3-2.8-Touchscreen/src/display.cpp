@@ -372,6 +372,28 @@ inline float roundBoxSdf(float px, float py, float halfW, float halfH, float r) 
   return (outer < 0.0f ? outer : 0.0f) + (qx > 0.0f ? qx : (qy > 0.0f ? qy : 0.0f)) - r;
 }
 
+// Blends `ink` over `base` by coverage, one channel at a time.
+//
+// The greyscale renderer blends a single number, which is why it is cheap. Colour cannot be faked
+// with a single number — a violet over black is not "a grey between black and violet" — so this
+// does the same lerp three times. It is only ever used for the small shapes that carry the
+// accent, which is why the greyscale path was left alone.
+inline uint16_t blendRgb(uint16_t base, uint16_t ink, float cov) {
+  const int br = (base >> 11) & 0x1F;
+  const int bg = (base >> 5) & 0x3F;
+  const int bb = base & 0x1F;
+  const int ir = (ink >> 11) & 0x1F;
+  const int ig = (ink >> 5) & 0x3F;
+  const int ib = ink & 0x1F;
+  const float v = (float)br + ((float)ir - (float)br) * cov;
+  const float g = (float)bg + ((float)ig - (float)bg) * cov;
+  const float b = (float)bb + ((float)ib - (float)bb) * cov;
+  const int r = (int)(v + 0.5f);
+  const int gg = (int)(g + 0.5f);
+  const int bbb = (int)(b + 0.5f);
+  return (uint16_t)(((r & 0x1F) << 11) | ((gg & 0x3F) << 5) | (bbb & 0x1F));
+}
+
 }  // namespace
 
 // The rounded rectangle, restricted to the rows in [bandTop, bandBottom).
@@ -458,6 +480,65 @@ void displaySoftRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, float radi
                           float strokeWidth, float feather) {
   displaySoftRoundRectBand(x, y, w, h, radius, bgGrey, fillGrey, strokeGrey, strokeWidth, feather,
                            0, kPanelH);
+}
+
+// The colour renderer.
+//
+// The same distance field as the greyscale one, but the ground, the fill and the stroke are
+// RGB565 colours and the blend happens per channel. It is a separate function rather than a
+// parameterised one because the greyscale path is the hot one: three channel blends per pixel is
+// a cost the whole UI should not pay for the sake of one accent.
+void displaySoftRoundRectRgb(int16_t x, int16_t y, int16_t w, int16_t h, float radius,
+                             uint16_t bgRgb, int32_t fillRgb, int32_t strokeRgb,
+                             float strokeWidth, float feather) {
+  if (!displayReady() || !dmaRow || w <= 0 || h <= 0) return;
+
+  // A stroke straddles the boundary, exactly as in the greyscale renderer: the pad below is what
+  // keeps the outer half of the outline.
+  const float padF = (strokeRgb >= 0 && strokeWidth > 0.0f)
+    ? (strokeWidth * 0.5f + (feather < 0.35f ? 0.35f : feather))
+    : 0.0f;
+  const int16_t pad = (int16_t)ceilf(padF);
+
+  int16_t x0 = (int16_t)(x - pad), y0 = (int16_t)(y - pad);
+  int16_t x1 = (int16_t)(x + w + pad), y1 = (int16_t)(y + h + pad);
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 > kPanelW) x1 = kPanelW;
+  if (y1 > kPanelH) y1 = kPanelH;
+  if (x1 <= x0 || y1 <= y0) return;
+  const int16_t vw = (int16_t)(x1 - x0);
+
+  const float cx = x + w * 0.5f;
+  const float cy = y + h * 0.5f;
+  const float halfW = w * 0.5f;
+  const float halfH = h * 0.5f;
+  float r = radius;
+  const float rMax = halfW < halfH ? halfW : halfH;
+  if (r > rMax) r = rMax;
+  if (r < 0.0f) r = 0.0f;
+
+  const float f = feather < 0.35f ? 0.35f : feather;
+  const float halfStroke = strokeWidth * 0.5f;
+  const bool wantFill = fillRgb >= 0;
+  const bool wantStroke = strokeRgb >= 0 && strokeWidth > 0.0f;
+
+  Adafruit_ILI9341& g = displayPanel();
+  g.startWrite();
+  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  for (int16_t py = y0; py < y1; ++py) {
+    const float fy = (py + 0.5f) - cy;
+    for (int16_t col = 0; col < vw; ++col) {
+      const float fx = (x0 + col + 0.5f) - cx;
+      const float d = roundBoxSdf(fx, fy, halfW, halfH, r);
+      uint16_t v = bgRgb;
+      if (wantFill) v = blendRgb(v, (uint16_t)fillRgb, clamp01(0.5f - d / f));
+      if (wantStroke) v = blendRgb(v, (uint16_t)strokeRgb, clamp01((halfStroke - fabsf(d)) / f + 0.5f));
+      dmaRow[col] = panelRgb(v);
+    }
+    g.writePixels(dmaRow, vw);
+  }
+  g.endWrite();
 }
 
 void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickness,

@@ -28,6 +28,7 @@ import {
   StatusBadge,
   useConfirm,
 } from "../ui";
+import "./intelligence-library.css";
 
 type ActivityView = "notifications" | "approvals" | "commands" | "audit";
 
@@ -147,7 +148,7 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
             </Button>
           }
         />
-        <div className="flex flex-col gap-3 border-y border-control bg-surface-inset/45 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="activity-list__toolbar flex flex-col gap-3 border-y border-control bg-surface-inset/45 p-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="intent-switcher" aria-label="Activity view">
             <button
               type="button"
@@ -197,7 +198,7 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-control bg-surface-inset/25 px-5 py-3" aria-label="Scheduled worker health">
+        <div className="activity-list__status flex flex-wrap items-center justify-between gap-3 border-b border-control bg-surface-inset/25 px-5 py-3" aria-label="Scheduled worker health">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold text-ink">Scheduled background work</span>
@@ -233,7 +234,7 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
               />
             ) : c.notifications.length ? (
               <div>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-control px-5 py-3">
+                <div className="activity-list__strip flex flex-wrap items-center justify-between gap-3 border-b border-control px-5 py-3">
                   <p className="text-xs text-ink-muted">
                     {c.connection === "reconnecting"
                       ? "Live updates are reconnecting; durable replay remains authoritative."
@@ -250,7 +251,7 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
                     </Button>
                   ) : null}
                 </div>
-                <div className="divide-y divide-control">
+                <div className="activity-list__rows">
                   {c.notifications.map((notification) => {
                     const unread = !notification.readAt;
                     const notificationTone = notification.severity === "error"
@@ -262,7 +263,7 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
                     return (
                       <article
                         key={notification.id}
-                        className="grid gap-4 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                        className="activity-list__row grid gap-4 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                         data-unread={unread || undefined}
                       >
                         <button
@@ -272,14 +273,14 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
                         >
                           <div className="flex flex-wrap items-center gap-2">
                             {unread ? <span className="size-2 rounded-full bg-primary" aria-label="Unread" /> : null}
-                            <span className="font-display text-sm font-semibold">{notification.title}</span>
+                            <span className="activity-list__title font-display text-sm font-semibold">{notification.title}</span>
                             <StatusBadge tone={notificationTone} label={notification.kind.replaceAll("_", " ").replaceAll(".", " · ")} />
                           </div>
-                          <p className="mt-2 truncate text-xs text-ink-muted">
+                          <p className="activity-list__meta mt-2 truncate text-xs text-ink-muted">
                             {environment?.label ?? notification.environmentId ?? "Account"}
                             {notification.threadId ? ` · thread ${notification.threadId}` : ""}
                           </p>
-                          <p className="mt-2 font-mono text-[11px] text-ink-faint">
+                          <p className="activity-list__stamp mt-2 font-mono text-[11px] text-ink-faint">
                             {formatRelativeTime(notification.createdAt)} · {unread ? "unread" : `read ${formatRelativeTime(notification.readAt)}`}
                           </p>
                         </button>
@@ -314,13 +315,13 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
             )
           ) : view === "audit" ? (
             c.audit.length ? (
-              <div className="divide-y divide-control">
+              <div className="activity-list__rows">
                 {c.audit.map((event, index) => (
-                  <article key={event.id ?? `${event.createdAt}-${index}`} className="grid grid-cols-[12px_1fr_auto] gap-3 px-5 py-4">
+                  <article key={event.id ?? `${event.createdAt}-${index}`} className="activity-list__row grid grid-cols-[12px_1fr_auto] gap-3 px-5 py-4">
                     <span className="mt-1.5 size-2 rounded-full bg-accent ring-4 ring-accent/10" />
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{event.action}</p>
-                      <p className="mt-1 truncate text-xs text-ink-muted">
+                      <p className="activity-list__title truncate text-sm font-semibold">{event.action}</p>
+                      <p className="activity-list__meta mt-1 truncate text-xs text-ink-muted">
                         {event.actorType ?? "system"} {event.actorId ?? ""} → {event.targetId ?? "account"}
                       </p>
                     </div>
@@ -332,21 +333,21 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
               <EmptyState icon={ScrollText} title="No audit events" description="Account and device changes will be recorded here." />
             )
           ) : filteredCommands.length ? (
-            <div className="divide-y divide-control">
+            <div className="activity-list__rows">
               {filteredCommands.map((command) => (
-                <article key={command.id} className="grid gap-4 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center">
+                <article key={command.id} className="activity-list__row grid gap-4 px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center">
                   <button
                     type="button"
                     className="min-w-0 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-focus"
                     onClick={() => openTimeline(command)}
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-display text-sm font-semibold capitalize">{commandType(command)}</span>
+                      <span className="activity-list__title font-display text-sm font-semibold capitalize">{commandType(command)}</span>
                       <StatusBadge tone={tone(command.status)} label={command.status.replaceAll("_", " ")} />
                       <span className="text-xs font-semibold capitalize text-ink-muted">{command.risk ?? "unknown"} risk</span>
                     </div>
-                    <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-ink-muted">{commandSummary(command)}</p>
-                    <p className="mt-2 truncate font-mono text-[11px] text-ink-faint">
+                    <p className="activity-list__copy mt-2 line-clamp-2 text-sm leading-relaxed text-ink-muted">{commandSummary(command)}</p>
+                    <p className="activity-list__stamp mt-2 truncate font-mono text-[11px] text-ink-faint">
                       {command.id} · {command.threadId ?? "no thread"} · {formatRelativeTime(command.createdAt)}
                     </p>
                   </button>
@@ -410,24 +411,24 @@ export function ActivityPage({ controller: c }: { controller: Controller }) {
               }
             />
             <div className="activity-trace__body">
-              <div className="border-t border-control bg-console p-4 text-console-ink">
+              <div className="activity-trace__transcript border-t border-control bg-console p-4 text-console-ink">
                 <p className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
                   {commandSummary(c.timelineCommand)}
                 </p>
               </div>
-              <div className="divide-y divide-control">
+              <div className="activity-trace__events">
                 {c.commandEvents.length ? c.commandEvents.map((event) => (
-                  <div key={event.id} className="grid grid-cols-[12px_1fr] gap-3 px-4 py-4">
+                  <div key={event.id} className="activity-trace__event grid grid-cols-[12px_1fr] gap-3 px-4 py-4">
                     <span className="mt-1.5 size-2 rounded-full bg-primary ring-4 ring-primary/10" />
                     <div>
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-semibold capitalize">{event.status.replaceAll("_", " ")}</p>
+                        <p className="activity-trace__event-title text-sm font-semibold capitalize">{event.status.replaceAll("_", " ")}</p>
                         <time className="font-mono text-[10px] text-ink-faint">{formatRelativeTime(event.createdAt)}</time>
                       </div>
-                      <p className="mt-1 text-xs text-ink-muted">
+                      <p className="activity-list__meta mt-1 text-xs text-ink-muted">
                         {event.actorType ?? "system"}{event.actorId ? `:${event.actorId}` : ""} · from {event.previousStatus ?? "created"}
                       </p>
-                      <p className="mt-2 text-xs leading-relaxed text-ink-muted">{renderEventResult(event.result)}</p>
+                      <p className="activity-list__copy mt-2 text-xs leading-relaxed text-ink-muted">{renderEventResult(event.result)}</p>
                     </div>
                   </div>
                 )) : (
