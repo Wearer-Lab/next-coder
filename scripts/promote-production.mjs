@@ -6,10 +6,12 @@ import { lstat, mkdir, readFile, readlink, rename, stat, writeFile } from "node:
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { readEnv } from "./environment.mjs";
+
 import { runStagingQualification } from "./qualify-staging.mjs";
 
-export const PROMOTION_EVIDENCE_SCHEMA = "agent-controller.production-promotion.v1";
-export const PROMOTION_MANIFEST_SCHEMA = "agent-controller.staging-promotion-manifest.v1";
+export const PROMOTION_EVIDENCE_SCHEMA = "next-coder.production-promotion.v1";
+export const PROMOTION_MANIFEST_SCHEMA = "next-coder.staging-promotion-manifest.v1";
 export const MAX_EVIDENCE_AGE_MS = 72 * 60 * 60 * 1000;
 export const REQUIRED_PRODUCTION_QUEUES = Object.freeze([
   "agent-controller-connector-events-production",
@@ -76,10 +78,10 @@ export function normalizePromotionInput(environment = process.env) {
     repositoryRoot: resolve(environment.PRODUCTION_PROMOTION_REPOSITORY_ROOT ?? process.cwd()),
     evidenceRoot: resolve(environment.PRODUCTION_PROMOTION_EVIDENCE_ROOT ?? join(process.cwd(), "promotion-evidence")),
     evidencePath: resolve(environment.PRODUCTION_PROMOTION_OUTPUT_PATH ?? join(process.cwd(), "production-promotion-evidence.json")),
-    stagingUrl: requireHttpsUrl(environment.AGENT_CONTROLLER_STAGING_URL, "staging_url_invalid"),
-    productionUrl: requireHttpsUrl(environment.AGENT_CONTROLLER_PRODUCTION_URL, "production_url_invalid"),
-    mediaBucket: requireText(environment.AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET, "production_media_bucket_required"),
-    firmwareBucket: requireText(environment.AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET, "production_firmware_bucket_required"),
+    stagingUrl: requireHttpsUrl(readEnv(environment, "NEXT_CODER_STAGING_URL"), "staging_url_invalid"),
+    productionUrl: requireHttpsUrl(readEnv(environment, "NEXT_CODER_PRODUCTION_URL"), "production_url_invalid"),
+    mediaBucket: requireText(readEnv(environment, "NEXT_CODER_PRODUCTION_MEDIA_BUCKET"), "production_media_bucket_required"),
+    firmwareBucket: requireText(readEnv(environment, "NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET"), "production_firmware_bucket_required"),
   };
 }
 
@@ -145,10 +147,10 @@ export async function validateEvidenceBundle(input, { now = () => Date.now() } =
     requireMatch(artifactDigests[name], HASH, `artifact_${name}_digest_invalid`);
   }
   const expected = {
-    release: "agent-controller.staging-release.v1",
-    qualification: "agent-controller.staging-qualification.v1",
-    capacity: "agent-controller.staging-capacity.v1",
-    security: "agent-controller.staging-security.v1",
+    release: "next-coder.staging-release.v1",
+    qualification: "next-coder.staging-qualification.v1",
+    capacity: "next-coder.staging-capacity.v1",
+    security: "next-coder.staging-security.v1",
   };
   const evidence = {};
   for (const [name, schema] of Object.entries(expected)) {
@@ -178,7 +180,7 @@ export async function computeArtifactDigests(repositoryRoot, trackedPaths) {
       : path === selector)).sort();
     if (selected.length === 0) throw new ProductionPromotionError(`artifact_${surface}_source_missing`);
     const hash = createHash("sha256");
-    hash.update(`agent-controller-source-artifact-v1\0${surface}\0`);
+    hash.update(`next-coder-source-artifact-v1\0${surface}\0`);
     for (const path of selected) {
       const absolute = join(repositoryRoot, path);
       const metadata = await lstat(absolute);
@@ -215,7 +217,7 @@ export function buildReadOnlyPlan(input, tempRoot) {
 }
 
 export function buildMutationPlan(input, phase) {
-  const message = `agent-controller production promote ${input.targetCommit}`;
+  const message = `next-coder production promote ${input.targetCommit}`;
   const tag = `ac-prod-${input.targetCommit.slice(0, 12)}`;
   if (phase === "private") return [
     command("convex", "npm", ["exec", "convex", "--", "deploy", "--typecheck", "enable", "--codegen", "disable", "--message", message], input.repositoryRoot, CONVEX_SECRETS),
@@ -383,7 +385,7 @@ function requireDeployment(raw, version, commit, boundary) {
   const active = versions.find((item) => item?.version_id === version && Number(item?.percentage) === 100);
   if (!active) throw new ProductionPromotionError(`${boundary}_deployment_changed`);
   const message = active.annotations?.["workers/message"] ?? value.annotations?.["workers/message"];
-  if (message !== `agent-controller production promote ${commit}`) {
+  if (message !== `next-coder production promote ${commit}`) {
     throw new ProductionPromotionError(`${boundary}_source_commit_mismatch`);
   }
 }
@@ -393,7 +395,7 @@ function requireDeploymentCommit(raw, commit, boundary) {
   const versions = Array.isArray(value?.versions) ? value.versions : [];
   const active = versions.find((item) => Number(item?.percentage) === 100);
   const message = active?.annotations?.["workers/message"] ?? value.annotations?.["workers/message"];
-  if (!active || message !== `agent-controller production promote ${commit}`) {
+  if (!active || message !== `next-coder production promote ${commit}`) {
     throw new ProductionPromotionError(`${boundary}_source_commit_mismatch`);
   }
 }
@@ -598,7 +600,7 @@ async function main() {
   try {
     if (mode === "source-artifact-digests") {
       const artifacts = await readTrackedArtifactDigests(process.cwd());
-      process.stdout.write(`${JSON.stringify({ schema: "agent-controller.source-artifacts.v1", artifacts }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ schema: "next-coder.source-artifacts.v1", artifacts }, null, 2)}\n`);
       return;
     }
     input = normalizePromotionInput();

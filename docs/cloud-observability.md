@@ -35,7 +35,7 @@ the only configured persistent application dataset. Do not raise a platform log/
 unless Cloudflare supports verified removal of all raw URL/path/query metadata for both Workers and
 staging confirms the resulting field set.
 
-The event schema is `agent-controller.cloud-telemetry.v1`:
+The event schema is `next-coder.cloud-telemetry.v1`:
 
 | Analytics Engine field | Meaning |
 | --- | --- |

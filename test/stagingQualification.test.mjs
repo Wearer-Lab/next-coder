@@ -181,13 +181,13 @@ test("CLI argument parsing keeps bearer tokens and prompts out of argv", () => {
     "--base-url", "https://staging.example.test",
     "--environment-id", "env_test",
   ], {
-    AGENT_CONTROLLER_STAGING_ACCESS_TOKEN: TOKEN,
+    NEXT_CODER_STAGING_ACCESS_TOKEN: TOKEN,
   });
   assert.equal(parsed.accessToken, TOKEN);
   assert.equal(parsed.baseUrl, "https://staging.example.test");
   assert.equal(parsed.environmentId, "env_test");
   assert.throws(
-    () => parseArguments(["--access-token-file", "/tmp/token"], { AGENT_CONTROLLER_STAGING_ACCESS_TOKEN: TOKEN }),
+    () => parseArguments(["--access-token-file", "/tmp/token"], { NEXT_CODER_STAGING_ACCESS_TOKEN: TOKEN }),
     (error) => error.code === "one_access_token_source_required",
   );
   assert.throws(
@@ -199,7 +199,7 @@ test("CLI argument parsing keeps bearer tokens and prompts out of argv", () => {
     (error) => error.code === "unknown_option",
   );
   assert.throws(
-    () => parseArguments(["--prompt-file", "/tmp/prompt"], { AGENT_CONTROLLER_STAGING_PROMPT: PROMPT }),
+    () => parseArguments(["--prompt-file", "/tmp/prompt"], { NEXT_CODER_STAGING_PROMPT: PROMPT }),
     (error) => error.code === "one_prompt_source_required",
   );
 });

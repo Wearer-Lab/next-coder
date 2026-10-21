@@ -21,7 +21,7 @@ async function main() {
     DEMO_MODE: "0",
     AUTH_PROVIDER: "dev",
     TRANSCRIPTION_PROVIDER: "mock",
-    MEDIA_DIR: await mkdtemp(join(tmpdir(), "agent-controller-convex-media-")),
+    MEDIA_DIR: await mkdtemp(join(tmpdir(), "next-coder-convex-media-")),
   };
 
   const mockT3 = createMockT3Server();
@@ -38,7 +38,7 @@ async function main() {
     const authHeaders = await createDevAuthHeaders(baseUrl);
     const { device, secret } = await post(baseUrl, "/v1/devices", {
       label: `Convex smoke controller ${Date.now()}`,
-      profile: "agent-controller",
+      profile: "next-coder",
     }, authHeaders);
     const { environment } = await post(baseUrl, "/v1/t3/environments", {
       label: "Convex smoke T3",
@@ -184,7 +184,7 @@ async function main() {
     const diagnostics = await get(baseUrl, "/v1/support/diagnostics", authHeaders);
     const transferDevice = await post(baseUrl, "/v1/devices", {
       label: `Convex transfer smoke controller ${Date.now()}`,
-      profile: "agent-controller",
+      profile: "next-coder",
     }, authHeaders);
     const profileUpdate = await put(
       baseUrl,

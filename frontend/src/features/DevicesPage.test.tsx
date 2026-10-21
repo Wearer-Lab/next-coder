@@ -37,7 +37,7 @@ function controller(devices: Device[] = []): Controller {
   const api = vi.fn(async (path: string) => {
     if (path === "/v1/devices") {
       return {
-        device: { id: "dev_new", label: "Desk controller", profile: "agent-controller" },
+        device: { id: "dev_new", label: "Desk controller", profile: "next-coder" },
         secret: "secret-once",
       };
     }
@@ -91,7 +91,7 @@ test("offers all three empty-fleet jobs and guides registration through distinct
   await screen.findByText("Identity created");
   expect(c.api).toHaveBeenCalledWith("/v1/devices", {
     method: "POST",
-    body: { label: "Desk controller", profile: "agent-controller" },
+    body: { label: "Desk controller", profile: "next-coder" },
   });
   expect(c.setDeviceSecret).toHaveBeenCalledWith(expect.objectContaining({ secret: "secret-once" }));
 });
@@ -100,7 +100,7 @@ test("renders health tiles and saves label and runtime configuration from the de
   const device: Device = {
     id: "dev_42",
     label: "Studio dial",
-    profile: "agent-controller",
+    profile: "next-coder",
     lastSeenAt: "2026-08-08T12:00:00.000Z",
     presence: { state: "online" },
     status: {
@@ -160,7 +160,7 @@ test("orders reusable controls and saves the device layout", async () => {
   const device: Device = {
     id: "dev_controls",
     label: "Workshop controller",
-    profile: "agent-controller",
+    profile: "next-coder",
     config: { threadId: "thread_1" },
     status: { firmwareVersion: "2.0.0", hardwareModel: "E213", limits: { menuItems: 4, labelCharacters: 14 } },
   };
@@ -213,7 +213,7 @@ test("updates firmware channel, update mode, and desired release", async () => {
   const device: Device = {
     id: "dev_firmware",
     label: "Release controller",
-    profile: "agent-controller",
+    profile: "next-coder",
     status: { firmwareVersion: "1.0.0", hardwareModel: "E213", protocolVersion: 2 },
   };
   const c = controller([device]);
@@ -243,7 +243,7 @@ test("updates firmware channel, update mode, and desired release", async () => {
   expect(screen.getByRole("heading", { name: "Compile the OTA-enabled image" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Add the binary to the stable catalog" })).toBeVisible();
   expect(screen.getByText(/One-time USB bootstrap may be required/u)).toBeVisible();
-  expect(screen.getAllByText(/AGENT_CONTROLLER_FIRMWARE_VERSION=1.0.1/u)).toHaveLength(2);
+  expect(screen.getAllByText(/NEXT_CODER_FIRMWARE_VERSION=1.0.1/u)).toHaveLength(2);
   fireEvent.click(screen.getByRole("button", { name: "Back to firmware" }));
   await screen.findByText("Installed release");
   fireEvent.change(screen.getByLabelText("Release channel"), { target: { value: "beta" } });
@@ -258,7 +258,7 @@ test("updates firmware channel, update mode, and desired release", async () => {
 });
 
 test("treats a never-acknowledged control revision as waiting for the device", async () => {
-  const device: Device = { id: "dev_pending", label: "Offline controller", profile: "agent-controller" };
+  const device: Device = { id: "dev_pending", label: "Offline controller", profile: "next-coder" };
   const c = controller([device]);
   vi.mocked(c.api).mockImplementation(async (path: string) => {
     if (path.endsWith("/controls")) return {
@@ -277,7 +277,7 @@ test("treats a never-acknowledged control revision as waiting for the device", a
 });
 
 test("stages a revisioned gateway profile switch and keeps the current route pending acknowledgement", async () => {
-  const device: Device = { id: "dev_gateway", label: "Field controller", profile: "agent-controller" };
+  const device: Device = { id: "dev_gateway", label: "Field controller", profile: "next-coder" };
   const c = controller([device]);
   c.gatewayProfiles = [
     { id: "gateway_lan", label: "Studio LAN", mode: "lan", baseUrl: "http://192.168.1.25:3996" },
@@ -315,7 +315,7 @@ test("stages a revisioned gateway profile switch and keeps the current route pen
 });
 
 test("surfaces a failed gateway switch and allows rollback to the confirmed profile", async () => {
-  const device: Device = { id: "dev_failed_gateway", label: "Remote controller", profile: "agent-controller" };
+  const device: Device = { id: "dev_failed_gateway", label: "Remote controller", profile: "next-coder" };
   const c = controller([device]);
   const active = { id: "gateway_lan", label: "Office LAN", mode: "lan" as const, baseUrl: "http://10.0.0.8:3996" };
   const failed = { id: "gateway_custom", label: "External gateway", mode: "custom" as const, baseUrl: "https://gateway.example.com" };
@@ -345,7 +345,7 @@ function preprovisionController() {
       const body = (options?.body ?? {}) as { hardwareModel?: string };
       const board = BOARDS.find((candidate) => candidate.id === body.hardwareModel) ?? BOARDS[0];
       return {
-        device: { id: "dev_factory", label: "Desk controller", profile: "agent-controller", hardwareModel: board.id },
+        device: { id: "dev_factory", label: "Desk controller", profile: "next-coder", hardwareModel: board.id },
         secret: "secret-once",
         claimCode: "ABCDE-23456",
         board,
@@ -389,7 +389,7 @@ test("makes the operator choose a board, defaulting to the one proven board", as
   expect(c.api).toHaveBeenCalledWith("/v1/factory/devices", {
     method: "POST",
     auth: false,
-    body: { label: "Desk controller", profile: "agent-controller", hardwareModel: "e213-esp32-s3r8" },
+    body: { label: "Desk controller", profile: "next-coder", hardwareModel: "e213-esp32-s3r8" },
   });
   // A correct seed on the wrong image is still a dead device, so the image is named on completion.
   expect(screen.getAllByText("crowpanel-esp32-213-epaper").length).toBeGreaterThan(0);
@@ -413,7 +413,7 @@ test("stamps the board the operator picked and names its firmware image", async 
   expect(c.api).toHaveBeenCalledWith("/v1/factory/devices", {
     method: "POST",
     auth: false,
-    body: { label: "Desk controller", profile: "agent-controller", hardwareModel: "ips28-esp32-s3r8" },
+    body: { label: "Desk controller", profile: "next-coder", hardwareModel: "ips28-esp32-s3r8" },
   });
   expect(screen.getAllByText("hosyond-es3c28p-display").length).toBeGreaterThan(0);
 });
@@ -422,7 +422,7 @@ test("shows a stamped board on the device tile and editor, and invents nothing w
   const stamped: Device = {
     id: "dev_stamped",
     label: "Bench controller",
-    profile: "agent-controller",
+    profile: "next-coder",
     hardwareModel: "ips28-esp32-s3r8",
   };
   const c = controller([stamped]);
@@ -436,7 +436,7 @@ test("shows a stamped board on the device tile and editor, and invents nothing w
 });
 
 test("leaves the board blank for a device stamped before the catalogue existed", async () => {
-  const legacy: Device = { id: "dev_legacy", label: "Legacy controller", profile: "agent-controller" };
+  const legacy: Device = { id: "dev_legacy", label: "Legacy controller", profile: "next-coder" };
   const c = controller([legacy]);
   renderPage(c);
 

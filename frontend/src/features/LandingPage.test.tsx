@@ -68,7 +68,7 @@ test("covers hardware, capabilities, pricing and FAQ below the hero", () => {
   expect(screen.getByRole("heading", { name: "Self-hosted" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Hosted" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Team" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: /Does Agent Controller run the model\?/u })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Does Next Coder run the model\?/u })).toBeInTheDocument();
 });
 
 // Every in-page link has to resolve to something that exists. A marketing header whose nav

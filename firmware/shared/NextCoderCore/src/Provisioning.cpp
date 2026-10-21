@@ -270,7 +270,7 @@ void Provisioning::handlePortalRoot() {
   String page =
     "<!doctype html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>Agent Controller setup</title><style>"
+    "<title>Next Coder setup</title><style>"
     "body{font-family:system-ui,sans-serif;margin:0;padding:1.5rem;background:#111211;color:#f1f1ef}"
     "main{max-width:24rem;margin:0 auto}h1{font-size:1.25rem}"
     "label{display:block;margin:1rem 0 .35rem;font-size:.8rem;color:#969795}"
@@ -283,7 +283,7 @@ void Provisioning::handlePortalRoot() {
     "</style></head><body><main>"
     "<h1>Connect this controller</h1>"
     "<p style=\"color:#969795;font-size:.85rem\">This page talks only to the controller. "
-    "It never asks for your Agent Controller account.</p>";
+    "It never asks for your Next Coder account.</p>";
 
   if (portalError_.length() > 0) page += "<div class=\"err\">" + htmlEscape(portalError_) + "</div>";
 

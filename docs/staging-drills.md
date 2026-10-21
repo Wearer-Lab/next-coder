@@ -25,13 +25,13 @@ They share the qualification harness's rules, which are not negotiable:
 
 ## Evidence shape
 
-Every drill emits `agent-controller.staging-drill.v1`, the same shape as
-`agent-controller.staging-qualification.v1` plus a `drill` name and a `mode`, so a drill record can
+Every drill emits `next-coder.staging-drill.v1`, the same shape as
+`next-coder.staging-qualification.v1` plus a `drill` name and a `mode`, so a drill record can
 join an evidence bundle beside a qualification record:
 
 ```json
 {
-  "schema": "agent-controller.staging-drill.v1",
+  "schema": "next-coder.staging-drill.v1",
   "drill": "request-replay",
   "mode": "exercise",
   "result": "passed",
@@ -60,11 +60,11 @@ with the same shape and no target.
 
 | Variable | Meaning |
 |---|---|
-| `AGENT_CONTROLLER_DRILL_URL` | Target origin; equivalent to `--base-url` |
-| `AGENT_CONTROLLER_DRILL_ACCESS_TOKEN` | Platform session token for the drill account |
-| `AGENT_CONTROLLER_DRILL_ENVIRONMENT_ID` | Environment id for the replay drill |
-| `AGENT_CONTROLLER_DRILL_DEPLOYMENT_MODE` | Expected `/v1/auth/config` deployment mode; defaults to `cloud` |
-| `AGENT_CONTROLLER_DRILL_REQUEST_TIMEOUT_MS` | Per-request timeout |
+| `NEXT_CODER_DRILL_URL` | Target origin; equivalent to `--base-url` |
+| `NEXT_CODER_DRILL_ACCESS_TOKEN` | Platform session token for the drill account |
+| `NEXT_CODER_DRILL_ENVIRONMENT_ID` | Environment id for the replay drill |
+| `NEXT_CODER_DRILL_DEPLOYMENT_MODE` | Expected `/v1/auth/config` deployment mode; defaults to `cloud` |
+| `NEXT_CODER_DRILL_REQUEST_TIMEOUT_MS` | Per-request timeout |
 
 `--access-token-file PATH` reads the token from a regular mode-`0600` file instead. A
 group- or world-readable file is refused. `--allow-http-loopback` exists only so the drills can be
@@ -75,7 +75,7 @@ Use a dedicated drill account. These drills create and destroy control-plane sta
 ## 1. Connector revocation — completion plan 4.2
 
 ```bash
-export AGENT_CONTROLLER_DRILL_ACCESS_TOKEN='staging-session-token'
+export NEXT_CODER_DRILL_ACCESS_TOKEN='staging-session-token'
 
 # Preflight: reads only. Always reports "failed" because every revocation check is skipped.
 npm run drill:connector-revocation -- --base-url 'https://staging.example.com'
@@ -86,7 +86,7 @@ npm run drill:connector-revocation -- \
   --exercise-revocation \
   > staging-drill-connector-revocation.json
 
-unset AGENT_CONTROLLER_DRILL_ACCESS_TOKEN
+unset NEXT_CODER_DRILL_ACCESS_TOKEN
 ```
 
 ### What it proves
@@ -135,7 +135,7 @@ If enrollment fails after the environment row was created, the record reports
 ## 2. Durable request replay — completion plan 4.3
 
 ```bash
-export AGENT_CONTROLLER_DRILL_ACCESS_TOKEN='staging-session-token'
+export NEXT_CODER_DRILL_ACCESS_TOKEN='staging-session-token'
 
 npm run drill:request-replay -- \
   --base-url 'https://staging.example.com' \
@@ -143,7 +143,7 @@ npm run drill:request-replay -- \
   --exercise-replay \
   > staging-drill-request-replay.json
 
-unset AGENT_CONTROLLER_DRILL_ACCESS_TOKEN
+unset NEXT_CODER_DRILL_ACCESS_TOKEN
 ```
 
 ### What it proves
@@ -185,14 +185,14 @@ is reported as skipped rather than invented.
 ## 3. Media upload lifecycle — completion plan 4.6
 
 ```bash
-export AGENT_CONTROLLER_DRILL_ACCESS_TOKEN='staging-session-token'
+export NEXT_CODER_DRILL_ACCESS_TOKEN='staging-session-token'
 
 npm run drill:media-lifecycle -- \
   --base-url 'https://staging.example.com' \
   --exercise-media \
   > staging-drill-media-lifecycle.json
 
-unset AGENT_CONTROLLER_DRILL_ACCESS_TOKEN
+unset NEXT_CODER_DRILL_ACCESS_TOKEN
 ```
 
 ### What it proves

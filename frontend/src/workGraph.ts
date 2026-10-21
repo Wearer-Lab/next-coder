@@ -1,7 +1,7 @@
 /**
  * Evidence-limited projection of T3's native task lifecycle.
  *
- * This is deliberately not an Agent Controller orchestrator. T3 remains authoritative and the
+ * This is deliberately not a Next Coder orchestrator. T3 remains authoritative and the
  * projection consumes only fields in T3's shipped provider-runtime/activity contract:
  *
  *   task.started | task.progress | task.updated | task.completed

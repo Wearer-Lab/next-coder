@@ -63,7 +63,7 @@ describe("durable notification planning", () => {
 
     expect(result.notifications).toEqual([expect.objectContaining({
       title: "Agent turn failed",
-      body: "Agent Controller needs your attention.",
+      body: "Next Coder needs your attention.",
       url: expect.stringContaining("view=notifications"),
     })]);
   });

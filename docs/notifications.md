@@ -1,6 +1,6 @@
 # Notifications and background liveness
 
-Agent Controller keeps a durable, in-app notification center for events that materially change an
+Next Coder keeps a durable, in-app notification center for events that materially change an
 operator's next action:
 
 - agent turns complete or fail;
@@ -72,7 +72,7 @@ private Container. The protected release preflight verifies their names without 
 Queue/Cron owns delivery in cloud mode, so the Container's process timer is forced off.
 
 The sender is the pinned `web-push` package, which implements RFC 8291 payload encryption and RFC
-8292 VAPID. Agent Controller does not implement those cryptographic protocols itself. Tests inject a
+8292 VAPID. Next Coder does not implement those cryptographic protocols itself. Tests inject a
 local mock sender and never contact a real push endpoint.
 
 ## Scheduled-worker liveness

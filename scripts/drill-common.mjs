@@ -15,7 +15,9 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 
-export const DRILL_SCHEMA = "agent-controller.staging-drill.v1";
+import { readEnv } from "./environment.mjs";
+
+export const DRILL_SCHEMA = "next-coder.staging-drill.v1";
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -85,7 +87,7 @@ export function parseDrillArguments(argv, {
   fileOptions = {},
 } = {}) {
   const parsed = {};
-  for (const [key, variable] of Object.entries(envDefaults)) parsed[key] = environment[variable];
+  for (const [key, variable] of Object.entries(envDefaults)) parsed[key] = readEnv(environment, variable);
   for (const key of Object.values(flagOptions)) parsed[key] = parsed[key] === true;
 
   const values = new Map(Object.entries(valueOptions));

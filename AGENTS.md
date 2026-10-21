@@ -1,9 +1,9 @@
-# Agent Controller
+# Next Coder
 
-Agent Controller is a cloud control plane between people, controller hardware, the web console, and
+Next Coder is a cloud control plane between people, controller hardware, the web console, and
 [T3 Code](https://github.com/pingdotgg/t3code). The production server should run in the cloud,
 preferably on Cloudflare. T3 Code and optional Tailscale run on the user's machine, where the
-install-free `@agent-controller/connector` CLI connects the local T3 runtime to Agent Controller.
+install-free `@next-coder/connector` CLI connects the local T3 runtime to Next Coder.
 The cloud service authenticates actors,
 applies policy, stores control-plane state, and routes work; it never runs coding agents itself.
 
@@ -16,13 +16,13 @@ detailed protocol history and invariants that do not fit here.
 ### 1. Device architecture
 
 Controllers are purpose-built remote surfaces, not miniature gateways and not sources of account
-truth. They connect directly to the cloud Agent Controller endpoint over authenticated outbound
+truth. They connect directly to the cloud Next Coder endpoint over authenticated outbound
 HTTPS/WSS, capture intent, render a compact projection, cache only what is needed to survive a
 temporary disconnect, and recover through explicit provisioning and claim flows. ESP32 controllers
 do not run Tailscale. Authentication, policy, durable control-plane state, and routing stay in the
 cloud service.
 
-Reusable device behavior belongs in `firmware/shared/AgentControllerCore`; board folders own pins,
+Reusable device behavior belongs in `firmware/shared/NextCoderCore`; board folders own pins,
 display/input drivers, and genuinely board-specific UI. A feature is not complete when only the
 console or one board can use it. Follow the full path—input, policy, dispatch, live result, recovery,
 and reverse action—on every applicable surface.
@@ -31,11 +31,11 @@ and reverse action—on every applicable surface.
 
 Remote operation is the product, not an optional deployment mode. The production topology is:
 
-1. Agent Controller runs at a stable cloud HTTPS/WSS origin, preferably on Cloudflare.
+1. Next Coder runs at a stable cloud HTTPS/WSS origin, preferably on Cloudflare.
 2. Controllers and the web console connect to that cloud origin.
 3. T3 Code and Tailscale run on each user's machine.
 4. An `npx` connector CLI pairs local T3 with the user's cloud account and maintains the authenticated
-   control path to Agent Controller.
+   control path to Next Coder.
 
 The connector should initiate the cloud connection so a user does not need to open an inbound port,
 publish T3 to the internet, or place the cloud service inside their Tailnet. Tailscale remains the
@@ -147,7 +147,7 @@ If a surface does not apply, say why in the handoff when the omission would othe
   label, state, and available action.
 - Cache enough device state for boot and temporary network loss, but reconcile it with the gateway.
   NVS is not a second source of account or T3 truth.
-- Shared protocol behavior belongs in `firmware/shared/AgentControllerCore`. Board-specific code is
+- Shared protocol behavior belongs in `firmware/shared/NextCoderCore`. Board-specific code is
   the hardware adaptation layer and must not fork policy or gateway contracts.
 
 ### Gateway and authentication
@@ -246,7 +246,7 @@ If a surface does not apply, say why in the handoff when the omission would othe
 ### Firmware
 
 - Shared writable state, provisioning, gateway transport, media upload, and orb behavior belong in
-  `firmware/shared/AgentControllerCore` when more than one board needs them.
+  `firmware/shared/NextCoderCore` when more than one board needs them.
 - `controller_config.h` is a bench seed, not runtime truth. Factory identity comes from NVS seed data;
   customer Wi-Fi never belongs in a factory image.
 - Boards differ in display, input, recovery gesture, and verified peripherals. Do not copy an
@@ -343,5 +343,5 @@ audio, touch, radio, OTA, or live-T3 behavior. Report each kind of evidence sepa
   and name any remaining blocker without presenting it as complete.
 
 This guidance takes structural inspiration from
-[T3 Code's `AGENTS.md`](https://github.com/pingdotgg/t3code/blob/main/AGENTS.md), adapted to Agent
-Controller's gateway, storage, web, and hardware boundaries.
+[T3 Code's `AGENTS.md`](https://github.com/pingdotgg/t3code/blob/main/AGENTS.md), adapted to Next
+Coder's gateway, storage, web, and hardware boundaries.

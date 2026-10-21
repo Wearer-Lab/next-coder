@@ -14,7 +14,7 @@ const overview: T3CompatibilityOverview = {
     maximumTestedVersion: "0.0.28",
     recommendedVersion: "0.0.28",
     status: "review_required",
-    alert: "T3 Code 0.0.29 is newer than the latest version Agent Controller has verified (0.0.28).",
+    alert: "T3 Code 0.0.29 is newer than the latest version Next Coder has verified (0.0.28).",
   },
   results: [{
     environmentId: "env_1",

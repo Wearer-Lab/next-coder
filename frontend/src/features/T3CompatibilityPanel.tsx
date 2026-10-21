@@ -236,7 +236,7 @@ function CompatibilityRow({ result }: { result: T3CompatibilityResult }) {
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
           T3 Code changed from {result.previousVersion} to {result.installedVersion}.
-          {result.breakingRisk ? " This change could break Agent Controller." : " The compatibility contract still passes."}
+          {result.breakingRisk ? " This change could break Next Coder." : " The compatibility contract still passes."}
         </div>
       ) : null}
 

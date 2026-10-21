@@ -207,7 +207,7 @@ async function setupGateway(t, { snapshotThreads = [{ id: "thread_voice", title:
   resetThreadTitleCache();
   t.after(() => resetThreadTitleCache());
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-media-naming-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-media-naming-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const originalFetch = globalThis.fetch;
@@ -250,7 +250,7 @@ async function setupGateway(t, { snapshotThreads = [{ id: "thread_voice", title:
     const created = await call("/v1/devices", {
       method: "POST",
       headers: authHeaders,
-      body: { label, profile: "agent-controller" },
+      body: { label, profile: "next-coder" },
     });
     await call(`/v1/devices/${created.device.id}/config`, {
       method: "PUT",

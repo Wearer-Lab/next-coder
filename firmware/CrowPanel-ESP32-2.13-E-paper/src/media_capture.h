@@ -1,6 +1,6 @@
 #pragma once
 
-// Optional hardware capture for the agent controller: a short push-to-talk
+// Optional hardware capture for the Next Coder controller: a short push-to-talk
 // audio clip over I2S, and a still JPEG over esp32-camera.
 //
 // Both features are compile-time optional and OFF by default. The CrowPanel
@@ -9,7 +9,7 @@
 //
 // Everything here is guarded by ENABLE_AUDIO_CAPTURE / ENABLE_CAMERA_CAPTURE.
 // With both at 0 this translation unit compiles to no capture implementation. Transport belongs
-// to shared AgentControllerCore and is linked only when a capture surface calls it.
+// to shared NextCoderCore and is linked only when a capture surface calls it.
 
 #include <Arduino.h>
 

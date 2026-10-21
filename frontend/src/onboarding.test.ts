@@ -10,7 +10,7 @@ const setup: OnboardingState = {
   networkMode: "tailscale",
   networkUrl: null,
   provider: { harness: "openai", instanceId: "codex", model: "gpt-5.4" },
-  workspace: { path: "/work/Agent Controller", title: "Agent Controller", projectId: null },
+  workspace: { path: "/work/Next Coder", title: "Next Coder", projectId: null },
   environmentId: null,
   firstThreadId: null,
   device: { mode: null, deviceId: null, credentialConfirmed: false },
@@ -39,14 +39,14 @@ const readiness: OnboardingReadiness = {
 describe("onboarding helpers", () => {
   it("builds a shell-safe host setup command", () => {
     expect(buildT3SetupCommand({
-      workspacePath: "/work/Agent Controller",
+      workspacePath: "/work/Next Coder",
       workspaceTitle: "Owner's app",
       harness: "openai",
       instanceId: "codex",
       model: "gpt-5.4",
       networkMode: "tailscale",
     })).toBe(
-      "npm run setup:t3 -- --project '/work/Agent Controller' --title 'Owner'\"'\"'s app' --provider 'openai' --tunnel 'tailscale' --instance-id 'codex' --model 'gpt-5.4'",
+      "npm run setup:t3 -- --project '/work/Next Coder' --title 'Owner'\"'\"'s app' --provider 'openai' --tunnel 'tailscale' --instance-id 'codex' --model 'gpt-5.4'",
     );
   });
 

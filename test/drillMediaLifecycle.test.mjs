@@ -150,7 +150,7 @@ test("staged bytes that never land skip the finalize window but still exercise c
 
 test("media drill arguments never accept a token as a value and default to no mutation", () => {
   const parsed = parseArguments(["--base-url", "https://staging.example.test"], {
-    AGENT_CONTROLLER_DRILL_ACCESS_TOKEN: TOKEN,
+    NEXT_CODER_DRILL_ACCESS_TOKEN: TOKEN,
   });
   assert.equal(parsed.accessToken, TOKEN);
   assert.equal(parsed.exerciseMedia, false);

@@ -6,14 +6,14 @@
 #include "controller_config.example.h"
 #endif
 
-#include "agent_controller_ui.h"
+#include "next_coder_ui.h"
 
 #if ENABLE_EINK
 #include "EPD.h"
 #include "EPD_Init.h"
 #include <cstring>
 
-namespace acui {
+namespace ncuri {
 namespace {
 
 extern "C" uint8_t ImageBW[ALLSCREEN_BYTES];
@@ -83,7 +83,7 @@ void inkFill(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
   for (uint16_t y = y0; y <= y1 && y < kCanvasHeight; y += 1) inkLine(x0, y, x1, y);
 }
 
-// Original Agent Controller glyph set. Each icon is a purpose-built 12 x 12
+// Original Next Coder glyph set. Each icon is a purpose-built 12 x 12
 // monochrome bitmap: no vendor/product artwork or external assets are copied.
 constexpr uint8_t kIconAgent[] = {
   0x3f,0xc0, 0x40,0x20, 0x9f,0x10, 0xa0,0x50,
@@ -332,11 +332,11 @@ void render(const Frame& frame) {
   EPD_Update();
 }
 
-}  // namespace acui
+}  // namespace ncuri
 #else
-namespace acui {
+namespace ncuri {
 String safeLabel(const String& value, size_t maxChars) {
   return value.substring(0, value.length() < maxChars ? value.length() : maxChars);
 }
-}  // namespace acui
+}  // namespace ncuri
 #endif

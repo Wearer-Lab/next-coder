@@ -1,5 +1,5 @@
 {
-  "name": "@agent-controller/cloudflare-control-plane",
+  "name": "@next-coder/cloudflare-control-plane",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "test": "vitest run",
     "test:capacity": "vitest run --config vitest.capacity.config.ts",
     "test:container-contract": "vitest run test/container-server.test.mjs",
-    "container:build": "BUILDX_GIT_INFO=false BUILDX_GIT_LABELS=false BUILDX_GIT_CHECK_DIRTY=false docker build --platform linux/amd64 --progress=plain --tag agent-controller-control-plane:local-smoke --file Dockerfile ..",
+    "container:build": "BUILDX_GIT_INFO=false BUILDX_GIT_LABELS=false BUILDX_GIT_CHECK_DIRTY=false docker build --platform linux/amd64 --progress=plain --tag next-coder-control-plane:local-smoke --file Dockerfile ..",
     "container:smoke": "node scripts/container-smoke.mjs",
     "deploy:staging": "wrangler deploy --env staging",
     "deploy:production": "wrangler deploy --env production",

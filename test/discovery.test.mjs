@@ -33,7 +33,7 @@ test("the reply carries a URL a device can actually use", () => {
     remoteAddress: "192.168.1.99",
     interfaces,
   });
-  assert.equal(reply.service, "agent-controller");
+  assert.equal(reply.service, "next-coder");
   assert.equal(reply.name, "studio-mac");
   assert.equal(reply.baseUrl, "http://192.168.1.50:3996");
 });
@@ -84,6 +84,6 @@ test("a probe over the wire is answered, and anything else is ignored", async (t
   client.send(Buffer.from(DISCOVERY_PROBE), boundPort, "127.0.0.1");
 
   const reply = await received;
-  assert.equal(reply.service, "agent-controller");
+  assert.equal(reply.service, "next-coder");
   assert.equal(reply.name, "bench");
 });

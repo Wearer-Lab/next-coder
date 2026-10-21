@@ -20,6 +20,7 @@ dist/
 *.log
 
 .env.local
+.env.prod
 
 # Vendor download kits for the CrowPanel and Hosyond boards: hundreds of megabytes of archives,
 # datasheets, 3D models, flashing tools, and third-party example libraries. Reference material,

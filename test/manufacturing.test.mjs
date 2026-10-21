@@ -356,12 +356,12 @@ test("claim payload is what the label and the QR both describe", () => {
     gatewayBaseUrl: GATEWAY,
     deviceId: DEVICE_ID,
     claimCode: "abcde-fghjk",
-    label: "  Agent Controller 001  ",
+    label: "  Next Coder 001  ",
   });
   assert.deepEqual(payload, {
     deviceId: DEVICE_ID,
     claimCode: CLAIM_CODE,
-    label: "Agent Controller 001",
+    label: "Next Coder 001",
     claimUrl: CLAIM_URL,
   });
 });
@@ -387,10 +387,10 @@ test("device label SVG pairs the QR with human-readable identifiers", () => {
     gatewayBaseUrl: GATEWAY,
     deviceId: DEVICE_ID,
     claimCode: CLAIM_CODE,
-    label: "Agent Controller 007",
+    label: "Next Coder 007",
   });
   assert.ok(svg.startsWith("<?xml"));
-  assert.ok(svg.includes("Agent Controller 007"));
+  assert.ok(svg.includes("Next Coder 007"));
   assert.ok(svg.includes(DEVICE_ID));
   assert.ok(svg.includes(CLAIM_CODE));
   assert.ok(svg.includes("<path d=\"M"), "label embeds the QR path");

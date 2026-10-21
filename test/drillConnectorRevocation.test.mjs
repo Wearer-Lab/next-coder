@@ -141,7 +141,7 @@ test("a drill environment that cannot be created skips every later check instead
 
 test("drill arguments never accept a token as a command-line value", () => {
   const parsed = parseArguments(["--base-url", "https://staging.example.test", "--exercise-revocation"], {
-    AGENT_CONTROLLER_DRILL_ACCESS_TOKEN: TOKEN,
+    NEXT_CODER_DRILL_ACCESS_TOKEN: TOKEN,
   });
   assert.equal(parsed.accessToken, TOKEN);
   assert.equal(parsed.exerciseRevocation, true);
@@ -149,7 +149,7 @@ test("drill arguments never accept a token as a command-line value", () => {
 
   assert.throws(() => parseArguments(["--access-token", TOKEN], {}), (error) => error.code === "unknown_option");
   assert.throws(
-    () => parseArguments(["--access-token-file", "/tmp/token"], { AGENT_CONTROLLER_DRILL_ACCESS_TOKEN: TOKEN }),
+    () => parseArguments(["--access-token-file", "/tmp/token"], { NEXT_CODER_DRILL_ACCESS_TOKEN: TOKEN }),
     (error) => error.code === "one_access_token_source_required",
   );
   assert.throws(() => parseArguments(["--base-url"], {}), (error) => error.code === "option_value_required");

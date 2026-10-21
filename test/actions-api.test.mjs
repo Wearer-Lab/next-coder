@@ -38,7 +38,7 @@ test("saved actions and ordered device controls execute through the normal polic
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const auth = await createAuthHeaders(originalFetch, baseUrl);
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
-    method: "POST", headers: auth, body: { label: "Actions controller", profile: "agent-controller" },
+    method: "POST", headers: auth, body: { label: "Actions controller", profile: "next-coder" },
   });
   const deviceAuth = { "x-device-id": created.device.id, "x-device-secret": created.secret };
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
@@ -188,7 +188,7 @@ test("saved actions and ordered device controls execute through the normal polic
   const persistedCapabilities = capabilityHealthUpdates.find((input) => input.health?.capabilities);
   assert.ok(persistedCapabilities);
   assert.equal(Object.hasOwn(persistedCapabilities, "capabilities"), false);
-  assert.equal(persistedCapabilities.health.capabilities.schema, "agent-controller.t3-capabilities.v1");
+  assert.equal(persistedCapabilities.health.capabilities.schema, "next-coder.t3-capabilities.v1");
   assert.equal(ran.responseAfter, ran.command.createdAt);
   assert.match(dispatches.at(-1).message.text, /^Continue and run tests\.\n\n<!--AC_DEVICE_FOLLOWUP_REQUEST/u);
   assert.match(dispatches.at(-1).message.text, new RegExp(photo.id, "u"));
@@ -358,7 +358,7 @@ test("protocol-v2 controls remain opt-in so legacy devices fall back to config",
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const auth = await createAuthHeaders(originalFetch, baseUrl);
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
-    method: "POST", headers: auth, body: { label: "Legacy controller", profile: "agent-controller" },
+    method: "POST", headers: auth, body: { label: "Legacy controller", profile: "next-coder" },
   });
   const deviceAuth = { "x-device-id": created.device.id, "x-device-secret": created.secret };
   const controls = await originalFetch(new URL("/v1/device/controls", baseUrl), { headers: deviceAuth });
@@ -383,7 +383,7 @@ test("the system stop action is idempotent when T3 reports no active session", a
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const auth = await createAuthHeaders(originalFetch, baseUrl);
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
-    method: "POST", headers: auth, body: { label: "Stop controller", profile: "agent-controller" },
+    method: "POST", headers: auth, body: { label: "Stop controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -414,7 +414,7 @@ test("firmware policy, telemetry, and derived T3 capabilities are owner scoped",
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const auth = await createAuthHeaders(originalFetch, baseUrl);
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
-    method: "POST", headers: auth, body: { label: "OTA controller", profile: "agent-controller" },
+    method: "POST", headers: auth, body: { label: "OTA controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -436,7 +436,7 @@ test("firmware policy, telemetry, and derived T3 capabilities are owner scoped",
   assert.equal(capabilities.capabilities.orchestrationOperate, true);
   assert.equal(capabilities.capabilities.terminalDirect, false);
   assert.equal(capabilities.capabilities.savedActions, "gateway");
-  assert.equal(capabilities.manifest.schema, "agent-controller.t3-capabilities.v1");
+  assert.equal(capabilities.manifest.schema, "next-coder.t3-capabilities.v1");
   assert.equal(capabilities.manifest.recovery.action, "UPDATE T3 CODE");
 
   const updated = await requestJson(originalFetch, baseUrl, `/v1/devices/${created.device.id}/firmware-policy`, {
@@ -465,7 +465,7 @@ test("firmware policy, telemetry, and derived T3 capabilities are owner scoped",
 });
 
 test("macro continuation checkpoints survive a file-store restart and are claimed once", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-controller-macro-run-"));
+  const directory = await mkdtemp(join(tmpdir(), "next-coder-macro-run-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filePath = join(directory, "state.json");
   const first = await createFileStore(filePath);
@@ -507,7 +507,7 @@ test("a fixed action survives its environment being removed as a disabled contro
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const auth = await createAuthHeaders(originalFetch, baseUrl);
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
-    method: "POST", headers: auth, body: { label: "Orphan controller", profile: "agent-controller" },
+    method: "POST", headers: auth, body: { label: "Orphan controller", profile: "next-coder" },
   });
   const deviceAuth = { "x-device-id": created.device.id, "x-device-secret": created.secret };
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {

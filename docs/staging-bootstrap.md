@@ -30,9 +30,9 @@ Configure these non-secret environment variables:
 
 | Variable | Meaning |
 | --- | --- |
-| `AGENT_CONTROLLER_STAGING_URL` | Exact future staging HTTPS origin, without a path or trailing slash |
-| `AGENT_CONTROLLER_STAGING_MEDIA_BUCKET` | Unique bucket name ending in `-staging` |
-| `AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET` | A different unique bucket name ending in `-staging` |
+| `NEXT_CODER_STAGING_URL` | Exact future staging HTTPS origin, without a path or trailing slash |
+| `NEXT_CODER_STAGING_MEDIA_BUCKET` | Unique bucket name ending in `-staging` |
+| `NEXT_CODER_STAGING_FIRMWARE_BUCKET` | A different unique bucket name ending in `-staging` |
 
 Configure these environment secrets:
 
@@ -91,7 +91,7 @@ The edge and private control plane have reciprocal Service Bindings, so bootstra
 8. Re-read exact resources, deployments, secret names, and Convex environment names, then run the
    credential-free public/private-boundary qualification.
 
-The final Worker deployment messages use `agent-controller staging deploy <commit>`, which is the
+The final Worker deployment messages use `next-coder staging deploy <commit>`, which is the
 normal release workflow's source-of-truth convention. The bootstrap never adds a public route to the
 stub, and it never creates a partially functional public edge.
 
@@ -139,7 +139,7 @@ also outside this workflow.
 ## Evidence and proof boundary
 
 The workflow always attempts to upload `staging-bootstrap-evidence.json` with schema
-`agent-controller.staging-bootstrap.v1`. It records fixed phase names, bounded outcomes/durations,
+`next-coder.staging-bootstrap.v1`. It records fixed phase names, bounded outcomes/durations,
 source commits, and hashed resource references. It excludes account IDs, resource names, Worker
 version IDs, bootstrap IDs, provider output, errors/stacks, configuration bodies, and all secret
 values.

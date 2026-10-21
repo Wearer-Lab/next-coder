@@ -50,7 +50,7 @@ function manifest(overrides = {}) {
     name: CONNECTOR_PACKAGE_NAME,
     version,
     type: "module",
-    bin: { [CONNECTOR_BIN_NAME]: "./bin/agent-controller-connect.mjs" },
+    bin: { [CONNECTOR_BIN_NAME]: "./bin/next-coder-connect.mjs" },
     files: ["bin", "src", "README.md", "LICENSE"],
     license: "MIT",
     engines: { node: ">=22" },
@@ -58,7 +58,7 @@ function manifest(overrides = {}) {
     publishConfig: { access: "public" },
     repository: {
       type: "git",
-      url: "git+https://github.com/example/agent-controller.git",
+      url: "git+https://github.com/example/next-coder.git",
       directory: "packages/connector",
     },
     ...overrides,
@@ -69,7 +69,7 @@ function packed(overrides = {}) {
   return {
     name: CONNECTOR_PACKAGE_NAME,
     version,
-    filename: `agent-controller-connector-${version}.tgz`,
+    filename: `next-coder-connector-${version}.tgz`,
     size: 50_000,
     unpackedSize: 200_000,
     integrity: "sha512-example",
@@ -78,7 +78,7 @@ function packed(overrides = {}) {
       { path: "LICENSE", mode: 0o644 },
       { path: "README.md", mode: 0o644 },
       { path: "package.json", mode: 0o644 },
-      { path: "bin/agent-controller-connect.mjs", mode: 0o755 },
+      { path: "bin/next-coder-connect.mjs", mode: 0o755 },
       { path: "src/index.mjs", mode: 0o644 },
     ],
     ...overrides,
@@ -110,7 +110,7 @@ describe("connector npm release authorization", () => {
   it("requires the exact public, dependency-free package and provenance repository identity", () => {
     const context = {
       version,
-      githubRepository: "example/agent-controller",
+      githubRepository: "example/next-coder",
       githubServerUrl: "https://github.com",
     };
     assert.equal(validatePackageManifest(manifest(), context).name, CONNECTOR_PACKAGE_NAME);
@@ -132,7 +132,7 @@ describe("connector npm release authorization", () => {
       { dependencies: { ws: "1.0.0" } },
       { scripts: { prepublishOnly: "do-something" } },
       { repository: { url: "https://github.com/another/repository.git", directory: "packages/connector" } },
-      { repository: { url: "https://github.com/example/agent-controller.git", directory: "connector" } },
+      { repository: { url: "https://github.com/example/next-coder.git", directory: "connector" } },
     ]) {
       assert.throws(() => validatePackageManifest(manifest(invalid), context), ConnectorReleaseError);
     }
@@ -194,7 +194,7 @@ describe("protected npm connector workflow", () => {
     assert.match(publication, /npm publish "\$TARBALL_PATH" --access public --provenance --tag latest --ignore-scripts --json/u);
     assert.match(publication, /connector-npm-release\.mjs verify-artifact/u);
     assert.doesNotMatch(publication, /connector-npm-release\.mjs prepare|npm test|npm exec/u);
-    assert.match(externalVerification, /npm exec --yes --package="\$PACKAGE_SPEC" -- agent-controller-connect update/u);
+    assert.match(externalVerification, /npm exec --yes --package="\$PACKAGE_SPEC" -- next-coder-connect update/u);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|_authToken/u);
   });
 
@@ -202,7 +202,7 @@ describe("protected npm connector workflow", () => {
     const workflow = await readFile(workflowUrl, "utf8");
     assert.match(workflow, /npm view "\$PACKAGE_SPEC" version --json/u);
     assert.match(workflow, /That npm package version already exists and cannot be reused/u);
-    assert.match(workflow, /npm exec --yes --package="\$PACKAGE_SPEC" -- agent-controller-connect update/u);
+    assert.match(workflow, /npm exec --yes --package="\$PACKAGE_SPEC" -- next-coder-connect update/u);
     assert.match(workflow, /connector-npm-release\.mjs finalize/u);
     assert.match(workflow, /actions\/upload-artifact@[a-f0-9]{40}/u);
     assert.match(workflow, /retention-days: 90/u);

@@ -37,7 +37,7 @@ and `npm run security:repo` passes over the tracked tree.
 The remaining copy is local only:
 
 ```
-~/Documents/Claude/Projects/agent-controller-pre-oss-backup.git
+~/Documents/Claude/Projects/next-coder-pre-oss-backup.git
 ```
 
 That mirror is the pre-rewrite history, kept deliberately as a safety net in case the rewrite lost

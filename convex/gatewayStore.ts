@@ -317,7 +317,7 @@ export const createDevice = gatewayMutation({
     const id = await ctx.db.insert("devices", {
       userExternalId: args.userId,
       label: args.label,
-      profile: args.profile ?? "agent-controller",
+      profile: args.profile ?? "next-coder",
       secretHash: args.secretHash,
       credentialVersion: 1,
       claimedAt: nowIso(),
@@ -333,7 +333,7 @@ export const createDevice = gatewayMutation({
       actorType: "user",
       action: "device.created",
       targetId: id,
-      metadata: { label: args.label, profile: args.profile ?? "agent-controller" },
+      metadata: { label: args.label, profile: args.profile ?? "next-coder" },
     });
     return publicDevice(device);
   },
@@ -351,7 +351,7 @@ export const preprovisionDevice = gatewayMutation({
   handler: async (ctx, args) => {
     const id = await ctx.db.insert("devices", {
       label: args.label,
-      profile: args.profile ?? "agent-controller",
+      profile: args.profile ?? "next-coder",
       // A property of the physical unit, stamped at pre-provision: an OTA release targets it and
       // the console uses it to name which firmware image belongs on this board.
       hardwareModel: args.hardwareModel ?? null,
@@ -371,7 +371,7 @@ export const preprovisionDevice = gatewayMutation({
       actorType: "system",
       action: "device.preprovisioned",
       targetId: id,
-      metadata: { label: args.label, profile: args.profile ?? "agent-controller" },
+      metadata: { label: args.label, profile: args.profile ?? "next-coder" },
     });
     return publicDevice(device);
   },

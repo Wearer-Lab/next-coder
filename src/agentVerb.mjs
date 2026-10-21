@@ -127,7 +127,7 @@ export function deriveAgentVerb(thread) {
 
   // A plan being published or revised is the agent reasoning about how to proceed — the
   // firmware's own vocabulary already treats "planning" and "solving" as one animation
-  // (orbModeForAgentState in firmware/shared/AgentControllerCore/src/ThinkingOrb.cpp).
+  // (orbModeForAgentState in firmware/shared/NextCoderCore/src/ThinkingOrb.cpp).
   if (latest.kind === "turn.plan.updated") return "solving";
 
   switch (classifyToolActivity(latest)) {

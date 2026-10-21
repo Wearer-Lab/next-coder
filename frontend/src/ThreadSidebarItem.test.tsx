@@ -9,7 +9,7 @@ function renderItem(overrides: Partial<Parameters<typeof ThreadSidebarItem>[0]> 
     thread: {
       id: "thread_1",
       title: "Fix the poller",
-      label: "Fix the poller — Agent Controller",
+      label: "Fix the poller — Next Coder",
       projectId: "project_1",
       status: "running",
     },

@@ -1,6 +1,6 @@
 import type { JsonRecord } from "./types";
 
-const PENDING_REQUEST_PREFIX = "agent-controller.pending-request.v1.";
+const PENDING_REQUEST_PREFIX = "next-coder.pending-request.v1.";
 const PENDING_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
 
 // A browser restart may happen after the gateway accepted a write but before its response arrived.

@@ -1,7 +1,7 @@
-# Agent Controller connector
+# Next Coder connector
 
-`@agent-controller/connector` is the local, outbound bridge between T3 Code on a user's machine and
-the Agent Controller cloud service. It does not expose T3 to the internet and does not send the T3
+`@next-coder/connector` is the local, outbound bridge between T3 Code on a user's machine and
+the Next Coder cloud service. It does not expose T3 to the internet and does not send the T3
 access token to the cloud.
 
 The package requires Node 22 or newer. Foreground operation and managed per-user lifecycle are
@@ -13,10 +13,10 @@ provenance, but no publication has been executed from this checkout. See
 
 ## Connect
 
-Create an enrollment code in the Agent Controller console, then run:
+Create an enrollment code in the Next Coder console, then run:
 
 ```bash
-npx @agent-controller/connector connect \
+npx @next-coder/connector connect \
   --server https://controller.example.com \
   --code YOUR-SHORT-LIVED-CODE \
   --t3-url http://127.0.0.1:3773
@@ -45,6 +45,11 @@ service/account namespaces, bounded subprocesses, argument arrays, and private s
 never appears in a command line. Existing mode-`0600` JSON enrollment is migrated by writing and
 verifying the native value before atomically removing the plaintext field.
 
+Local state lives in a private per-user directory; `NEXT_CODER_CONFIG_DIR` overrides it. A
+directory created before the rename keeps being used until a new one exists, and a credential
+stored under the pre-rename native service name is still read, so an existing enrollment is never
+orphaned by the rename.
+
 Headless Linux sessions commonly have neither `secret-tool` nor a Secret Service session. When the
 native facility is genuinely absent, the connector explicitly reports a `private-file` fallback and
 retains the standing credential in its mode-`0600` state. This fallback is automatic so an outbound
@@ -53,7 +58,8 @@ unavailable or failing store is a hard error; the connector never silently copie
 back into JSON. Native-operation failures during enrollment also fail closed while leaving any
 pre-migration private file intact for a safe retry. Windows service installation additionally applies
 an argument-safe, best-effort `icacls` restriction to the current user. To avoid putting the T3
-access token in shell history, set `AGENT_CONTROLLER_T3_TOKEN` or use `--t3-token-file PATH`.
+access token in shell history, set `NEXT_CODER_T3_TOKEN` (the legacy `AGENT_CONTROLLER_T3_TOKEN` is still read) or use
+`--t3-token-file PATH`.
 
 The connector runs in the foreground and writes redacted operational logs to stdout/stderr. It
 requests a short-lived socket ticket, opens an outbound WSS connection, sends health heartbeats, and
@@ -62,7 +68,8 @@ routes bounded cloud requests to local T3. Disconnects retry with capped exponen
 Foreground operation remains the reference path. To install a per-user background service, add
 `--install-service` to `connect`. On macOS this installs only
 `~/Library/LaunchAgents/com.agent-controller.connector.plist`; on Linux it installs only the
-`agent-controller-connector.service` systemd user unit. On Windows it registers a deterministic,
+`agent-controller-connector.service` systemd user unit. Those registration names are the ones an
+already-installed service is registered under, so they keep their existing names. On Windows it registers a deterministic,
 per-installation Task Scheduler task for the current interactive user, at least privilege, and starts
 it immediately; it also starts at that user's logon. It does not run as `SYSTEM`, request elevation,
 or persist a Windows account password. No command uses `sudo`, a system service, or process-name
@@ -74,13 +81,13 @@ group or Windows PID tree; a reused user-started T3 process is never stopped.
 Useful commands:
 
 ```bash
-agent-controller-connect status
-agent-controller-connect doctor
-agent-controller-connect rotate --code NEW-ONE-TIME-CODE --yes
-agent-controller-connect update --check
-agent-controller-connect update --apply --yes --restart-service
-agent-controller-connect update --apply --yes --restart-service --version 0.2.0
-agent-controller-connect disconnect --revoke-cloud --yes
+next-coder-connect status
+next-coder-connect doctor
+next-coder-connect rotate --code NEW-ONE-TIME-CODE --yes
+next-coder-connect update --check
+next-coder-connect update --apply --yes --restart-service
+next-coder-connect update --apply --yes --restart-service --version 0.2.0
+next-coder-connect disconnect --revoke-cloud --yes
 ```
 
 `start`, `stop`, and `restart` operate only that exact user service or scheduled task. `status` and
@@ -114,7 +121,7 @@ It never includes peer names, Tailnet names, user profiles, addresses, or raw CL
 The connector never installs Tailscale, runs `tailscale up`, signs a machine in, changes Tailscale
 Serve or Funnel, or treats missing Tailscale as a failed connector health check. If inspection finds
 that Tailscale is missing or disconnected, the diagnostics print an explicit action for the operator
-to perform outside the connector. Re-run `agent-controller-connect doctor` after completing that
+to perform outside the connector. Re-run `next-coder-connect doctor` after completing that
 action. Existing Serve/Funnel configuration is neither inspected nor changed.
 
 `rotate --code ... --yes` performs an overlap-safe rotation for an installed managed service. The

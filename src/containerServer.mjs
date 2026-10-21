@@ -92,7 +92,7 @@ export async function createContainerServers({ env = process.env, logger = conso
     if (config.snapshotPollEnabled) app.snapshotPoller.start();
     if (config.threadStreamEnabled) app.threadStreams.start();
     if (config.transcriptionWorkerEnabled) app.mediaJobRunner.start();
-    logger.info?.(`agent-controller container ready on public port ${config.port} and private port ${internalPort}`);
+    logger.info?.(`next-coder container ready on public port ${config.port} and private port ${internalPort}`);
   }
 
   async function stop() {

@@ -80,7 +80,7 @@ test("capability probe returns only bounded contract evidence", async () => {
   };
   const client = createT3Client({ baseUrl: "http://127.0.0.1:3773", accessToken: "private-token", fetchImpl, WebSocketImpl: MockSocket });
   const probe = await client.capabilityProbe();
-  assert.equal(probe.schema, "agent-controller.t3-probe.v1");
+  assert.equal(probe.schema, "next-coder.t3-probe.v1");
   assert.equal(probe.installedVersion, "0.0.32");
   assert.equal(probe.probes.threadDetail, "passed");
   assert.equal(probe.serverCapabilities.threadSnapshotPagination, true);

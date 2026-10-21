@@ -67,7 +67,7 @@ npm run firmware:publish
 Not automatable, and Phase 12 is not complete without it:
 
 1. Flash a known-good build and let it heartbeat successfully.
-2. Build a drill image with `AGENT_CONTROLLER_OTA_ROLLBACK_DRILL=1`; it restarts before networking.
+2. Build a drill image with `NEXT_CODER_OTA_ROLLBACK_DRILL=1`; it restarts before networking.
 3. Let the device apply it.
 4. Confirm the device selects the previous slot on its second boot, heartbeats again, and reports
    `rolled_back`. A bootloader-level drill must separately use an image that fails before setup.

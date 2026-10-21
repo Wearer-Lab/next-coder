@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 
-const gatewayUrl = requiredEnv("AGENT_CONTROLLER_URL").replace(/\/+$/u, "");
+import { readEnv } from "./environment.mjs";
+
+const gatewayUrl = requiredEnv("NEXT_CODER_URL").replace(/\/+$/u, "");
 const factoryToken = requiredEnv("FACTORY_TOKEN");
 
 const body = {
@@ -42,7 +44,7 @@ if (!response.ok) {
 console.log(JSON.stringify(payload, null, 2));
 
 function requiredEnv(name) {
-  const value = process.env[name];
+  const value = readEnv(process.env, name);
   if (!value) throw new Error(`${name} is required.`);
   return value;
 }

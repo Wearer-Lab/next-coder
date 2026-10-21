@@ -1,4 +1,4 @@
-# Agent Controller control-plane Container
+# Next Coder control-plane Container
 
 This isolated package makes the current Node `node:http` gateway callable as the Cloudflare edge
 runtime's private `CONTROL_PLANE` Service Binding. It is a Worker in front of one explicitly bounded

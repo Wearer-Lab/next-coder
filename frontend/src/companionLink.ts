@@ -1,4 +1,4 @@
-const STORAGE_KEY = "agent-controller:companion-handoff";
+const STORAGE_KEY = "next-coder:companion-handoff";
 
 /**
  * Reads a one-shot companion bearer from the hash, removes it from the visible URL, and keeps it

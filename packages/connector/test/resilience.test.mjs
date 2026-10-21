@@ -144,7 +144,7 @@ test("reconnect storm stays serial, obtains fresh tickets, and respects the back
 });
 
 test("managed logs are permissioned, line-bounded, rotated, and redact connector credentials", async (t) => {
-  const scratch = await mkdtemp(join(tmpdir(), "agent-controller-resilience-log-"));
+  const scratch = await mkdtemp(join(tmpdir(), "next-coder-resilience-log-"));
   t.after(async () => await rm(scratch, { recursive: true, force: true }));
   const path = join(scratch, "connector.log");
   const logger = createBoundedFileLogger(path, {

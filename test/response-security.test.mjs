@@ -51,7 +51,7 @@ test("SSE responses carry the same frame, MIME and browser capability boundaries
 });
 
 test("user-declared media MIME stays non-sniffable at both media read boundaries", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-security-media-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-security-media-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   const { server } = createApp({
     config: {

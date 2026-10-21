@@ -41,7 +41,7 @@ export async function forwardControlPlaneRequest(request: Request, env: RuntimeB
   for (const header of HOP_BY_HOP_HEADERS) headers.delete(header);
   headers.delete("host");
   headers.delete("content-length");
-  headers.set("x-agent-controller-edge", "cloudflare");
+  headers.set("x-next-coder-edge", "cloudflare");
   headers.set("x-forwarded-host", publicUrl.host);
   headers.set("x-forwarded-proto", "https");
   headers.delete("x-forwarded-for");

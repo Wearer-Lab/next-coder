@@ -113,7 +113,7 @@ test("retryable mock failures back off and terminal gone responses revoke the su
 
 test("payload and failure classification never claim browser display", () => {
   const payload = privacyMinimalPayload({ id: "notification_1", kind: "user_input.required" });
-  assert.equal(payload.body, "Open Agent Controller to review this update.");
+  assert.equal(payload.body, "Open Next Coder to review this update.");
   assert.deepEqual(classifyPushFailure({ statusCode: 410 }), {
     outcome: "gone", code: "subscription_gone", retryAt: null,
   });

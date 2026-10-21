@@ -1,12 +1,12 @@
 # T3 capability manifest
 
-Agent Controller exposes a versioned, read-only capability projection at
+Next Coder exposes a versioned, read-only capability projection at
 `GET /v1/t3/environments/:id/capabilities`. It is built by `T3Adapter`, the single application
 boundary over both direct and outbound-connector transports. Application code calls the same
 `environmentInfo`, `snapshot`, `threadDetail`, `dispatch`, `callRpc`, `openThreadStream`, and
 `capabilities` methods regardless of transport.
 
-The current schema is `agent-controller.t3-capabilities.v1` with adapter contract
+The current schema is `next-coder.t3-capabilities.v1` with adapter contract
 `t3-adapter.v1`. Discovery reads environment metadata, the orchestration snapshot, and
 `server.getConfig`; when a thread exists it performs one bounded thread-detail read. The connector
 performs the same probe locally and returns only contract booleans, probe outcomes, and the reported

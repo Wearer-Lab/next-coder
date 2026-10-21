@@ -64,10 +64,10 @@ const HINTS = Object.freeze({
 });
 
 const PROMOTION_EVIDENCE_SCHEMAS = Object.freeze({
-  release: "agent-controller.staging-release.v1",
-  qualification: "agent-controller.staging-qualification.v1",
-  capacity: "agent-controller.staging-capacity.v1",
-  security: "agent-controller.staging-security.v1",
+  release: "next-coder.staging-release.v1",
+  qualification: "next-coder.staging-qualification.v1",
+  capacity: "next-coder.staging-capacity.v1",
+  security: "next-coder.staging-security.v1",
 });
 
 export class EvidenceBundleError extends Error {

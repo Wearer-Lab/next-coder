@@ -26,11 +26,11 @@ test("device simulator stores credentials owner-only without printing secrets", 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
-  const directory = await mkdtemp(join(tmpdir(), "agent-controller-simulator-"));
+  const directory = await mkdtemp(join(tmpdir(), "next-coder-simulator-"));
   const credentialFile = join(directory, "private", "device.json");
   const result = await run(process.execPath, ["scripts/simulate-device.mjs"], {
-    AGENT_CONTROLLER_URL: `http://127.0.0.1:${server.address().port}`,
-    AGENT_CONTROLLER_SIMULATOR_CREDENTIAL_FILE: credentialFile,
+    NEXT_CODER_URL: `http://127.0.0.1:${server.address().port}`,
+    NEXT_CODER_SIMULATOR_CREDENTIAL_FILE: credentialFile,
   });
 
   assert.equal(result.code, 0, result.stderr);

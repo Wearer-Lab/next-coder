@@ -1,10 +1,12 @@
 import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-const baseUrl = process.env.AGENT_CONTROLLER_URL ?? "http://127.0.0.1:3996";
-const userId = process.env.AGENT_CONTROLLER_USER_ID ?? "user_dev";
+import { readEnv } from "./environment.mjs";
+
+const baseUrl = readEnv(process.env, "NEXT_CODER_URL") ?? "http://127.0.0.1:3996";
+const userId = readEnv(process.env, "NEXT_CODER_USER_ID") ?? "user_dev";
 const credentialFile = resolve(
-  process.env.AGENT_CONTROLLER_SIMULATOR_CREDENTIAL_FILE
+  readEnv(process.env, "NEXT_CODER_SIMULATOR_CREDENTIAL_FILE")
     ?? ".data/simulated-device-credential.json",
 );
 
@@ -12,7 +14,7 @@ async function main() {
   const authHeaders = await createDevAuthHeaders();
   const device = await post("/v1/devices", {
     label: "Simulated controller",
-    profile: "agent-controller",
+    profile: "next-coder",
   }, authHeaders);
 
   await persistCredential({

@@ -11,8 +11,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { serviceWorkerRegistration } from "./pwa";
 import type { UserNotification } from "./types";
 
-/** Retain the existing key so an operator's opt-in survives the broader notification center. */
-export const LOCAL_NOTIFICATION_STORAGE_KEY = "agentControllerApprovalNotifications";
+/** One stable key so an operator's opt-in survives restarts and the broader notification center. */
+export const LOCAL_NOTIFICATION_STORAGE_KEY = "nextCoderApprovalNotifications";
 
 /** `unsupported` is distinct from `denied`: the operator can still fix `denied` in browser settings. */
 export type NotificationSupportState = "unsupported" | "default" | "granted" | "denied";
@@ -93,8 +93,8 @@ export function planLocalNotifications(options: {
   if (fresh.length > 2) {
     return {
       notifications: [{
-        tag: "agent-controller-attention",
-        title: `${fresh.length} new Agent Controller updates`,
+        tag: "next-coder-attention",
+        title: `${fresh.length} new Next Coder updates`,
         body: "Open the notification center to review them.",
         url: "/#activity?view=notifications",
       }],
@@ -104,13 +104,13 @@ export function planLocalNotifications(options: {
 
   return {
     notifications: fresh.map((record) => ({
-      tag: `agent-controller-${record.id}`,
+      tag: `next-coder-${record.id}`,
       title: record.title,
       body: record.severity === "error"
-        ? "Agent Controller needs your attention."
+        ? "Next Coder needs your attention."
         : record.severity === "attention"
-          ? "Open Agent Controller to respond."
-          : "Open Agent Controller for details.",
+          ? "Open Next Coder to respond."
+          : "Open Next Coder for details.",
       url: notificationUrl(record),
     })),
     seen,

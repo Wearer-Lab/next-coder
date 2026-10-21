@@ -1,8 +1,13 @@
 import { T3_WS_METHODS } from "./t3Ws.mjs";
 
-export const T3_CAPABILITY_MANIFEST_SCHEMA = "agent-controller.t3-capabilities.v1";
+export const T3_CAPABILITY_MANIFEST_SCHEMA = "next-coder.t3-capabilities.v1";
 export const T3_ADAPTER_CONTRACT_VERSION = "t3-adapter.v1";
 export const T3_CAPABILITY_CACHE_TTL_MS = 5 * 60_000;
+
+// The probe schema is a contract with the connector, and a connector installed before the rename
+// still answers with the legacy one. The gateway accepts both so an installed connector keeps
+// working; the connector only ever emits the current schema.
+const T3_PROBE_SCHEMAS = Object.freeze(["next-coder.t3-probe.v1", "agent-controller.t3-probe.v1"]);
 
 const APPROVAL_DECISIONS = Object.freeze(["accept", "acceptForSession", "decline", "cancel"]);
 const RUNTIME_MODES = Object.freeze(["approval-required", "auto-accept-edits", "auto", "full-access"]);
@@ -58,7 +63,7 @@ export class T3Adapter {
     delete probeOptions.allowStale;
     if (typeof this.transport.capabilityProbe === "function") {
       const probe = await this.transport.capabilityProbe(environment, probeOptions);
-      if (probe?.schema !== "agent-controller.t3-probe.v1") {
+      if (!T3_PROBE_SCHEMAS.includes(probe?.schema)) {
         const error = new Error("T3 connector returned an unknown capability probe contract.");
         error.code = "t3_capability_probe_incompatible";
         throw error;

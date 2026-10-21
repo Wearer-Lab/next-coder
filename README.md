@@ -1,15 +1,15 @@
-# Agent Controller
+# Next Coder
 
-[![Hermetic CI](https://github.com/spyhack225/agent-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/spyhack225/agent-controller/actions/workflows/ci.yml)
+[![Hermetic CI](https://github.com/spyhack225/next-coder/actions/workflows/ci.yml/badge.svg)](https://github.com/spyhack225/next-coder/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Agent Controller is a cloud control plane between remote controller hardware, a phone/web console,
+Next Coder is a cloud control plane between remote controller hardware, a phone/web console,
 and [T3 Code](https://github.com/pingdotgg/t3code) environments running on users' machines. The
 production server should run in the cloud—preferably on Cloudflare—while T3 Code and Tailscale stay
-on each user's machine. The `@agent-controller/connector` npm package pairs local T3 with that cloud
+on each user's machine. The `@next-coder/connector` npm package pairs local T3 with that cloud
 service over an outbound authenticated WebSocket; publication and live-cloud validation remain.
 
-Agent Controller does not run coding agents. It authenticates people, devices, and connectors;
+Next Coder does not run coding agents. It authenticates people, devices, and connectors;
 applies policy; persists control-plane state; and routes commands and live results between a cloud
 endpoint and the user's T3 instance.
 
@@ -39,7 +39,7 @@ Contributors should read [AGENTS.md](AGENTS.md) for the complete-change checklis
 
 ## Open source and project status
 
-Agent Controller is open source under the [Apache License 2.0](LICENSE). The gateway, web console,
+Next Coder is open source under the [Apache License 2.0](LICENSE). The gateway, web console,
 connector CLI, and four firmware targets are implemented and covered by the hermetic repository
 gate (`npm test`, the secret scan, and the documentation link gate), but no managed cloud
 deployment, npm publication, or live-T3 qualification has been performed yet. Read
@@ -52,20 +52,20 @@ welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privatel
 
 ### Device architecture
 
-Controllers are thin, purpose-built remote surfaces. They connect directly to the cloud Agent
-Controller endpoint over authenticated HTTPS/WSS, capture input, show a compact view of the selected
+Controllers are thin, purpose-built remote surfaces. They connect directly to the cloud Next Coder
+endpoint over authenticated HTTPS/WSS, capture input, show a compact view of the selected
 environment/project/thread, and render truthful agent state. They do not run Tailscale and do not
 connect directly to T3. The cloud service owns identity, policy, durable control-plane state, and
 routing; the paired T3 environment owns projects, threads, provider sessions, and agent output.
 
 Shared provisioning, persisted device state, gateway operations, media upload, OTA support, and orb
-rendering live in `firmware/shared/AgentControllerCore`. Each board folder supplies only its hardware
+rendering live in `firmware/shared/NextCoderCore`. Each board folder supplies only its hardware
 adaptation: pins, display, touch/buttons, audio, and board-specific recovery behavior. This keeps one
 gateway contract across the four ESP32-S3 targets without pretending their hardware is identical.
 
 ### Remote control
 
-Agent Controller is remote-first. Production has one stable public cloud origin for the console,
+Next Coder is remote-first. Production has one stable public cloud origin for the console,
 controller API, and local connectors. T3 Code and Tailscale run on the user's machine. The connector
 CLI initiates the authenticated link to the cloud, so the user does not need to expose T3 publicly,
 open an inbound router port, or place the cloud service inside their Tailnet.
@@ -108,7 +108,7 @@ that prove valid Cloudflare certificates are accepted and untrusted certificates
 
 ```text
 Controller device ── HTTPS/WSS ─┐
-                                ├── Agent Controller cloud service ── durable state
+                                ├── Next Coder cloud service ── durable state
 Web console ─────── HTTPS/SSE ──┤        (Cloudflare preferred)
                                 │
 User machine                    │
@@ -126,11 +126,11 @@ The intended setup flow is:
 5. Controllers and the console send commands to the cloud service; the service routes them through
    the connector and streams results back.
 
-The connector package is `@agent-controller/connector`; the generated one-time command has this
+The connector package is `@next-coder/connector`; the generated one-time command has this
 shape:
 
 ```bash
-npx @agent-controller/connector connect --server 'https://controller.example.com' --code 'one-time-code'
+npx @next-coder/connector connect --server 'https://controller.example.com' --code 'one-time-code'
 ```
 
 The package exists and passes clean-pack/install tests in this repository. A protected manual
@@ -139,7 +139,7 @@ OIDC trusted publication, provenance, and clean external `npm exec` verification
 been published to npm, so use the generated command only after a release is published and verified.
 See [docs/npm-connector-release.md](docs/npm-connector-release.md).
 
-Removal is fail-closed by default: `agent-controller-connect disconnect --revoke-cloud --yes` uses
+Removal is fail-closed by default: `next-coder-connect disconnect --revoke-cloud --yes` uses
 the connector's own scoped credential, waits for durable cloud revocation and live edge closure,
 then deletes the local service and credentials. A failed response retains local authority for a safe
 retry. `--force-local` must be stated explicitly to clean up locally without confirmed cloud
@@ -308,14 +308,14 @@ Vite listens on `http://127.0.0.1:5173` and proxies gateway requests to port `39
 To persist local platform state:
 
 ```bash
-DATA_FILE=.data/agent-controller.json npm start
+DATA_FILE=.data/next-coder.json npm start
 ```
 
 ## Current self-hosted remote access
 
 `npm run setup:tunnel` and the current Settings flow expose a locally running gateway with Tailscale
 Serve or Funnel. That is a supported development/self-hosted bridge, not the intended production
-topology. In production, the Agent Controller endpoint is already in the cloud; Tailscale belongs on
+topology. In production, the Next Coder endpoint is already in the cloud; Tailscale belongs on
 the user machine beside T3, and the connector CLI links that private runtime to the cloud.
 
 See [docs/remote-access.md](docs/remote-access.md) for the primary cloud-plus-connector flow and the
@@ -340,7 +340,7 @@ files; hardware evidence is tracked separately in the implementation ledger.
 | `firmware/vision-master-t190` | 1.9-inch TFT | 1 | Shared secure status adapter; browse/operate input is gated behind verified external encoder wiring |
 
 Shared provisioning, persisted device state, gateway operations, media upload, OTA support, and orb
-rendering live under `firmware/shared/AgentControllerCore`.
+rendering live under `firmware/shared/NextCoderCore`.
 
 Validate the complete manifest without compiling:
 
@@ -370,10 +370,10 @@ See [docs/hardware-protocol.md](docs/hardware-protocol.md) for provisioning, cla
 Create factory devices and per-device `controller_config.h` files:
 
 ```bash
-AGENT_CONTROLLER_URL=http://127.0.0.1:3996 \
+NEXT_CODER_URL=http://127.0.0.1:3996 \
 FACTORY_TOKEN=replace-with-factory-secret \
 COUNT=10 \
-LABEL_PREFIX="Agent Controller" \
+LABEL_PREFIX="Next Coder" \
 PUBLIC_GATEWAY_URL=https://gateway.example.com \
 GATEWAY_TLS_ROOT_CA_PEM="$(< issuing-root.pem)" \
 ENABLE_OTA_APPLY=0 \
@@ -387,10 +387,10 @@ gateway certificate moves. `INSECURE_SKIP_TLS_VERIFY=1` is an explicit local-ben
 Publish a signed firmware release manifest:
 
 ```bash
-AGENT_CONTROLLER_URL=http://127.0.0.1:3996 \
+NEXT_CODER_URL=http://127.0.0.1:3996 \
 FACTORY_TOKEN=replace-with-factory-secret \
 FIRMWARE_VERSION=0.2.0 \
-FIRMWARE_URL=https://cdn.example.com/firmware/agent-controller-0.2.0.bin \
+FIRMWARE_URL=https://cdn.example.com/firmware/next-coder-0.2.0.bin \
 FIRMWARE_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 FIRMWARE_SIZE_BYTES=901385 \
 npm run firmware:publish
@@ -400,7 +400,7 @@ For a managed artifact, set `FIRMWARE_FILE` instead of the URL, digest, and size
 computes integrity metadata and stores the immutable binary on disk or in configured private S3/R2:
 
 ```bash
-AGENT_CONTROLLER_URL=https://gateway.example.com \
+NEXT_CODER_URL=https://gateway.example.com \
 FACTORY_TOKEN=replace-with-factory-secret \
 FIRMWARE_FILE=.pio/build/secure/firmware.bin \
 FIRMWARE_VERSION=0.2.0 \
@@ -671,7 +671,7 @@ Known non-blocking follow-ups are tracked in [docs/deferred-items.md](docs/defer
 
 ## License
 
-Copyright the Agent Controller contributors. Licensed under the [Apache License, Version 2.0](LICENSE).
+Copyright the Next Coder contributors. Licensed under the [Apache License, Version 2.0](LICENSE).
 The CrowPanel, Hosyond, and Waveshare vendor documentation kits are not redistributed with this
 repository; those boards' `docs/` folders hold only a README explaining where to download them. The
 `firmware/vision-master-t190/docs/` folder still tracks five Heltec reference files (datasheet,

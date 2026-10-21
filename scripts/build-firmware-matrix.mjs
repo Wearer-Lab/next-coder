@@ -113,11 +113,11 @@ async function exists(path) {
 }
 
 export async function stageFirmwareSources(entries) {
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "agent-controller-firmware-matrix-"));
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "next-coder-firmware-matrix-"));
   await mkdir(join(temporaryRoot, "shared"), { recursive: true });
   await cp(
-    join(FIRMWARE, "shared", "AgentControllerCore"),
-    join(temporaryRoot, "shared", "AgentControllerCore"),
+    join(FIRMWARE, "shared", "NextCoderCore"),
+    join(temporaryRoot, "shared", "NextCoderCore"),
     { recursive: true },
   );
 

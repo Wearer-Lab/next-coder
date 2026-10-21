@@ -1,4 +1,4 @@
-# Agent Controller onboarding flow
+# Next Coder onboarding flow
 
 Current implementation supports the six-step workbench, host command generation, manual token
 pairing, reachability verification, project/provider/model selection, first-thread proof, and the
@@ -11,7 +11,7 @@ See [roadmap/IMPLEMENTATION-STATUS.md](../roadmap/IMPLEMENTATION-STATUS.md).
 A user is ready when all of the following are true:
 
 1. Clerk authentication is active.
-2. A T3 Code environment is paired and reachable from Agent Controller.
+2. A T3 Code environment is paired and reachable from Next Coder.
 3. The user has chosen how that environment is exposed: local, LAN, Tailnet, or a custom URL.
 4. A T3 workspace/project is visible in the live snapshot.
 5. A provider instance and model have been selected.
@@ -51,7 +51,7 @@ Collect:
 - reachable base URL;
 - one-time pairing token or existing access token.
 
-Agent Controller creates the environment, encrypts the resulting access token, immediately runs a reachability check, and loads the live snapshot. The step completes only when the environment is reachable.
+Next Coder creates the environment, encrypts the resulting access token, immediately runs a reachability check, and loads the live snapshot. The step completes only when the environment is reachable.
 
 Errors stay inline and preserve entered non-secret values. Submitted credentials are cleared.
 

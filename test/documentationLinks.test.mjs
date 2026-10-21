@@ -31,7 +31,7 @@ test("documentation target extraction ignores code and keeps source lines", () =
 });
 
 test("documentation validation checks decoded local targets and rejects escape or missing paths", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "agent-controller-doc-links-"));
+  const root = await mkdtemp(join(tmpdir(), "next-coder-doc-links-"));
   t.after(async () => await import("node:fs/promises").then(({ rm }) => rm(root, { recursive: true, force: true })));
   await mkdir(join(root, "docs", "assets"), { recursive: true });
   await writeFile(join(root, "README.md"), [

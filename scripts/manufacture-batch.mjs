@@ -1,6 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { readEnv } from "./environment.mjs";
+
 import {
   buildDeviceClaimPayload,
   buildDeviceClaimQrAscii,
@@ -8,15 +10,15 @@ import {
   claimLabelFilename,
 } from "../src/manufacturing.mjs";
 
-const gatewayUrl = requiredEnv("AGENT_CONTROLLER_URL").replace(/\/+$/u, "");
+const gatewayUrl = requiredEnv("NEXT_CODER_URL").replace(/\/+$/u, "");
 const factoryToken = requiredEnv("FACTORY_TOKEN");
 const outputDir = process.env.OUTPUT_DIR ?? ".manufacturing";
 const count = Number.parseInt(process.env.COUNT ?? "1", 10);
 
 const body = {
   count,
-  labelPrefix: process.env.LABEL_PREFIX ?? "Agent Controller",
-  profile: process.env.DEVICE_PROFILE ?? "agent-controller",
+  labelPrefix: process.env.LABEL_PREFIX ?? "Next Coder",
+  profile: process.env.DEVICE_PROFILE ?? "next-coder",
   gatewayBaseUrl: process.env.PUBLIC_GATEWAY_URL ?? gatewayUrl,
   // No WIFI_SSID/WIFI_PASSWORD: a shipped unit takes its network from the owner through the
   // on-device SoftAP portal, so anything the factory baked in could only ever be wrong.
@@ -102,7 +104,7 @@ for (const label of labels) {
 }
 
 function requiredEnv(name) {
-  const value = process.env[name];
+  const value = readEnv(process.env, name);
   if (!value) throw new Error(`${name} is required.`);
   return value;
 }

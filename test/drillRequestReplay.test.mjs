@@ -174,7 +174,7 @@ test("replay drill arguments never accept a token or a client request id as a va
     "--base-url", "https://staging.example.test",
     "--environment-id", ENVIRONMENT_ID,
     "--exercise-replay",
-  ], { AGENT_CONTROLLER_DRILL_ACCESS_TOKEN: TOKEN });
+  ], { NEXT_CODER_DRILL_ACCESS_TOKEN: TOKEN });
   assert.equal(parsed.accessToken, TOKEN);
   assert.equal(parsed.environmentId, ENVIRONMENT_ID);
   assert.equal(parsed.exerciseReplay, true);

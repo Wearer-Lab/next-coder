@@ -243,11 +243,11 @@ export function parseArguments(argv, environment = process.env) {
   return parseDrillArguments(argv, {
     environment,
     envDefaults: {
-      baseUrl: "AGENT_CONTROLLER_DRILL_URL",
-      accessToken: "AGENT_CONTROLLER_DRILL_ACCESS_TOKEN",
-      environmentId: "AGENT_CONTROLLER_DRILL_ENVIRONMENT_ID",
-      expectedDeploymentMode: "AGENT_CONTROLLER_DRILL_DEPLOYMENT_MODE",
-      requestTimeoutMs: "AGENT_CONTROLLER_DRILL_REQUEST_TIMEOUT_MS",
+      baseUrl: "NEXT_CODER_DRILL_URL",
+      accessToken: "NEXT_CODER_DRILL_ACCESS_TOKEN",
+      environmentId: "NEXT_CODER_DRILL_ENVIRONMENT_ID",
+      expectedDeploymentMode: "NEXT_CODER_DRILL_DEPLOYMENT_MODE",
+      requestTimeoutMs: "NEXT_CODER_DRILL_REQUEST_TIMEOUT_MS",
     },
     valueOptions: {
       "--base-url": "baseUrl",
@@ -264,18 +264,18 @@ export function parseArguments(argv, environment = process.env) {
 }
 
 export function helpText() {
-  return `Agent Controller staging drill: durable request replay (completion plan 4.3)
+  return `Next Coder staging drill: durable request replay (completion plan 4.3)
 
 Preflight (no mutation; every replay check is reported as skipped):
-  AGENT_CONTROLLER_DRILL_ACCESS_TOKEN=... npm run drill:request-replay -- \\
+  NEXT_CODER_DRILL_ACCESS_TOKEN=... npm run drill:request-replay -- \\
     --base-url https://staging.example.com --environment-id env_test
 
 Full drill (submits one status intent, replays it, and forces one idempotency conflict):
-  AGENT_CONTROLLER_DRILL_ACCESS_TOKEN=... npm run drill:request-replay -- \\
+  NEXT_CODER_DRILL_ACCESS_TOKEN=... npm run drill:request-replay -- \\
     --base-url https://staging.example.com --environment-id env_test --exercise-replay
 
 The clientRequestId is generated per run and never accepted from the command line. The platform
-token comes from AGENT_CONTROLLER_DRILL_ACCESS_TOKEN or a mode-0600 --access-token-file PATH.
+token comes from NEXT_CODER_DRILL_ACCESS_TOKEN or a mode-0600 --access-token-file PATH.
 
 A status intent reaches T3 through the connector, so the environment must be reachable; the drill
 spends no provider turn. See docs/staging-drills.md for what this does not prove.`;

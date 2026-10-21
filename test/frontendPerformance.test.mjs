@@ -11,7 +11,7 @@ import {
 } from "../scripts/check-frontend-performance.mjs";
 
 function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), "agent-controller-frontend-budget-"));
+  const directory = mkdtempSync(join(tmpdir(), "next-coder-frontend-budget-"));
   mkdirSync(join(directory, "assets"));
   const write = (file, bytes = 32) => {
     writeFileSync(join(directory, "assets", file), Buffer.alloc(bytes, 97));

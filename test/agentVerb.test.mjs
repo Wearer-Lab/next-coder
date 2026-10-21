@@ -259,7 +259,7 @@ async function verbRouteFixture(t, { snapshotThreads, threadDetail, detailStatus
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Orb controller", profile: "agent-controller" },
+    body: { label: "Orb controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",

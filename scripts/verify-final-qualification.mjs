@@ -7,12 +7,12 @@ import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-export const FINAL_QUALIFICATION_SCHEMA = "agent-controller.final-qualification-manifest.v1";
+export const FINAL_QUALIFICATION_SCHEMA = "next-coder.final-qualification-manifest.v1";
 export const MAX_FINAL_EVIDENCE_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
   repositorySecurity: Object.freeze({
-    schema: "agent-controller.final.repository-security.v1",
+    schema: "next-coder.final.repository-security.v1",
     checks: Object.freeze([
       "tracked_live_configs_absent",
       "history_reviewed",
@@ -22,7 +22,7 @@ export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
     ]),
   }),
   npmRelease: Object.freeze({
-    schema: "agent-controller.final.npm-release.v1",
+    schema: "next-coder.final.npm-release.v1",
     checks: Object.freeze([
       "published_with_provenance",
       "registry_digest_verified",
@@ -34,7 +34,7 @@ export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
     ]),
   }),
   cloudPromotion: Object.freeze({
-    schema: "agent-controller.final.cloud-promotion.v1",
+    schema: "next-coder.final.cloud-promotion.v1",
     checks: Object.freeze([
       "staging_bootstrap",
       "staging_qualification",
@@ -45,7 +45,7 @@ export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
     ]),
   }),
   productJourney: Object.freeze({
-    schema: "agent-controller.final.product-journey.v1",
+    schema: "next-coder.final.product-journey.v1",
     checks: Object.freeze([
       "fresh_account_enrollment",
       "connector_to_live_t3",
@@ -60,7 +60,7 @@ export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
     ]),
   }),
   resilience: Object.freeze({
-    schema: "agent-controller.final.resilience.v1",
+    schema: "next-coder.final.resilience.v1",
     checks: Object.freeze([
       "machine_sleep_wake",
       "wan_transition",
@@ -72,7 +72,7 @@ export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
     ]),
   }),
   controllerHardware: Object.freeze({
-    schema: "agent-controller.final.controller-hardware.v1",
+    schema: "next-coder.final.controller-hardware.v1",
     checks: Object.freeze([
       "production_roots_installed",
       "expired_certificate_refused",
@@ -84,7 +84,7 @@ export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
     ]),
   }),
   operations: Object.freeze({
-    schema: "agent-controller.final.operations.v1",
+    schema: "next-coder.final.operations.v1",
     checks: Object.freeze([
       "telemetry_privacy_review",
       "dashboard_ingestion",
@@ -95,7 +95,7 @@ export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
     ]),
   }),
   performance: Object.freeze({
-    schema: "agent-controller.final.performance.v1",
+    schema: "next-coder.final.performance.v1",
     checks: Object.freeze([
       "hosted_capacity_decision",
       "cloud_cost_observed",
@@ -106,7 +106,7 @@ export const REQUIRED_FINAL_EVIDENCE = Object.freeze({
     ]),
   }),
   rollback: Object.freeze({
-    schema: "agent-controller.final.rollback.v1",
+    schema: "next-coder.final.rollback.v1",
     checks: Object.freeze([
       "edge_rollback",
       "control_plane_rollback",

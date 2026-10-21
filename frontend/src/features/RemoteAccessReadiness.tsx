@@ -35,7 +35,7 @@ export function remoteAccessReadinessSteps(
         ? "Checking this gateway host…"
         : tailscale?.installed
           ? "Tailscale CLI found on this machine."
-          : "Install Tailscale on the machine running Agent Controller.",
+          : "Install Tailscale on the machine running Next Coder.",
     },
     {
       id: "connect",
@@ -66,7 +66,7 @@ export function remoteAccessReadinessSteps(
       detail: mappingActive && tailscale?.publicBaseUrlConfigured
         ? tailscale.httpsUrl ?? "The HTTPS origin is active."
         : mappingActive
-          ? "Restart Agent Controller after the setup command updates .env."
+          ? "Restart Next Coder after the setup command updates .env."
           : "Setup will update PUBLIC_BASE_URL and Clerk authorized parties.",
     },
   ];

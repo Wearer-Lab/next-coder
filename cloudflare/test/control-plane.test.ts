@@ -7,7 +7,7 @@ import { CONNECTOR_PROTOCOL_VERSION, type CloudRequestFrame, type CloudWelcomeFr
 import { ServiceBindingTicketVerifier } from "../src/tickets";
 
 const bindings = env as unknown as RuntimeBindings;
-const publicOrigin = "https://console.agent-controller.test";
+const publicOrigin = "https://console.nextcoder.test";
 const routerRpc = (workerExports as unknown as { ControlPlaneConnectorRouterEntrypoint: RouterRpcTestClient })
   .ControlPlaneConnectorRouterEntrypoint;
 
@@ -78,7 +78,7 @@ describe("same-origin control-plane edge", () => {
     expect(calls.every((call) => new URL(call.url).origin === "https://control-plane.internal")).toBe(true);
     expect(calls.every((call) => !call.url.includes("single-use-enrollment-code") && !call.url.includes("standing_connector_secret"))).toBe(true);
     expect(calls[1]?.authorization).toBe("Bearer standing_connector_secret");
-    expect(calls[1]?.forwardedHost).toBe("console.agent-controller.test");
+    expect(calls[1]?.forwardedHost).toBe("console.nextcoder.test");
   });
 
   it("consumes a backend-shaped ticket and completes the production socket handshake", async () => {

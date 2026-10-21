@@ -1,6 +1,6 @@
 # Security policy
 
-Agent Controller authenticates people, devices, and connectors, holds device credentials and
+Next Coder authenticates people, devices, and connectors, holds device credentials and
 encrypted T3 tokens, and dispatches commands to coding agents on users' machines. Vulnerabilities
 in it can reach a user's development environment, so please report them privately.
 
@@ -8,7 +8,7 @@ in it can reach a user's development environment, so please report them privatel
 
 Use GitHub's private vulnerability reporting for this repository:
 
-<https://github.com/spyhack225/agent-controller/security/advisories/new>
+<https://github.com/spyhack225/next-coder/security/advisories/new>
 
 Do not open a public issue or pull request for a security problem. Include the affected surface
 (gateway, console, connector CLI, Cloudflare Worker/Container, Convex functions, or firmware), a
@@ -19,7 +19,7 @@ You should receive an acknowledgement within a few days. There is no bug bounty 
 
 ## Scope
 
-In scope: everything in this repository, including the `@agent-controller/connector` package, the
+In scope: everything in this repository, including the `@next-coder/connector` package, the
 Cloudflare edge and control-plane code, the Convex functions, and the firmware under `firmware/`.
 
 Out of scope: T3 Code itself, Clerk, Convex, Cloudflare, and other third-party services, which have

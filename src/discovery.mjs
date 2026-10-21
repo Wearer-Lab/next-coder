@@ -9,7 +9,7 @@
 // dependencies. `node:dgram` is core, and the exchange here is two datagrams:
 //
 //   device  -> 255.255.255.255:PORT   "AGENTCTL?"
-//   gateway -> device                 {"service":"agent-controller","baseUrl":"http://…", …}
+//   gateway -> device                 {"service":"next-coder","baseUrl":"http://…", …}
 //
 // The reply is unicast back to the asker, so this never floods the network with announcements the
 // way a periodic beacon would.
@@ -19,7 +19,9 @@ import os from "node:os";
 
 export const DISCOVERY_PORT = 3997;
 export const DISCOVERY_PROBE = "AGENTCTL?";
-export const DISCOVERY_SERVICE = "agent-controller";
+// The service name is a wire value shared with the controller firmware. Firmware accepts both the
+// current name and the legacy one, so a device keeps finding a gateway that has not been renamed.
+export const DISCOVERY_SERVICE = "next-coder";
 
 // The address a device on the LAN should use to reach us. `config.host` is usually 127.0.0.1 or
 // 0.0.0.0, neither of which means anything to another machine, so the reply has to name a real

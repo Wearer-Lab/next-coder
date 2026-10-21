@@ -12,7 +12,7 @@ import { createFileStore } from "../src/fileStore.mjs";
 const AUDIO = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
 
 test("companion handoff is scoped, short-lived, single-use, and records truthful media origin", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-companion-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-companion-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   const { server } = createApp({ config: { demoMode: false, mediaDir, maxMediaBytes: 4096 } });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -93,7 +93,7 @@ test("companion handoff is scoped, short-lived, single-use, and records truthful
   assert.equal((await json(baseUrl, `/v1/companion-handoffs/${claimed.handoff.id}`, { headers: owner })).handoff.status, "completed");
 
   const createdDevice = await json(baseUrl, "/v1/devices", {
-    method: "POST", headers: owner, body: { label: "No-camera controller", profile: "agent-controller" }, expectedStatus: 201,
+    method: "POST", headers: owner, body: { label: "No-camera controller", profile: "next-coder" }, expectedStatus: 201,
   });
   await json(baseUrl, `/v1/devices/${createdDevice.device.id}/config`, {
     method: "PUT",
@@ -115,7 +115,7 @@ test("companion handoff is scoped, short-lived, single-use, and records truthful
 });
 
 test("FileStore persists only a handoff digest and Convex receives the same boundary", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-controller-companion-store-"));
+  const directory = await mkdtemp(join(tmpdir(), "next-coder-companion-store-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const statePath = join(directory, "state.json");
   const code = "privateOneTimeCompanionCode123456";

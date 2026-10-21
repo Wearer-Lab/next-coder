@@ -41,7 +41,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: agent-controller-production-promotion
+  group: next-coder-production-promotion
   cancel-in-progress: false
 
 jobs:
@@ -99,10 +99,10 @@ jobs:
           PRODUCTION_PROMOTION_DISPATCH_REF: ${{ github.ref_name }}
           PRODUCTION_PROMOTION_REPOSITORY_ROOT: ${{ github.workspace }}/release
           PRODUCTION_PROMOTION_EVIDENCE_ROOT: ${{ github.workspace }}/evidence
-          AGENT_CONTROLLER_STAGING_URL: ${{ vars.AGENT_CONTROLLER_STAGING_URL }}
-          AGENT_CONTROLLER_PRODUCTION_URL: ${{ vars.AGENT_CONTROLLER_PRODUCTION_URL }}
-          AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET: ${{ vars.AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET }}
-          AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET: ${{ vars.AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET }}
+          NEXT_CODER_STAGING_URL: ${{ vars.NEXT_CODER_STAGING_URL || vars.AGENT_CONTROLLER_STAGING_URL }}
+          NEXT_CODER_PRODUCTION_URL: ${{ vars.NEXT_CODER_PRODUCTION_URL || vars.AGENT_CONTROLLER_PRODUCTION_URL }}
+          NEXT_CODER_PRODUCTION_MEDIA_BUCKET: ${{ vars.NEXT_CODER_PRODUCTION_MEDIA_BUCKET || vars.AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET }}
+          NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET: ${{ vars.NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET || vars.AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET }}
         run: node ../automation/scripts/promote-production.mjs validate-local
       - name: Run repository secret gate
         working-directory: release
@@ -121,7 +121,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: production
-      url: ${{ vars.AGENT_CONTROLLER_PRODUCTION_URL }}
+      url: ${{ vars.NEXT_CODER_PRODUCTION_URL || vars.AGENT_CONTROLLER_PRODUCTION_URL }}
     steps:
       - name: Check out protected automation source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -174,10 +174,10 @@ jobs:
           PRODUCTION_PROMOTION_REPOSITORY_ROOT: ${{ github.workspace }}/release
           PRODUCTION_PROMOTION_EVIDENCE_ROOT: ${{ github.workspace }}/evidence
           PRODUCTION_PROMOTION_OUTPUT_PATH: ${{ github.workspace }}/release/production-promotion-evidence.json
-          AGENT_CONTROLLER_STAGING_URL: ${{ vars.AGENT_CONTROLLER_STAGING_URL }}
-          AGENT_CONTROLLER_PRODUCTION_URL: ${{ vars.AGENT_CONTROLLER_PRODUCTION_URL }}
-          AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET: ${{ vars.AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET }}
-          AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET: ${{ vars.AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET }}
+          NEXT_CODER_STAGING_URL: ${{ vars.NEXT_CODER_STAGING_URL || vars.AGENT_CONTROLLER_STAGING_URL }}
+          NEXT_CODER_PRODUCTION_URL: ${{ vars.NEXT_CODER_PRODUCTION_URL || vars.AGENT_CONTROLLER_PRODUCTION_URL }}
+          NEXT_CODER_PRODUCTION_MEDIA_BUCKET: ${{ vars.NEXT_CODER_PRODUCTION_MEDIA_BUCKET || vars.AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET }}
+          NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET: ${{ vars.NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET || vars.AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PRODUCTION_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_PRODUCTION_ACCOUNT_ID }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PRODUCTION_DEPLOY_KEY }}
@@ -190,7 +190,7 @@ jobs:
     timeout-minutes: 30
     environment:
       name: production
-      url: ${{ vars.AGENT_CONTROLLER_PRODUCTION_URL }}
+      url: ${{ vars.NEXT_CODER_PRODUCTION_URL || vars.AGENT_CONTROLLER_PRODUCTION_URL }}
     steps:
       - name: Check out protected automation source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -250,7 +250,7 @@ jobs:
     timeout-minutes: 20
     environment:
       name: production
-      url: ${{ vars.AGENT_CONTROLLER_PRODUCTION_URL }}
+      url: ${{ vars.NEXT_CODER_PRODUCTION_URL || vars.AGENT_CONTROLLER_PRODUCTION_URL }}
     steps:
       - name: Check out protected automation source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -304,10 +304,10 @@ jobs:
           PRODUCTION_PROMOTION_REPOSITORY_ROOT: ${{ github.workspace }}/release
           PRODUCTION_PROMOTION_EVIDENCE_ROOT: ${{ github.workspace }}/evidence
           PRODUCTION_PROMOTION_OUTPUT_PATH: ${{ github.workspace }}/release/production-promotion-evidence.json
-          AGENT_CONTROLLER_STAGING_URL: ${{ vars.AGENT_CONTROLLER_STAGING_URL }}
-          AGENT_CONTROLLER_PRODUCTION_URL: ${{ vars.AGENT_CONTROLLER_PRODUCTION_URL }}
-          AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET: ${{ vars.AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET }}
-          AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET: ${{ vars.AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET }}
+          NEXT_CODER_STAGING_URL: ${{ vars.NEXT_CODER_STAGING_URL || vars.AGENT_CONTROLLER_STAGING_URL }}
+          NEXT_CODER_PRODUCTION_URL: ${{ vars.NEXT_CODER_PRODUCTION_URL || vars.AGENT_CONTROLLER_PRODUCTION_URL }}
+          NEXT_CODER_PRODUCTION_MEDIA_BUCKET: ${{ vars.NEXT_CODER_PRODUCTION_MEDIA_BUCKET || vars.AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET }}
+          NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET: ${{ vars.NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET || vars.AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PRODUCTION_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_PRODUCTION_ACCOUNT_ID }}
         run: node ../automation/scripts/promote-production.mjs preflight-edge
@@ -331,7 +331,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: production
-      url: ${{ vars.AGENT_CONTROLLER_PRODUCTION_URL }}
+      url: ${{ vars.NEXT_CODER_PRODUCTION_URL || vars.AGENT_CONTROLLER_PRODUCTION_URL }}
     steps:
       - name: Check out protected automation source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

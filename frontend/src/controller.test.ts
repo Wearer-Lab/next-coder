@@ -12,12 +12,12 @@ import {
   setBoundedCacheEntry,
 } from "./controller";
 
-const projects = [{ id: "project_1", title: "Agent Controller" }];
+const projects = [{ id: "project_1", title: "Next Coder" }];
 
 test("does not resurrect a deleted thread from a stale T3 snapshot", () => {
   const staleThreads = [
-    { id: "thread_deleted", title: "Old task", label: "Old task — Agent Controller", projectId: "project_1" },
-    { id: "thread_keep", title: "Current task", label: "Current task — Agent Controller", projectId: "project_1" },
+    { id: "thread_deleted", title: "Old task", label: "Old task — Next Coder", projectId: "project_1" },
+    { id: "thread_keep", title: "Current task", label: "Current task — Next Coder", projectId: "project_1" },
   ];
   const pending = new Map([["thread_deleted", { kind: "remove" as const }]]);
 
@@ -34,17 +34,17 @@ test("keeps an accepted rename until T3 reports the new title", () => {
   const staleThread = {
     id: "thread_1",
     title: "Old title",
-    label: "Old title — Agent Controller",
+    label: "Old title — Next Coder",
     projectId: "project_1",
   };
   const pending = new Map([["thread_1", { kind: "rename" as const, title: "New title" }]]);
 
   const stale = applyPendingThreadMutations([staleThread], projects, pending);
-  expect(stale.threads[0]).toMatchObject({ title: "New title", label: "New title — Agent Controller" });
+  expect(stale.threads[0]).toMatchObject({ title: "New title", label: "New title — Next Coder" });
   expect(stale.settledIds).toEqual([]);
 
   const caughtUp = applyPendingThreadMutations([
-    { ...staleThread, title: "New title", label: "New title — Agent Controller" },
+    { ...staleThread, title: "New title", label: "New title — Next Coder" },
   ], projects, pending);
   expect(caughtUp.settledIds).toEqual(["thread_1"]);
 });

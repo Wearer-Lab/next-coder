@@ -44,7 +44,7 @@ test("device credentials are refused over plaintext when TLS is required", async
   const local = await requestJson(baseUrl, "/v1/devices", {
     method: "POST",
     headers,
-    body: { label: "Local", profile: "agent-controller" },
+    body: { label: "Local", profile: "next-coder" },
   });
   assert.ok(local.secret, "loopback still receives the device secret");
 
@@ -52,7 +52,7 @@ test("device credentials are refused over plaintext when TLS is required", async
   const plaintext = await fetch(new URL("/v1/devices", baseUrl), {
     method: "POST",
     headers: { "content-type": "application/json", "x-forwarded-proto": "http", ...headers },
-    body: JSON.stringify({ label: "Remote", profile: "agent-controller" }),
+    body: JSON.stringify({ label: "Remote", profile: "next-coder" }),
   });
   const body = await plaintext.json();
   assert.equal(plaintext.status, 403);
@@ -62,7 +62,7 @@ test("device credentials are refused over plaintext when TLS is required", async
   const secure = await fetch(new URL("/v1/devices", baseUrl), {
     method: "POST",
     headers: { "content-type": "application/json", "x-forwarded-proto": "https", ...headers },
-    body: JSON.stringify({ label: "Remote", profile: "agent-controller" }),
+    body: JSON.stringify({ label: "Remote", profile: "next-coder" }),
   });
   await secure.text();
   assert.equal(secure.status, 201);
@@ -83,7 +83,7 @@ test("device authentication and factory provisioning are both TLS-gated", async 
       "x-forwarded-proto": "http",
       authorization: "Bearer factory-secret",
     },
-    body: JSON.stringify({ label: "F", profile: "agent-controller" }),
+    body: JSON.stringify({ label: "F", profile: "next-coder" }),
   });
   await factory.text();
   assert.equal(factory.status, 403, "factory provisioning returns secrets and must require TLS");
@@ -120,7 +120,7 @@ test("TLS enforcement is off by default so existing deployments keep working", a
       "x-forwarded-proto": "http",
       authorization: `Bearer ${auth.apiToken.secret}`,
     },
-    body: JSON.stringify({ label: "Plain", profile: "agent-controller" }),
+    body: JSON.stringify({ label: "Plain", profile: "next-coder" }),
   });
   await response.text();
   assert.equal(response.status, 201);

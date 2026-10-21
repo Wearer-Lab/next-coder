@@ -5,7 +5,9 @@ import { readFile, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 
-const EVIDENCE_SCHEMA = "agent-controller.staging-qualification.v1";
+import { readEnv } from "./environment.mjs";
+
+const EVIDENCE_SCHEMA = "next-coder.staging-qualification.v1";
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 180_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -317,18 +319,18 @@ export function normalizeConfiguration(input = {}) {
 
 export function parseArguments(argv, environment = process.env) {
   const parsed = {
-    baseUrl: environment.AGENT_CONTROLLER_STAGING_URL,
-    accessToken: environment.AGENT_CONTROLLER_STAGING_ACCESS_TOKEN,
-    environmentId: environment.AGENT_CONTROLLER_STAGING_ENVIRONMENT_ID,
-    projectId: environment.AGENT_CONTROLLER_STAGING_PROJECT_ID,
-    providerInstance: environment.AGENT_CONTROLLER_STAGING_PROVIDER_INSTANCE,
-    model: environment.AGENT_CONTROLLER_STAGING_MODEL,
-    prompt: environment.AGENT_CONTROLLER_STAGING_PROMPT,
-    expectedEnvironment: environment.AGENT_CONTROLLER_STAGING_EXPECTED_ENVIRONMENT,
-    requestTimeoutMs: environment.AGENT_CONTROLLER_STAGING_REQUEST_TIMEOUT_MS,
-    commandTimeoutMs: environment.AGENT_CONTROLLER_STAGING_COMMAND_TIMEOUT_MS,
-    pollIntervalMs: environment.AGENT_CONTROLLER_STAGING_POLL_INTERVAL_MS,
-    maxStalenessMs: environment.AGENT_CONTROLLER_STAGING_MAX_STALENESS_MS,
+    baseUrl: readEnv(environment, "NEXT_CODER_STAGING_URL"),
+    accessToken: readEnv(environment, "NEXT_CODER_STAGING_ACCESS_TOKEN"),
+    environmentId: readEnv(environment, "NEXT_CODER_STAGING_ENVIRONMENT_ID"),
+    projectId: readEnv(environment, "NEXT_CODER_STAGING_PROJECT_ID"),
+    providerInstance: readEnv(environment, "NEXT_CODER_STAGING_PROVIDER_INSTANCE"),
+    model: readEnv(environment, "NEXT_CODER_STAGING_MODEL"),
+    prompt: readEnv(environment, "NEXT_CODER_STAGING_PROMPT"),
+    expectedEnvironment: readEnv(environment, "NEXT_CODER_STAGING_EXPECTED_ENVIRONMENT"),
+    requestTimeoutMs: readEnv(environment, "NEXT_CODER_STAGING_REQUEST_TIMEOUT_MS"),
+    commandTimeoutMs: readEnv(environment, "NEXT_CODER_STAGING_COMMAND_TIMEOUT_MS"),
+    pollIntervalMs: readEnv(environment, "NEXT_CODER_STAGING_POLL_INTERVAL_MS"),
+    maxStalenessMs: readEnv(environment, "NEXT_CODER_STAGING_MAX_STALENESS_MS"),
     exerciseFirstCommand: false,
     allowHttpLoopback: false,
   };
@@ -590,17 +592,17 @@ class QualificationError extends Error {
 }
 
 function helpText() {
-  return `Agent Controller staging qualification
+  return `Next Coder staging qualification
 
 Credential-free boundary check:
   npm run qualify:staging -- --base-url https://staging.example.com
 
 Authenticated connector-first readiness (token via environment):
-  AGENT_CONTROLLER_STAGING_ACCESS_TOKEN=... AGENT_CONTROLLER_STAGING_PROMPT=... npm run qualify:staging -- \\
+  NEXT_CODER_STAGING_ACCESS_TOKEN=... NEXT_CODER_STAGING_PROMPT=... npm run qualify:staging -- \\
     --base-url https://staging.example.com --environment-id env_test
 
 Opt-in first-command proof (creates one test thread):
-  AGENT_CONTROLLER_STAGING_ACCESS_TOKEN=... npm run qualify:staging -- \\
+  NEXT_CODER_STAGING_ACCESS_TOKEN=... npm run qualify:staging -- \\
     --base-url https://staging.example.com --environment-id env_test \\
     --project-id project_test --provider-instance codex --model model_test \\
     --exercise-first-command

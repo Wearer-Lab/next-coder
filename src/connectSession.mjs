@@ -43,7 +43,7 @@ export function tunnelForAccessMode(mode) {
  */
 export function buildConnectCommand({ gatewayUrl, code }) {
   return [
-    "npx @agent-controller/connector connect",
+    "npx @next-coder/connector connect",
     "--server",
     shellQuote(String(gatewayUrl).replace(/\/+$/u, "")),
     "--code",
@@ -53,7 +53,7 @@ export function buildConnectCommand({ gatewayUrl, code }) {
 
 export function buildConnectorRotateCommand({ gatewayUrl, code }) {
   return [
-    "npx @agent-controller/connector rotate",
+    "npx @next-coder/connector rotate",
     "--server",
     shellQuote(String(gatewayUrl).replace(/\/+$/u, "")),
     "--code",

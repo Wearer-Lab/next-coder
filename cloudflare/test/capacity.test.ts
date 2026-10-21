@@ -10,7 +10,7 @@ import {
 } from "../src/protocol";
 
 const bindings = env as unknown as RuntimeBindings;
-const origin = "https://agent-controller-capacity.test";
+const origin = "https://nextcoder-capacity.test";
 const QUALIFICATION_ENVIRONMENTS = 16;
 const MAX_SUBSCRIPTIONS = 16;
 const MAX_ACTIVE_WAITERS = MAX_PENDING_REQUESTS + MAX_SUBSCRIPTIONS;

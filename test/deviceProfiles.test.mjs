@@ -23,7 +23,7 @@ test("built-in profiles stay public and are flagged as built-in", async (t) => {
   const { baseUrl } = await bootstrap(t);
   const body = await requestJson(baseUrl, "/v1/device-profiles", {});
   assert.deepEqual(body.profiles.map((profile) => profile.id), [
-    "agent-controller", "read-only", "power-controller",
+    "next-coder", "read-only", "power-controller",
   ]);
   assert.equal(body.profiles.every((profile) => profile.builtin === true), true);
 });

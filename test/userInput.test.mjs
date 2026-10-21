@@ -270,7 +270,7 @@ test("the fingerprint distinguishes a repeat from a different answer, and holds 
 // ---------------------------------------------------------------------------------------------
 
 test("answering a question is its own capability, and read-only does not have it", () => {
-  assert.equal(capabilitiesForProfile("agent-controller").has("user_input_response"), true);
+  assert.equal(capabilitiesForProfile("next-coder").has("user_input_response"), true);
   assert.equal(capabilitiesForProfile("power-controller").has("user_input_response"), true);
   assert.equal(capabilitiesForProfile("read-only").has("user_input_response"), false);
 
@@ -278,10 +278,10 @@ test("answering a question is its own capability, and read-only does not have it
     device: { profile },
     intent: { type: "user_input_response", requestId: "req_1", answers: { q: "a" } },
   });
-  assert.equal(decide("agent-controller").allowed, true);
+  assert.equal(decide("next-coder").allowed, true);
   // Not a permission grant and not an execution — the same baseline as agent_prompt.
-  assert.equal(decide("agent-controller").risk, "low");
-  assert.equal(decide("agent-controller").matchedRule, "baseline.user-input-response");
+  assert.equal(decide("next-coder").risk, "low");
+  assert.equal(decide("next-coder").matchedRule, "baseline.user-input-response");
   assert.equal(decide("power-controller").allowed, true);
   assert.equal(decide("read-only").allowed, false);
 });
@@ -417,7 +417,7 @@ function stubT3({ activities }) {
 
 async function harness(t, {
   activities = [userInputRequested("req_1", [choiceQuestion()])],
-  profile = "agent-controller",
+  profile = "next-coder",
 } = {}) {
   const originalFetch = globalThis.fetch;
   const stub = stubT3({ activities });

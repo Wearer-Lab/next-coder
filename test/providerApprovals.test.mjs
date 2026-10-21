@@ -134,7 +134,7 @@ test("a bodiless snapshot thread yields no approvals rather than an error", () =
 
 test("allow-always is a separate capability from allow-once", () => {
   assert.deepEqual(
-    allowedProviderApprovalDecisions(capabilitiesForProfile("agent-controller")),
+    allowedProviderApprovalDecisions(capabilitiesForProfile("next-coder")),
     ["accept", "decline", "cancel"],
   );
   assert.deepEqual(
@@ -151,10 +151,10 @@ test("the policy engine gates acceptForSession apart from the other three", () =
     intent: { type: "approval_response", requestId: "req_1", decision },
   });
 
-  assert.equal(decide("agent-controller", "accept").allowed, true);
-  assert.equal(decide("agent-controller", "decline").allowed, true);
-  assert.equal(decide("agent-controller", "cancel").allowed, true);
-  const persistent = decide("agent-controller", "acceptForSession");
+  assert.equal(decide("next-coder", "accept").allowed, true);
+  assert.equal(decide("next-coder", "decline").allowed, true);
+  assert.equal(decide("next-coder", "cancel").allowed, true);
+  const persistent = decide("next-coder", "acceptForSession");
   assert.equal(persistent.allowed, false);
   assert.equal(persistent.risk, "blocked");
   assert.equal(persistent.dimension, "device");
@@ -221,7 +221,7 @@ function stubT3({ activities }) {
   return { dispatches, state };
 }
 
-async function harness(t, { activities = [approvalRequested("req_1")], profile = "agent-controller" } = {}) {
+async function harness(t, { activities = [approvalRequested("req_1")], profile = "next-coder" } = {}) {
   const originalFetch = globalThis.fetch;
   const stub = stubT3({ activities });
   t.after(() => {

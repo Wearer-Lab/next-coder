@@ -124,7 +124,7 @@
 // board entirely. Every macro below is wrapped in #ifndef, so a platformio.ini
 // env can override it with -D without a redefinition warning.
 //
-// Enabled captures use AgentControllerCore's authenticated raw upload-session protocol and then
+// Enabled captures use NextCoderCore's authenticated raw upload-session protocol and then
 // submit an audio_prompt / camera_prompt intent referencing the finalized media id.
 // ---------------------------------------------------------------------------
 

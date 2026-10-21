@@ -28,7 +28,7 @@ const { server, snapshotPoller, threadStreams, mediaJobRunner, releaseRolloutRun
 });
 
 server.listen(config.port, config.host, async () => {
-  console.log(`agent-controller listening on http://${config.host}:${config.port}`);
+  console.log(`next-coder listening on http://${config.host}:${config.port}`);
 
   // Started here rather than in createApp() so tests stay hermetic: binding a fixed UDP port in
   // every test process would collide, and discovery is a deployment concern, not an app one.

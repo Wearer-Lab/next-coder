@@ -15,7 +15,7 @@
 //
 // Keeping this contract in one module prevents network and lifecycle screens
 // from quietly inventing different button meanings or painting past the glass.
-namespace acui {
+namespace ncuri {
 
 enum class Icon : uint8_t {
   Agent,
@@ -81,4 +81,4 @@ String safeLabel(const String& value, size_t maxChars);
 void render(const Frame& frame);
 #endif
 
-}  // namespace acui
+}  // namespace ncuri

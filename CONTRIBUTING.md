@@ -1,4 +1,4 @@
-# Contributing to Agent Controller
+# Contributing to Next Coder
 
 Thanks for your interest. This document covers the mechanics; the engineering expectations for a
 complete change live in [AGENTS.md](AGENTS.md), and the architecture and protocol invariants in

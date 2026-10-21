@@ -142,7 +142,7 @@ export interface EnvironmentHealth {
 export type T3CapabilityState = "supported" | "unsupported" | "unknown";
 
 export interface T3CapabilityManifest {
-  schema: "agent-controller.t3-capabilities.v1";
+  schema: "next-coder.t3-capabilities.v1";
   contractVersion: string;
   installedVersion: string | null;
   probedAt: string;

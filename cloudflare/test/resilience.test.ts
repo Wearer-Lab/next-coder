@@ -17,7 +17,7 @@ import {
 } from "../src/protocol";
 
 const bindings = env as unknown as RuntimeBindings;
-const origin = "https://agent-controller-resilience.test";
+const origin = "https://nextcoder-resilience.test";
 const MAX_SUBSCRIPTION_BYTES = 1024 * 1024;
 const encoder = new TextEncoder();
 

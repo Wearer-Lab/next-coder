@@ -1,4 +1,5 @@
 import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -6,13 +7,31 @@ import { credentialAccounts, CREDENTIAL_STORE_VERSION } from "./credentialStore.
 
 export const STATE_VERSION = 1;
 
+// The state directory is named after the product. A directory created before the rename still
+// holds the enrollment and the credential accounts, so it stays the active one until a new
+// directory exists; the credential account names are derived from this path, so moving it would
+// orphan the stored credential.
+const STATE_DIR_NAMES = Object.freeze({ darwin: "Next Coder", win32: "Next Coder", linux: "next-coder" });
+const LEGACY_STATE_DIR_NAMES = Object.freeze({ darwin: "Agent Controller", win32: "Agent Controller", linux: "agent-controller" });
+
 export function defaultStateDir(env = process.env) {
+  // NEXT_CODER_CONFIG_DIR is read first; the legacy name stays readable so an installation that
+  // exported it before the rename keeps using the same state directory.
+  if (env.NEXT_CODER_CONFIG_DIR) return resolve(env.NEXT_CODER_CONFIG_DIR);
   if (env.AGENT_CONTROLLER_CONFIG_DIR) return resolve(env.AGENT_CONTROLLER_CONFIG_DIR);
-  if (platform() === "darwin") return join(homedir(), "Library", "Application Support", "Agent Controller");
+  const current = stateDirFor(STATE_DIR_NAMES, env);
+  const legacy = stateDirFor(LEGACY_STATE_DIR_NAMES, env);
+  if (legacy !== current && !existsSync(current) && existsSync(legacy)) return legacy;
+  return current;
+}
+
+function stateDirFor(names, env) {
+  const name = names[platform()] ?? names.linux;
+  if (platform() === "darwin") return join(homedir(), "Library", "Application Support", name);
   if (platform() === "win32") {
-    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "Agent Controller");
+    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), name);
   }
-  return join(env.XDG_CONFIG_HOME || join(homedir(), ".config"), "agent-controller");
+  return join(env.XDG_CONFIG_HOME || join(homedir(), ".config"), name);
 }
 
 export function statePath(stateDir = defaultStateDir()) {

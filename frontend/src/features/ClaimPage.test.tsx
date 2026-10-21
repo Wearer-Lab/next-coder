@@ -55,7 +55,7 @@ test("a spent code is taken out of the address bar", async () => {
   await screen.findByText("Controller claimed");
   expect(window.location.pathname).toBe("/");
   expect(window.location.search).toBe("");
-  expect(sessionStorage.getItem("agentControllerClaimLink")).toBeNull();
+  expect(sessionStorage.getItem("nextCoderClaimLink")).toBeNull();
 });
 
 // The reason the landing exists at all: a used or expired code previously surfaced as a generic

@@ -1,6 +1,8 @@
-const baseUrl = process.env.AGENT_CONTROLLER_URL ?? "http://127.0.0.1:8877";
+import { readEnv } from "./environment.mjs";
+
+const baseUrl = readEnv(process.env, "NEXT_CODER_URL") ?? "http://127.0.0.1:8877";
 const t3BaseUrl = process.env.MOCK_T3_URL ?? "http://127.0.0.1:3999";
-const userId = process.env.AGENT_CONTROLLER_USER_ID ?? "user_dev";
+const userId = readEnv(process.env, "NEXT_CODER_USER_ID") ?? "user_dev";
 
 async function main() {
   await get("/health");
@@ -8,7 +10,7 @@ async function main() {
 
   const { device, secret } = await post(
     "/v1/devices",
-    { label: "Smoke test controller", profile: "agent-controller" },
+    { label: "Smoke test controller", profile: "next-coder" },
     authHeaders,
   );
 
@@ -166,7 +168,7 @@ async function main() {
   const diagnostics = await get("/v1/support/diagnostics", authHeaders);
   const transferDevice = await post(
     "/v1/devices",
-    { label: "Transfer smoke controller", profile: "agent-controller" },
+    { label: "Transfer smoke controller", profile: "next-coder" },
     authHeaders,
   );
   const profileUpdate = await put(

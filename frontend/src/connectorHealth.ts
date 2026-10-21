@@ -105,7 +105,7 @@ export function environmentHealthLayers({
 
 function cloudLayer(connection: ConnectionState): HealthLayer {
   if (connection === "connected" || connection === "live") {
-    return layer("cloud", "Cloud", "operational", "Console is synchronized with Agent Controller.", "success", null, false);
+    return layer("cloud", "Cloud", "operational", "Console is synchronized with Next Coder.", "success", null, false);
   }
   if (connection === "connecting" || connection === "reconnecting") {
     return layer("cloud", "Cloud", "degraded", "The console is reconnecting; cached state may be older than shown.", "warning", null, true);

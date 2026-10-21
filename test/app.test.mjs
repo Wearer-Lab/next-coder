@@ -38,7 +38,7 @@ test("device intent endpoint authenticates device and dispatches to T3", async (
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Test controller", profile: "agent-controller" },
+    body: { label: "Test controller", profile: "next-coder" },
   });
 
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
@@ -98,7 +98,7 @@ test("failed T3 dispatches are recorded with command metrics", async (t) => {
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Failing controller", profile: "agent-controller" },
+    body: { label: "Failing controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -168,7 +168,7 @@ test("dangerous shell input requires user approval before T3 dispatch", async (t
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Shell controller", profile: "agent-controller" },
+    body: { label: "Shell controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -282,7 +282,7 @@ test("claimed devices can list, approve, and reject pending commands", async (t)
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Approval controller", profile: "agent-controller" },
+    body: { label: "Approval controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -366,7 +366,7 @@ test("status intent returns compressed T3 state", async (t) => {
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Test controller", profile: "agent-controller" },
+    body: { label: "Test controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -481,7 +481,7 @@ test("T3 environment snapshot exposes projects and threads for session selection
         authorization: init.headers?.authorization,
       });
       return jsonResponse({
-        projects: [{ id: "project_1", title: "Agent Controller" }],
+        projects: [{ id: "project_1", title: "Next Coder" }],
         threads: [{ id: "thread_1", title: "Implementation", projectId: "project_1" }],
       }, 200);
     }
@@ -710,7 +710,7 @@ test("web users can rename, archive, and delete their T3 threads", async (t) => 
     requestJson(originalFetch, baseUrl, "/v1/devices", {
       method: "POST",
       headers: authHeaders,
-      body: { label, profile: "agent-controller" },
+      body: { label, profile: "next-coder" },
     })));
   await Promise.all(controllers.map(({ device }) =>
     requestJson(originalFetch, baseUrl, `/v1/devices/${device.id}/config`, {
@@ -792,7 +792,7 @@ test("expired T3 access tokens are blocked before snapshot or dispatch", async (
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Expired token controller", profile: "agent-controller" },
+    body: { label: "Expired token controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -868,7 +868,7 @@ test("T3 environments can be updated and removed", async (t) => {
   const device = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Environment controller", profile: "agent-controller" },
+    body: { label: "Environment controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -934,7 +934,7 @@ test("T3 environments can be updated and removed", async (t) => {
 });
 
 test("device can upload image media and reference it in a camera prompt", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-media-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-media-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const originalFetch = globalThis.fetch;
@@ -960,7 +960,7 @@ test("device can upload image media and reference it in a camera prompt", async 
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Camera controller", profile: "agent-controller" },
+    body: { label: "Camera controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -1022,7 +1022,7 @@ test("device can upload image media and reference it in a camera prompt", async 
 });
 
 test("audio media transcripts can be stored, updated, and used by audio prompts", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-audio-media-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-audio-media-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const originalFetch = globalThis.fetch;
@@ -1108,7 +1108,7 @@ test("audio media transcripts can be stored, updated, and used by audio prompts"
 });
 
 test("audio media can be transcribed through the configured provider", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-transcribe-media-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-transcribe-media-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const originalFetch = globalThis.fetch;
@@ -1208,7 +1208,7 @@ test("audio media can be transcribed through the configured provider", async (t)
 });
 
 test("deleting equal uploads removes only the selected metadata and stored bytes", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-delete-media-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-delete-media-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { mediaDir, maxMediaBytes: 1024, demoMode: false } });
@@ -1274,7 +1274,7 @@ test("deleting equal uploads removes only the selected metadata and stored bytes
 });
 
 test("privacy settings apply media retention and purge expired stored bytes", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-retention-media-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-retention-media-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   const store = createMemoryStore();
   const { server } = createApp({
@@ -1379,7 +1379,7 @@ test("remote access settings report machine readiness without exposing command o
 });
 
 test("support diagnostics bundle redacts prompts, shell commands, and secrets", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-diagnostics-media-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-diagnostics-media-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { mediaDir, maxMediaBytes: 1024, demoMode: false } });
@@ -1391,7 +1391,7 @@ test("support diagnostics bundle redacts prompts, shell commands, and secrets", 
   const created = await requestJson(fetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Diagnostics controller", profile: "agent-controller" },
+    body: { label: "Diagnostics controller", profile: "next-coder" },
   });
   const environment = await requestJson(fetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -1483,7 +1483,7 @@ test("serves the React dashboard and its built assets", async (t) => {
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type"), /text\/html/u);
-  assert.match(html, /Agent Controller/u);
+  assert.match(html, /Next Coder/u);
   assert.match(html, /id="root"/u);
   assert.doesNotMatch(html, /Remote agent control plane/u);
 
@@ -1594,7 +1594,7 @@ test("development token creation can be explicitly enabled for local Clerk testi
 });
 
 test("user-authenticated web clients can upload media and dispatch prompts", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-web-media-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-web-media-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const originalFetch = globalThis.fetch;
@@ -1757,7 +1757,7 @@ test("claimed devices can list and run saved macros", async (t) => {
   const device = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Macro controller", profile: "agent-controller" },
+    body: { label: "Macro controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -1811,7 +1811,7 @@ test("display endpoints expose compact user and device state", async (t) => {
   const created = await requestJson(fetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Display controller", profile: "agent-controller" },
+    body: { label: "Display controller", profile: "next-coder" },
   });
 
   const userDisplay = await requestJson(fetch, baseUrl, "/v1/display", {
@@ -1819,7 +1819,7 @@ test("display endpoints expose compact user and device state", async (t) => {
     headers: authHeaders,
   });
   assert.equal(userDisplay.display.counts.devices, 1);
-  assert.equal(userDisplay.display.title, "Agent Controller");
+  assert.equal(userDisplay.display.title, "Next Coder");
 
   const deviceDisplay = await requestJson(fetch, baseUrl, "/v1/device/display", {
     method: "GET",
@@ -1865,7 +1865,7 @@ test("device config is user-managed and used as device intent defaults", async (
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Configurable controller", profile: "agent-controller" },
+    body: { label: "Configurable controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -1987,7 +1987,7 @@ test("device profiles are discoverable, validated, and enforced", async (t) => {
     method: "GET",
     headers: {},
   });
-  assert.ok(catalog.profiles.find((profile) => profile.id === "agent-controller").capabilities.includes("shell_input"));
+  assert.ok(catalog.profiles.find((profile) => profile.id === "next-coder").capabilities.includes("shell_input"));
   assert.deepEqual(catalog.profiles.find((profile) => profile.id === "read-only").capabilities, ["status"]);
 
   const invalidCreate = await originalFetch(new URL("/v1/devices", baseUrl), {
@@ -2036,9 +2036,9 @@ test("device profiles are discoverable, validated, and enforced", async (t) => {
   const updated = await requestJson(originalFetch, baseUrl, `/v1/devices/${created.device.id}/profile`, {
     method: "PUT",
     headers: authHeaders,
-    body: { profile: "agent-controller" },
+    body: { profile: "next-coder" },
   });
-  assert.equal(updated.device.profile, "agent-controller");
+  assert.equal(updated.device.profile, "next-coder");
 
   const dispatched = await requestJson(originalFetch, baseUrl, "/v1/device/intents", {
     method: "POST",
@@ -2078,7 +2078,7 @@ test("SSE user event stream emits state changes", async (t) => {
   await requestJson(fetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: { authorization: `Bearer ${auth.apiToken.secret}` },
-    body: { label: "SSE controller", profile: "agent-controller" },
+    body: { label: "SSE controller", profile: "next-coder" },
   });
 
   const text = await readStreamUntil(streamResponse.body, "state.changed");
@@ -2097,7 +2097,7 @@ test("factory preprovisioned devices must be claimed before control and support 
   const preprovisioned = await requestJson(fetch, baseUrl, "/v1/factory/devices", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { label: "Factory controller", profile: "agent-controller" },
+    body: { label: "Factory controller", profile: "next-coder" },
   });
   assert.equal(preprovisioned.device.claimed, false);
   assert.ok(preprovisioned.claimCode);
@@ -2326,7 +2326,7 @@ test("owners can reset claimed devices for transfer to a new account", async (t)
   const created = await requestJson(fetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: ownerHeaders,
-    body: { label: "Transfer controller", profile: "agent-controller" },
+    body: { label: "Transfer controller", profile: "next-coder" },
   });
 
   const reset = await requestJson(fetch, baseUrl, `/v1/devices/${created.device.id}/transfer-reset`, {
@@ -2510,7 +2510,7 @@ test("factory batch provisioning returns flash configs and firmware manifests ar
     body: {
       version: "0.2.0",
       hardwareModel: "e213-esp32-s3r8",
-      url: "https://cdn.example.com/firmware/agent-controller-0.2.0.bin",
+      url: "https://cdn.example.com/firmware/next-coder-0.2.0.bin",
       sha256: "a".repeat(64),
       sizeBytes: 901385,
       mandatory: false,
@@ -2533,7 +2533,7 @@ test("factory batch provisioning returns flash configs and firmware manifests ar
       version: "0.3.0-beta.1",
       channel: "beta",
       hardwareModel: "e213-esp32-s3r8",
-      url: "https://cdn.example.com/firmware/agent-controller-0.3.0-beta.1.bin",
+      url: "https://cdn.example.com/firmware/next-coder-0.3.0-beta.1.bin",
       sha256: "b".repeat(64),
       sizeBytes: 905000,
       mandatory: false,
@@ -2654,13 +2654,13 @@ test("rate limits protect user and device write paths", async (t) => {
   const created = await requestJson(fetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Limited controller", profile: "agent-controller" },
+    body: { label: "Limited controller", profile: "next-coder" },
   });
 
   const secondDevice = await fetch(new URL("/v1/devices", baseUrl), {
     method: "POST",
     headers: { "content-type": "application/json", ...authHeaders },
-    body: JSON.stringify({ label: "Blocked controller", profile: "agent-controller" }),
+    body: JSON.stringify({ label: "Blocked controller", profile: "next-coder" }),
   });
   assert.equal(secondDevice.status, 429);
   assert.equal(secondDevice.headers.get("x-ratelimit-limit"), "1");
@@ -2717,7 +2717,7 @@ test("Clerk auth mode maps bearer sessions to platform users", async (t) => {
   const created = await requestJson(fetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: { authorization: "Bearer clerk-session" },
-    body: { label: "Clerk controller", profile: "agent-controller" },
+    body: { label: "Clerk controller", profile: "next-coder" },
   });
   assert.equal(created.device.userId, "user_clerk_123");
 
@@ -2777,7 +2777,7 @@ test("gateway routes support async Store API implementations", async (t) => {
   const created = await requestJson(fetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Async controller", profile: "agent-controller" },
+    body: { label: "Async controller", profile: "next-coder" },
   });
   const environment = await requestJson(fetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -2845,7 +2845,7 @@ test("removing a T3 environment previews, repairs, and reports every dependency"
   const device = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers,
-    body: { label: "Dependency controller", profile: "agent-controller" },
+    body: { label: "Dependency controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -2990,7 +2990,7 @@ test("archiving a T3 environment fully disconnects it, keeps it listed, and allo
   const device = await requestJson(fetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers,
-    body: { label: "Archive controller", profile: "agent-controller" },
+    body: { label: "Archive controller", profile: "next-coder" },
   });
   const created = await requestJson(fetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -3168,7 +3168,7 @@ async function threadSelectionFixture(t, { threads, snapshotError = null } = {})
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Bezel controller", profile: "agent-controller" },
+    body: { label: "Bezel controller", profile: "next-coder" },
   });
   const deviceHeaders = {
     "x-device-id": created.device.id,
@@ -3429,7 +3429,7 @@ test("an unclaimed device cannot list or select threads", async (t) => {
   const provisioned = await requestJson(originalFetch, baseUrl, "/v1/factory/devices", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { label: "Unclaimed", profile: "agent-controller" },
+    body: { label: "Unclaimed", profile: "next-coder" },
   });
   const headers = {
     "x-device-id": provisioned.device.id,
@@ -3552,7 +3552,7 @@ async function environmentSelectionFixture(t, { snapshotError = null, dispatchEr
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Bezel controller", profile: "agent-controller" },
+    body: { label: "Bezel controller", profile: "next-coder" },
   });
   const deviceHeaders = {
     "x-device-id": created.device.id,
@@ -4022,7 +4022,7 @@ test("invalid credentials and unclaimed devices cannot browse environments or pr
   const provisioned = await requestJson(f.originalFetch, factoryBaseUrl, "/v1/factory/devices", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { label: "Unclaimed", profile: "agent-controller" },
+    body: { label: "Unclaimed", profile: "next-coder" },
   });
   const unclaimedHeaders = {
     "x-device-id": provisioned.device.id,
@@ -4254,7 +4254,7 @@ test("a read-only device may browse threads but may not create one", async (t) =
   assert.equal(body.error.details.policy.dimension, "device");
   assert.equal(f.dispatches.length, 0, "a blocked profile must not reach T3");
 
-  // The agent-controller device on the same account is unaffected.
+  // The next-coder device on the same account is unaffected.
   await f.bind({ environmentId: f.bound.id, projectId: "proj_alpha" });
   await requestJson(f.originalFetch, f.baseUrl, "/v1/device/threads", {
     method: "POST",
@@ -4286,7 +4286,7 @@ test("thread creation refuses bad credentials and unclaimed hardware", async (t)
   const provisioned = await requestJson(f.originalFetch, factoryBaseUrl, "/v1/factory/devices", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { label: "Unclaimed", profile: "agent-controller" },
+    body: { label: "Unclaimed", profile: "next-coder" },
   });
   const unclaimed = await f.originalFetch(new URL("/v1/device/threads", factoryBaseUrl), {
     method: "POST",
@@ -4312,7 +4312,7 @@ test("the device display payload carries the owner's configured menu, not a gene
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Menu controller", profile: "agent-controller" },
+    body: { label: "Menu controller", profile: "next-coder" },
   });
   const deviceHeaders = {
     "x-device-id": created.device.id,
@@ -4344,7 +4344,7 @@ test("a full device menu round-trips without silently dropping entries", async (
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Full menu controller", profile: "agent-controller" },
+    body: { label: "Full menu controller", profile: "next-coder" },
   });
 
   // Seven entries: previously capped at six, which dropped "stop" off the end with
@@ -4375,7 +4375,7 @@ test("the destructive reset entry is assignable to a device menu", async (t) => 
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Resettable controller", profile: "agent-controller" },
+    body: { label: "Resettable controller", profile: "next-coder" },
   });
 
   // "reset" opens an on-device confirmation screen that wipes Wi-Fi, the config cache, the cached
@@ -4406,7 +4406,7 @@ test("devices declare which owner operations the gateway will accept", async (t)
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Actionable controller", profile: "agent-controller" },
+    body: { label: "Actionable controller", profile: "next-coder" },
   });
   assert.deepEqual(created.device.actions, {
     rotateSecret: true,
@@ -4466,7 +4466,7 @@ test("a revoked device can be deleted, and an active one cannot", async (t) => {
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Retired controller", profile: "agent-controller" },
+    body: { label: "Retired controller", profile: "next-coder" },
   });
   const deviceHeaders = {
     "x-device-id": created.device.id,
@@ -4540,7 +4540,7 @@ test("one owner cannot delete another owner's revoked device", async (t) => {
   const created = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: owner,
-    body: { label: "Owned controller", profile: "agent-controller" },
+    body: { label: "Owned controller", profile: "next-coder" },
   });
   await requestJson(originalFetch, baseUrl, `/v1/devices/${created.device.id}/revoke`, {
     method: "POST",
@@ -4596,7 +4596,7 @@ test("the display route answers from bounded reads and one owner never sees anot
   const device = await requestJson(originalFetch, baseUrl, "/v1/devices", {
     method: "POST",
     headers: owner,
-    body: { label: "Polling controller", profile: "agent-controller" },
+    body: { label: "Polling controller", profile: "next-coder" },
   });
   const environment = await requestJson(originalFetch, baseUrl, "/v1/t3/environments", {
     method: "POST",
@@ -4676,7 +4676,7 @@ test("the discovery endpoint identifies the gateway without authentication", asy
   const response = await fetch(`${baseUrl}/v1/discovery`);
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.service, "agent-controller");
+  assert.equal(body.service, "next-coder");
   assert.equal(body.claimRequired, true);
   assert.equal(typeof body.name, "string");
 });

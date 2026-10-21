@@ -8,8 +8,8 @@
  * @module
  */
 
-import type * as agentController from "../agentController.js";
 import type * as gatewayStore from "../gatewayStore.js";
+import type * as nextCoder from "../nextCoder.js";
 import type * as users from "../users.js";
 
 import type {
@@ -19,8 +19,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  agentController: typeof agentController;
   gatewayStore: typeof gatewayStore;
+  nextCoder: typeof nextCoder;
   users: typeof users;
 }>;
 

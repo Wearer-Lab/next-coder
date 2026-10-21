@@ -6,7 +6,7 @@
 // first, and a redirect-based flow replaces the URL. They are mirrored into sessionStorage — per
 // tab, cleared on close — and consumed exactly once.
 
-const STORAGE_KEY = "agentControllerClaimLink";
+const STORAGE_KEY = "nextCoderClaimLink";
 
 export interface ClaimLink {
   deviceId: string;

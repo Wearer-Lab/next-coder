@@ -48,10 +48,10 @@ Configure these environment variables:
 
 | Variable | Meaning |
 | --- | --- |
-| `AGENT_CONTROLLER_STAGING_URL` | Exact qualified staging HTTPS origin |
-| `AGENT_CONTROLLER_PRODUCTION_URL` | Exact production HTTPS origin |
-| `AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET` | Pre-provisioned production media bucket name |
-| `AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET` | Pre-provisioned production firmware bucket name |
+| `NEXT_CODER_STAGING_URL` | Exact qualified staging HTTPS origin |
+| `NEXT_CODER_PRODUCTION_URL` | Exact production HTTPS origin |
+| `NEXT_CODER_PRODUCTION_MEDIA_BUCKET` | Pre-provisioned production media bucket name |
+| `NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET` | Pre-provisioned production firmware bucket name |
 
 The workflow's top-level permission is `contents: read` plus `actions: read` for the exact
 same-repository evidence download. It does not request OIDC, package, pull-request, or status write.
@@ -63,10 +63,10 @@ Wrangler receives only the two Cloudflare values, and Convex receives only its d
 Before dispatch, collect one reviewed, flat GitHub artifact from the same repository containing:
 
 1. `promotion-manifest.json`;
-2. the passing staging release artifact (`agent-controller.staging-release.v1`, operation `deploy`);
-3. the passing staging qualification artifact (`agent-controller.staging-qualification.v1`);
-4. a reviewed hosted-capacity decision (`agent-controller.staging-capacity.v1`); and
-5. a reviewed staging security/drill record (`agent-controller.staging-security.v1`).
+2. the passing staging release artifact (`next-coder.staging-release.v1`, operation `deploy`);
+3. the passing staging qualification artifact (`next-coder.staging-qualification.v1`);
+4. a reviewed hosted-capacity decision (`next-coder.staging-capacity.v1`); and
+5. a reviewed staging security/drill record (`next-coder.staging-security.v1`).
 
 Each document needs `result: "passed"` and `finishedAt`. Release, capacity, and security records also
 need the exact `targetCommit`; qualification needs `target.origin` equal to the configured staging
@@ -79,7 +79,7 @@ The manifest is intentionally small:
 
 ```json
 {
-  "schema": "agent-controller.staging-promotion-manifest.v1",
+  "schema": "next-coder.staging-promotion-manifest.v1",
   "targetCommit": "<40-character SHA>",
   "createdAt": "2026-08-27T20:00:00.000Z",
   "artifacts": {
@@ -169,7 +169,7 @@ operation requiring explicit authorization.
 
 ## Evidence and local verification
 
-Each mutation/postflight job uploads only `agent-controller.production-promotion.v1`: commit IDs,
+Each mutation/postflight job uploads only `next-coder.production-promotion.v1`: commit IDs,
 the manifest hash, fixed check names, bounded error codes, timestamps, and rollout mode. It excludes
 raw version/resource IDs, provider output, errors/stacks, origins, and secret values. Failed
 preflight may produce no artifact because no mutation occurred; GitHub job logs remain subject to

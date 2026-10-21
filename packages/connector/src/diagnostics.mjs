@@ -84,7 +84,7 @@ export async function diagnose({ stateDir, state, t3, fetchImpl, exec, platform 
           const failed = Object.values(probe?.probes ?? {}).filter((state) => state === "failed").length;
           checks.push({
             id: "t3_capabilities",
-            ok: probe?.schema === "agent-controller.t3-probe.v1" && failed === 0,
+            ok: probe?.schema === "next-coder.t3-probe.v1" && failed === 0,
             required: false,
             detail: `${passed} read-only probes passed; adapter probe v1`,
           });

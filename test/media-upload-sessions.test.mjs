@@ -19,7 +19,7 @@ const BYTES = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQ
 const SHA256 = createHash("sha256").update(BYTES).digest("hex");
 
 test("raw owner uploads stay private until integrity-checked finalize and replay idempotently", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-raw-upload-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-raw-upload-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   const { server } = createApp({
     config: {
@@ -134,7 +134,7 @@ test("upload-session dedup state is capped per owner without evicting unfinished
 });
 
 test("descriptor conflicts, content-type mismatches and explicit abort are bounded", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-upload-abort-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-upload-abort-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   const { server } = createApp({
     config: { demoMode: false, mediaDir, maxMediaBytes: 128, mediaUploadSessionTtlMs: 60_000 },
@@ -176,7 +176,7 @@ test("descriptor conflicts, content-type mismatches and explicit abort are bound
 });
 
 test("device upload sessions enforce the device realm and finalize without WebSocket media", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-device-raw-upload-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-device-raw-upload-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   const { server } = createApp({
     config: { demoMode: false, mediaDir, maxMediaBytes: 1024, mediaUploadSessionTtlMs: 60_000 },
@@ -188,7 +188,7 @@ test("device upload sessions enforce the device realm and finalize without WebSo
   const device = await json(baseUrl, "/v1/devices", {
     method: "POST",
     headers: owner,
-    body: { label: "Raw upload controller", profile: "agent-controller" },
+    body: { label: "Raw upload controller", profile: "next-coder" },
     expectedStatus: 201,
   });
   const deviceHeaders = { "x-device-id": device.device.id, "x-device-secret": device.secret };
@@ -224,7 +224,7 @@ test("device upload sessions enforce the device realm and finalize without WebSo
 });
 
 test("FileStore persists sessions and retention removes abandoned staged bytes", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "agent-controller-upload-store-"));
+  const root = await mkdtemp(join(tmpdir(), "next-coder-upload-store-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const dataFile = join(root, "store.json");
   const mediaDir = join(root, "media");

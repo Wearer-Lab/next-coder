@@ -16,7 +16,7 @@ const NOW = Date.parse("2026-09-02T16:00:00.000Z");
 const COMMIT = "a".repeat(40);
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "agent-controller-final-"));
+  const root = await mkdtemp(join(tmpdir(), "next-coder-final-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const evidence = {};
   for (const [surface, contract] of Object.entries(REQUIRED_FINAL_EVIDENCE)) {

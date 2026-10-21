@@ -254,7 +254,7 @@ async function digestFile(path, entry) {
 }
 
 function hubHeaders() {
-  const headers = { "user-agent": "agent-controller-parakeet-fetch" };
+  const headers = { "user-agent": "next-coder-parakeet-fetch" };
   // Never required — the model is CC-BY-4.0 and ungated — but honoured if the operator has one.
   if (process.env.HF_TOKEN) headers.authorization = `Bearer ${process.env.HF_TOKEN}`;
   return headers;

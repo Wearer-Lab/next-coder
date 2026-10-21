@@ -211,7 +211,7 @@ function readPage(): PageId {
 
 function readTheme(): "light" | "dark" {
   try {
-    const stored = localStorage.getItem("agentControllerTheme");
+    const stored = localStorage.getItem("nextCoderTheme");
     if (stored === "light" || stored === "dark") return stored;
   } catch {
     // Fall back to the user's system preference.
@@ -383,7 +383,7 @@ function AppContent({ authConfig, clerk = null }: AppProps) {
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.dataset.theme = theme;
     try {
-      localStorage.setItem("agentControllerTheme", theme);
+      localStorage.setItem("nextCoderTheme", theme);
     } catch {
       // Theme persistence is a convenience only.
     }
@@ -564,7 +564,7 @@ function AppContent({ authConfig, clerk = null }: AppProps) {
             <TerminalSquare className="size-4" />
           </div>
           <div className="brand-copy">
-            <p className="brand-copy__name">Agent Controller</p>
+            <p className="brand-copy__name">Next Coder</p>
             <p className="brand-copy__meta">NIGHTLY</p>
           </div>
           {mobileViewport ? (

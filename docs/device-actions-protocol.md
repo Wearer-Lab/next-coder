@@ -1,6 +1,6 @@
 # Device actions and controls protocol
 
-Agent Controller separates reusable user content, device policy, the physical control layout, and
+Next Coder separates reusable user content, device policy, the physical control layout, and
 firmware features. The gateway owns action bodies and authorization. A controller receives only
 display metadata and opaque action identifiers; prompt text and shell commands are never copied
 into the device controls payload.
@@ -147,7 +147,7 @@ Actions and control layouts are gateway resources. T3 Code does not store them. 
 existing orchestration surface:
 
 The ESP32 never pairs with T3 Code and never stores a T3 bearer token. It authenticates only to
-Agent Controller with its per-device credential. Agent Controller is the trusted orchestration
+Next Coder with its per-device credential. Next Coder is the trusted orchestration
 adapter: it resolves the owner-selected environment and thread, holds the T3 access token, applies
 the device profile and policy, then sends typed T3 commands. This matches T3 Code's own
 [browser → WebSocket server → orchestration engine architecture](https://github.com/pingdotgg/t3code/blob/main/docs/architecture/overview.md)
@@ -155,7 +155,7 @@ and its [one-time remote pairing/session model](https://github.com/pingdotgg/t3c
 
 For a T3 server on the gateway machine, the gateway connects over loopback. For a T3 server on a
 different machine, pair the gateway to the private Tailscale Serve URL. Tailscale access to the
-Agent Controller console/device API is a separate tunnel; exposing one service does not expose the
+Next Coder console/device API is a separate tunnel; exposing one service does not expose the
 other. ESP32 controllers normally use the gateway's LAN URL and do not run Tailscale themselves.
 
 | Operation | T3 command or API |
@@ -178,7 +178,7 @@ intent and the environment and device profile both grant it.
 
 ## Device response recommendations
 
-For a device-originated saved action, Agent Controller appends a hidden bounded instruction that
+For a device-originated saved action, Next Coder appends a hidden bounded instruction that
 offers the model only the action ids currently assigned and enabled for that controller. The model
 may append one marker with zero to two recommendations:
 

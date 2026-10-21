@@ -218,11 +218,11 @@ test("active deployment annotations bind operator-supplied versions to the claim
     deployment: { versions: [{ version_id: "11111111-1111-1111-1111-111111111111", percentage: 100 }] },
     versionMetadata: [{
       id: "11111111-1111-1111-1111-111111111111",
-      annotations: { "workers/message": `agent-controller staging deploy ${CURRENT}` },
+      annotations: { "workers/message": `next-coder staging deploy ${CURRENT}` },
     }],
   }, CURRENT), undefined);
   assert.throws(() => requireDeploymentCommit({
-    annotations: { "workers/message": `agent-controller staging deploy ${TARGET}` },
+    annotations: { "workers/message": `next-coder staging deploy ${TARGET}` },
   }, CURRENT), code("deployment_source_commit_mismatch"));
   assert.throws(() => requireDeploymentCommit({ annotations: {} }, CURRENT), code("deployment_source_commit_mismatch"));
 });
@@ -258,7 +258,7 @@ test("staging workflow is manual, environment-protected, pinned, race-checked, a
   assert.doesNotMatch(verify, /^    environment:/mu);
   assert.doesNotMatch(verify, /\$\{\{\s*secrets\./u);
   assert.match(release, /^    needs: verify-commit$/mu);
-  assert.match(release, /^    environment:\n      name: staging\n      url: \$\{\{ vars\.AGENT_CONTROLLER_STAGING_URL \}\}$/mu);
+  assert.match(release, /^    environment:\n      name: staging\n      url: \$\{\{ vars\.NEXT_CODER_STAGING_URL \|\| vars\.AGENT_CONTROLLER_STAGING_URL \}\}$/mu);
 
   for (const command of [
     "node ../automation/scripts/staging-release.mjs validate-local",
@@ -306,7 +306,7 @@ test("staging workflow is manual, environment-protected, pinned, race-checked, a
 });
 
 test("hermetic release executes only the planned staging mutations and writes redacted checkpoint evidence", async () => {
-  const temporary = await mkdtemp(join(tmpdir(), "agent-controller-staging-release-test-"));
+  const temporary = await mkdtemp(join(tmpdir(), "next-coder-staging-release-test-"));
   const evidencePath = join(temporary, "evidence.json");
   const edgeSource = await readFile("cloudflare/wrangler.jsonc", "utf8");
   const controlSource = await readFile("cloudflare-control-plane/wrangler.jsonc", "utf8");
@@ -419,14 +419,14 @@ async function readJsonc(path) {
 function deployment(versionId, commit) {
   return JSON.stringify({
     versions: [{ version_id: versionId, percentage: 100 }],
-    annotations: { "workers/message": `agent-controller staging deploy ${commit}` },
+    annotations: { "workers/message": `next-coder staging deploy ${commit}` },
   });
 }
 
 function versions(versionId, commit) {
   return JSON.stringify([{
     id: versionId,
-    annotations: { "workers/message": `agent-controller staging deploy ${commit}` },
+    annotations: { "workers/message": `next-coder staging deploy ${commit}` },
   }]);
 }
 

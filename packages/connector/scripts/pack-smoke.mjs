@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const packageDir = resolve(new URL("..", import.meta.url).pathname);
-const scratch = await mkdtemp(join(tmpdir(), "agent-controller-connector-pack-"));
+const scratch = await mkdtemp(join(tmpdir(), "next-coder-connector-pack-"));
 try {
   const { stdout } = await exec("npm", ["pack", "--json", "--pack-destination", scratch], { cwd: packageDir });
   const packed = JSON.parse(stdout);
@@ -14,9 +14,9 @@ try {
   const installDir = join(scratch, "install");
   await exec("npm", ["init", "--yes"], { cwd: scratch });
   await exec("npm", ["install", "--ignore-scripts", "--prefix", installDir, tarball], { cwd: scratch });
-  const bin = join(installDir, "node_modules", ".bin", "agent-controller-connect");
+  const bin = join(installDir, "node_modules", ".bin", "next-coder-connect");
   const help = await exec(bin, ["--help"], { cwd: scratch });
-  if (!help.stdout.includes("Agent Controller connector")) throw new Error("Packed CLI help smoke failed.");
+  if (!help.stdout.includes("Next Coder connector")) throw new Error("Packed CLI help smoke failed.");
   const update = await exec(bin, ["update"], { cwd: scratch });
   if (!update.stdout.includes("0.1.0")) throw new Error("Packed CLI version smoke failed.");
   const serviceHelp = await exec(bin, ["start", "--help"], { cwd: scratch });

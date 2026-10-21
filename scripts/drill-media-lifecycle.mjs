@@ -354,10 +354,10 @@ export function parseArguments(argv, environment = process.env) {
   return parseDrillArguments(argv, {
     environment,
     envDefaults: {
-      baseUrl: "AGENT_CONTROLLER_DRILL_URL",
-      accessToken: "AGENT_CONTROLLER_DRILL_ACCESS_TOKEN",
-      expectedDeploymentMode: "AGENT_CONTROLLER_DRILL_DEPLOYMENT_MODE",
-      requestTimeoutMs: "AGENT_CONTROLLER_DRILL_REQUEST_TIMEOUT_MS",
+      baseUrl: "NEXT_CODER_DRILL_URL",
+      accessToken: "NEXT_CODER_DRILL_ACCESS_TOKEN",
+      expectedDeploymentMode: "NEXT_CODER_DRILL_DEPLOYMENT_MODE",
+      requestTimeoutMs: "NEXT_CODER_DRILL_REQUEST_TIMEOUT_MS",
     },
     valueOptions: {
       "--base-url": "baseUrl",
@@ -373,18 +373,18 @@ export function parseArguments(argv, environment = process.env) {
 }
 
 export function helpText() {
-  return `Agent Controller staging drill: media upload lifecycle (completion plan 4.6)
+  return `Next Coder staging drill: media upload lifecycle (completion plan 4.6)
 
 Preflight (no mutation; every lifecycle check is reported as skipped):
-  AGENT_CONTROLLER_DRILL_ACCESS_TOKEN=... npm run drill:media-lifecycle -- \\
+  NEXT_CODER_DRILL_ACCESS_TOKEN=... npm run drill:media-lifecycle -- \\
     --base-url https://staging.example.com
 
 Full drill (uploads a 1x1 PNG the script carries, then deletes it):
-  AGENT_CONTROLLER_DRILL_ACCESS_TOKEN=... npm run drill:media-lifecycle -- \\
+  NEXT_CODER_DRILL_ACCESS_TOKEN=... npm run drill:media-lifecycle -- \\
     --base-url https://staging.example.com --exercise-media
 
 No user media is ever read or uploaded: the fixture is a fixed 67-byte PNG compiled into this
-script. The platform token comes from AGENT_CONTROLLER_DRILL_ACCESS_TOKEN or a mode-0600
+script. The platform token comes from NEXT_CODER_DRILL_ACCESS_TOKEN or a mode-0600
 --access-token-file PATH.
 
 This drill does not wait out the upload-session TTL, cannot mint a genuine signed media URL, and

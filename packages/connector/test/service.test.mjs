@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as realFs from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +9,7 @@ import { loadState, saveState, STATE_VERSION } from "../src/config.mjs";
 import { main } from "../src/cli.mjs";
 import {
   installService,
+  LEGACY_OWNERSHIP_MARKER,
   OWNERSHIP_MARKER,
   readServiceLogs,
   restartService,
@@ -58,7 +60,7 @@ test("systemd-user install is scoped, hardened, idempotent, and removable", asyn
   const options = { stateDir, platform: "linux", home: scratch, env: { XDG_CONFIG_HOME: join(scratch, "config") }, fs, run };
   const installed = await installService(options);
   const definition = await realFs.readFile(installed.paths.definitionPath, "utf8");
-  assert.match(definition, /Managed by @agent-controller\/connector/);
+  assert.match(definition, /Managed by @next-coder\/connector/);
   assert.match(definition, /NoNewPrivileges=true/);
   assert.match(definition, /UMask=0077/);
   assert.match(definition, /ProtectSystem=strict/);
@@ -87,6 +89,22 @@ test("legacy launchd/systemd manifests migrate only after exact definition and r
   assert.equal(migrated.target, paths.target);
   assert.match(migrated.definitionSha256, /^[a-f0-9]{64}$/);
   assert.ok(Date.parse(migrated.migratedAt));
+});
+
+test("a service definition carrying the legacy ownership marker is still ours to operate", async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "connector-service-legacy-marker-"));
+  const stateDir = join(scratch, "state");
+  const env = { XDG_CONFIG_HOME: join(scratch, "config") };
+  const run = async () => ({ code: 0, stdout: "", stderr: "" });
+  const paths = (await installService({ stateDir, platform: "linux", home: scratch, env, run })).paths;
+  const definition = await realFs.readFile(paths.definitionPath, "utf8");
+  const legacy = definition.replace(OWNERSHIP_MARKER, LEGACY_OWNERSHIP_MARKER);
+  assert.equal(legacy.includes(LEGACY_OWNERSHIP_MARKER), true);
+  await realFs.writeFile(paths.definitionPath, legacy, "utf8");
+  const manifest = JSON.parse(await realFs.readFile(paths.manifestPath, "utf8"));
+  manifest.definitionSha256 = createHash("sha256").update(legacy).digest("hex");
+  await realFs.writeFile(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await startService({ stateDir, platform: "linux", home: scratch, env, run });
 });
 
 test("foreign service definition is never overwritten", async () => {

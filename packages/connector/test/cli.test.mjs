@@ -26,7 +26,7 @@ test("mock enrollment persists local-only T3 token and connects once", async () 
   };
   class MockConnector { constructor() {} async run() {} stop() {} }
   const code = await main(["connect", "--server", "http://127.0.0.1:8787", "--code", "enroll-code", "--t3-url", "http://127.0.0.1:3773", "--once"], {
-    stateDir, stdout: output, stderr: output, env: { AGENT_CONTROLLER_T3_TOKEN: "local-token" }, fetchImpl, WebSocketImpl: class {}, Connector: MockConnector,
+    stateDir, stdout: output, stderr: output, env: { NEXT_CODER_T3_TOKEN: "local-token" }, fetchImpl, WebSocketImpl: class {}, Connector: MockConnector,
   });
   assert.equal(code, 0);
   const state = await loadState(stateDir);
@@ -52,7 +52,7 @@ test("Windows can enroll against an already-running loopback T3 without claiming
     platform: "win32",
     stdout: output,
     stderr: output,
-    env: { AGENT_CONTROLLER_T3_TOKEN: "local-token", USERNAME: "alice", USERDOMAIN: "EXAMPLE" },
+    env: { NEXT_CODER_T3_TOKEN: "local-token", USERNAME: "alice", USERDOMAIN: "EXAMPLE" },
     fetchImpl,
     WebSocketImpl: class {},
     Connector: MockConnector,
@@ -130,10 +130,26 @@ test("doctor makes an owned T3 process identity mismatch explicit and unhealthy"
   });
 });
 
+test("the legacy T3 token environment variable is still read", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "connector-cli-legacy-token-"));
+  const output = capture();
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/.well-known/t3/environment")) return new Response(JSON.stringify({ version: "0.0.32" }));
+    if (String(url).endsWith("/v1/connectors/enroll")) return new Response(JSON.stringify({ connector: { id: "con" }, environment: { id: "env" }, secret: "standing" }), { status: 201 });
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  class MockConnector { constructor() {} async run() {} stop() {} }
+  const code = await main(["connect", "--server", "http://127.0.0.1:8787", "--code", "enroll-code", "--t3-url", "http://127.0.0.1:3773", "--once"], {
+    stateDir, stdout: output, stderr: output, env: { AGENT_CONTROLLER_T3_TOKEN: "legacy-token" }, fetchImpl, WebSocketImpl: class {}, Connector: MockConnector,
+  });
+  assert.equal(code, 0);
+  assert.equal((await loadState(stateDir)).t3AccessToken, "legacy-token");
+});
+
 test("service commands refuse to operate before connector-owned installation", async () => {
   const output = capture();
   let commands = 0;
-  assert.equal(await main(["start", "--state-dir", "/tmp/missing-agent-controller-test"], {
+  assert.equal(await main(["start", "--state-dir", "/tmp/missing-next-coder-test"], {
     stdout: output, stderr: output, platform: "linux", home: "/tmp", runServiceCommand: async () => { commands += 1; return { code: 0, stdout: "", stderr: "" }; },
   }), 1);
   assert.match(output.value(), /not installed/);

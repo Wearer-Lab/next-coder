@@ -22,7 +22,7 @@ test("Convex mutations notify subscribers with the affected user", async () => {
   const changes = [];
   store.subscribe((change) => changes.push(change));
 
-  await store.createDevice({ userId: "user_1", label: "Controller", profile: "agent-controller" });
+  await store.createDevice({ userId: "user_1", label: "Controller", profile: "next-coder" });
   assert.deepEqual(changes.at(-1), { userId: "user_1", action: "createDevice" });
 
   await store.updateUserPrivacySettings({ userId: "user_2", mediaRetentionDays: 7 });
@@ -60,11 +60,11 @@ test("unsubscribing stops notifications", async () => {
   const changes = [];
   const unsubscribe = store.subscribe((change) => changes.push(change));
 
-  await store.createDevice({ userId: "user_1", label: "A", profile: "agent-controller" });
+  await store.createDevice({ userId: "user_1", label: "A", profile: "next-coder" });
   assert.equal(changes.length, 1);
 
   unsubscribe();
-  await store.createDevice({ userId: "user_1", label: "B", profile: "agent-controller" });
+  await store.createDevice({ userId: "user_1", label: "B", profile: "next-coder" });
   assert.equal(changes.length, 1);
 });
 
@@ -74,7 +74,7 @@ test("a throwing subscriber does not fail the store write", async () => {
     throw new Error("subscriber exploded");
   });
 
-  const result = await store.createDevice({ userId: "user_1", label: "A", profile: "agent-controller" });
+  const result = await store.createDevice({ userId: "user_1", label: "A", profile: "next-coder" });
   assert.equal(result.device.id, "dev_1");
 });
 

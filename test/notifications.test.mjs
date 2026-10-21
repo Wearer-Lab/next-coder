@@ -248,7 +248,7 @@ test("notification replay, older pagination, read, dismiss and retention are det
 });
 
 test("FileStore persists notification acknowledgement and scheduler evidence atomically", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-controller-notifications-"));
+  const directory = await mkdtemp(join(tmpdir(), "next-coder-notifications-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, "state.json");
   const store = await createFileStore(file, { now: () => BASE_TIME });

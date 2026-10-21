@@ -8,10 +8,27 @@ import { promisify } from "node:util";
 import { CONNECTOR_VERSION } from "./cloud.mjs";
 import { redact } from "./redact.mjs";
 
+// The service identifiers are the installed registration names on each platform. They are not
+// renamed with the product: a launchd label, a systemd user unit, and a scheduled task name are
+// what an existing installation is registered under, and changing one would orphan that
+// installation instead of renaming it.
 export const SERVICE_ID = "com.agent-controller.connector";
 export const SYSTEMD_UNIT = "agent-controller-connector.service";
 export const WINDOWS_TASK_PREFIX = "AgentControllerConnector-";
-export const OWNERSHIP_MARKER = "Managed by @agent-controller/connector. Do not edit.";
+// A service definition written before the rename carries the legacy marker. It is still ours, so
+// it is still ours to update; only a definition carrying neither marker is refused.
+export const OWNERSHIP_MARKER = "Managed by @next-coder/connector. Do not edit.";
+export const LEGACY_OWNERSHIP_MARKER = "Managed by @agent-controller/connector. Do not edit.";
+
+// The runtime entry point. A managed service installed before the rename execs the legacy path, so
+// the installed runtime keeps a thin alias at that path until the service is reinstalled.
+const RUNTIME_BIN = "next-coder-connect.mjs";
+const LEGACY_RUNTIME_BIN = "agent-controller-connect.mjs";
+const RUNTIME_BIN_ALIAS = `import "./${RUNTIME_BIN}";\n`;
+const CONNECTOR_PACKAGE_NAME = "@next-coder/connector";
+const LEGACY_CONNECTOR_PACKAGE_NAME = "@agent-controller/connector";
+const CONNECTOR_BIN_ENTRY = "next-coder-connect";
+const LEGACY_CONNECTOR_BIN_ENTRY = "agent-controller-connect";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
@@ -24,7 +41,7 @@ export function servicePaths({ platform = currentPlatform(), stateDir, env = pro
     platform,
     stateDir: resolvedStateDir,
     runtimeRoot,
-    runtimeBin: join(runtimeRoot, "bin", "agent-controller-connect.mjs"),
+    runtimeBin: join(runtimeRoot, "bin", RUNTIME_BIN),
     manifestPath: join(resolvedStateDir, "service.json"),
     updateJournalPath: join(resolvedStateDir, "service-update.json"),
     logDir,
@@ -181,7 +198,7 @@ export async function beginServiceRuntimeUpdate({ packageDir, packageVersion, wa
   await context.fs.mkdir(staged, { recursive: true, mode: 0o700 });
   try {
     await copyRuntime(resolve(packageDir), staged, context.fs);
-    await context.fs.chmod(join(staged, "bin", "agent-controller-connect.mjs"), 0o755);
+    await context.fs.chmod(join(staged, "bin", RUNTIME_BIN), 0o755);
     await readServiceRuntimeIdentity({ runtimeRoot: staged, expectedVersion: packageVersion, fs: context.fs });
     const previousManifest = await readOwnedServiceManifest(context.paths, context.fs);
     const transaction = {
@@ -265,10 +282,21 @@ export async function readServiceRuntimeIdentity({ runtimeRoot, expectedVersion,
   let manifest;
   try { manifest = JSON.parse(await fs.readFile(join(resolve(runtimeRoot), "package.json"), "utf8")); }
   catch { throw updateServiceError("The managed connector runtime package is missing or invalid.", "UPDATE_PACKAGE_INVALID"); }
-  if (manifest.name !== "@agent-controller/connector" || (expectedVersion && manifest.version !== expectedVersion) || manifest.bin?.["agent-controller-connect"] !== "./bin/agent-controller-connect.mjs" || manifest.engines?.node !== ">=22") {
+  // A runtime installed before the rename is still a valid previous runtime to roll back to, so
+  // both package identities are accepted here. A freshly downloaded package is checked strictly
+  // against the current identity in update.mjs.
+  const binEntry = manifest.bin?.[CONNECTOR_BIN_ENTRY] === `./bin/${RUNTIME_BIN}`
+    ? `./bin/${RUNTIME_BIN}`
+    : manifest.bin?.[LEGACY_CONNECTOR_BIN_ENTRY] === `./bin/${LEGACY_RUNTIME_BIN}`
+      ? `./bin/${LEGACY_RUNTIME_BIN}`
+      : null;
+  if (![CONNECTOR_PACKAGE_NAME, LEGACY_CONNECTOR_PACKAGE_NAME].includes(manifest.name)
+    || (expectedVersion && manifest.version !== expectedVersion)
+    || !binEntry
+    || manifest.engines?.node !== ">=22") {
     throw updateServiceError("The managed connector runtime failed identity checks.", "UPDATE_PACKAGE_INVALID");
   }
-  await fs.access(join(resolve(runtimeRoot), "bin", "agent-controller-connect.mjs"));
+  await fs.access(join(resolve(runtimeRoot), binEntry));
   return { name: manifest.name, version: manifest.version };
 }
 
@@ -347,7 +375,7 @@ ${argumentsXml}
   const execStart = args.map(systemdQuote).join(" ");
   return `# ${OWNERSHIP_MARKER}
 [Unit]
-Description=Agent Controller local T3 connector
+Description=Next Coder local T3 connector
 After=network-online.target
 
 [Service]
@@ -395,6 +423,12 @@ async function copyRuntime(source, target, fs) {
   for (const name of ["package.json", "README.md", "bin", "src"]) {
     await fs.cp(join(source, name), join(target, name), { recursive: true, force: true });
   }
+  // A managed service installed before the rename execs the legacy entry-point path. The runtime
+  // keeps a thin alias there so an in-place runtime update does not leave that service unable to
+  // start. The alias is generated, not published: the package itself only ships the current name.
+  const alias = join(target, "bin", LEGACY_RUNTIME_BIN);
+  await fs.writeFile(alias, RUNTIME_BIN_ALIAS, { encoding: "utf8", mode: 0o755 });
+  await fs.chmod(alias, 0o755);
 }
 
 async function launchdLoaded(paths, run) {
@@ -405,7 +439,7 @@ async function assertExistingLocalService(paths, fs) {
   const info = await fs.lstat?.(paths.definitionPath);
   if (info?.isSymbolicLink?.()) throw serviceOwnershipError("Refusing to modify a symlinked connector service definition.");
   const contents = await fs.readFile(paths.definitionPath, "utf8");
-  if (!contents.includes(OWNERSHIP_MARKER)) throw serviceOwnershipError("Refusing to modify a service definition not owned by Agent Controller.");
+  if (!isOwnedDefinition(contents)) throw serviceOwnershipError("Refusing to modify a service definition not owned by Next Coder.");
   let manifest = await readOwnedServiceManifest(paths, fs);
   if (manifest.legacyFingerprint) {
     const expected = renderServiceDefinition(paths, { stateDir: paths.stateDir });
@@ -505,7 +539,7 @@ function assertWindowsTaskXml(paths, xml, expectedDefinition) {
   const runLevel = xmlTag(xml, "RunLevel");
   const samePath = (left, right) => String(left ?? "").replaceAll("/", "\\").toLowerCase() === String(right ?? "").replaceAll("/", "\\").toLowerCase();
   const principalName = String(principal ?? "").toLowerCase();
-  if (description !== OWNERSHIP_MARKER || !samePath(command, expectedCommand) || args !== expectedArguments || !samePath(workingDirectory, expectedWorkingDirectory) || !samePath(workingDirectory, paths.runtimeRoot) || !principalName || principalName === "system" || principalName.endsWith("\\system") || logonType !== "InteractiveToken" || runLevel !== "LeastPrivilege") {
+  if (!isOwnedDefinition(description) || !samePath(command, expectedCommand) || args !== expectedArguments || !samePath(workingDirectory, expectedWorkingDirectory) || !samePath(workingDirectory, paths.runtimeRoot) || !principalName || principalName === "system" || principalName.endsWith("\\system") || logonType !== "InteractiveToken" || runLevel !== "LeastPrivilege") {
     throw serviceOwnershipError("Refusing to control a Windows task whose registered command fingerprint is not owned by this connector installation.");
   }
 }
@@ -551,6 +585,10 @@ function windowsArgQuote(value) {
 }
 
 function hash(value) { return createHash("sha256").update(value).digest("hex"); }
+
+function isOwnedDefinition(contents) {
+  return String(contents).includes(OWNERSHIP_MARKER) || String(contents).includes(LEGACY_OWNERSHIP_MARKER);
+}
 
 function serviceOwnershipError(message, cause) {
   return Object.assign(new Error(message, cause ? { cause } : undefined), { code: "SERVICE_NOT_OWNED" });

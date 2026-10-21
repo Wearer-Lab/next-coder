@@ -13,7 +13,7 @@ const STARTING_VERSION = 1;
 const WINDOWS_INSPECT_SCRIPT = [
   "$ErrorActionPreference='Stop'",
   "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)",
-  "$pidValue=[int]$env:AGENT_CONTROLLER_INSPECT_PID",
+  "$pidValue=[int]$env:NEXT_CODER_INSPECT_PID\n  if (-not $pidValue) { $pidValue=[int]$env:AGENT_CONTROLLER_INSPECT_PID }",
   "$process=Get-CimInstance Win32_Process -Filter ('ProcessId=' + $pidValue) -ErrorAction SilentlyContinue",
   "if($null -ne $process){[pscustomobject]@{pid=[int]$process.ProcessId;executablePath=[string]$process.ExecutablePath;commandLine=[string]$process.CommandLine;creationDate=$process.CreationDate.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress}",
 ].join(";");
@@ -184,7 +184,7 @@ export async function createLocalT3PairingToken({
   const npx = npxCommand ?? await findExecutable("npx", { env, fs, platform });
   if (!npx) throw Object.assign(new Error("npx was not found, so the connector could not create a local T3 pairing token."), { code: "NPX_NOT_FOUND" });
   const launcher = await resolveLauncher(npx, { platform, fs, nodeExecutable });
-  const result = await run(launcher.command, [...launcher.argsPrefix, "--yes", "t3", "auth", "pairing", "create", "--base-dir", resolve(baseDir), "--base-url", trimSlash(baseUrl), "--label", "Agent Controller Connector", "--ttl", "1h", "--json"]);
+  const result = await run(launcher.command, [...launcher.argsPrefix, "--yes", "t3", "auth", "pairing", "create", "--base-dir", resolve(baseDir), "--base-url", trimSlash(baseUrl), "--label", "Next Coder Connector", "--ttl", "1h", "--json"]);
   let payload;
   try { payload = JSON.parse(result.stdout); } catch { throw Object.assign(new Error("T3 pairing command did not return JSON."), { code: "T3_PAIRING_INVALID" }); }
   if (!payload?.credential) throw Object.assign(new Error("T3 pairing command did not return a credential."), { code: "T3_PAIRING_INVALID" });
@@ -331,7 +331,7 @@ export async function inspectProcessCommand(pid, { platform = currentPlatform(),
   }
   if (platform === "win32") {
     const powershell = windowsSystemTool(env, "WindowsPowerShell", "v1.0", "powershell.exe");
-    const inspectionEnv = windowsToolEnvironment(env, { AGENT_CONTROLLER_INSPECT_PID: String(pid) });
+    const inspectionEnv = windowsToolEnvironment(env, { NEXT_CODER_INSPECT_PID: String(pid) });
     const result = await run(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", WINDOWS_INSPECT_ENCODED], { env: inspectionEnv });
     if (!result.stdout?.trim()) return null;
     let value;

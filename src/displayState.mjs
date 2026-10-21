@@ -46,7 +46,7 @@ async function computeUserDisplayState(store, userId) {
   // parses these field names (applyDisplayJson in GatewayOperate.cpp) and a renamed or reordered
   // key is a silent regression on hardware nothing here can test.
   return {
-    title: "Agent Controller",
+    title: "Next Coder",
     state: counts.environments > 0 ? "ready" : "setup",
     line1: `${counts.environments} env / ${counts.devices} devices`,
     line2: latestCommand ? `${latestCommand.status}: ${latestCommand.intentType}` : "No commands yet",

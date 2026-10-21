@@ -40,7 +40,7 @@ export async function requestJson(url, {
   }
   const accepted = expected ? expected.includes(response.status) : response.ok;
   if (!accepted) {
-    const error = new Error(`Agent Controller request failed with HTTP ${response.status}.`);
+    const error = new Error(`Next Coder request failed with HTTP ${response.status}.`);
     error.status = response.status;
     error.code = payload?.error?.code ?? payload?.code ?? "HTTP_ERROR";
     error.detail = safeError(error);

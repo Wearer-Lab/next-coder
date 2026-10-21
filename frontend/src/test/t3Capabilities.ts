@@ -20,7 +20,7 @@ export function capableT3Environment(
 
 function capableT3Manifest(): T3CapabilityManifest {
   return {
-    schema: "agent-controller.t3-capabilities.v1",
+    schema: "next-coder.t3-capabilities.v1",
     contractVersion: "t3-adapter.v1",
     installedVersion: null,
     probedAt: "2099-01-01T00:00:00.000Z",

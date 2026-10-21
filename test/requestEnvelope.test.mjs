@@ -120,7 +120,7 @@ test("an owner with 1,000 genuinely in-flight requests fails closed instead of e
 });
 
 test("file receipts survive a gateway restart with their command reference", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-controller-request-"));
+  const directory = await mkdtemp(join(tmpdir(), "next-coder-request-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, "state.json");
   const requestHash = "a".repeat(64);

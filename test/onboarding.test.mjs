@@ -18,7 +18,7 @@ test("onboarding progress merges nested values and records lifecycle timestamps"
 
   const resumed = normalizeOnboarding({
     currentStep: "connect",
-    workspace: { path: "/work/agent-controller", title: "Agent Controller" },
+    workspace: { path: "/work/next-coder", title: "Next Coder" },
   }, started, "2026-01-01T00:05:00.000Z");
 
   assert.equal(resumed.startedAt, "2026-01-01T00:00:00.000Z");
@@ -26,7 +26,7 @@ test("onboarding progress merges nested values and records lifecycle timestamps"
   assert.equal(resumed.networkMode, "tailscale");
   assert.equal(resumed.networkUrl, "https://machine.tailnet.ts.net");
   assert.equal(resumed.provider.instanceId, "codex");
-  assert.equal(resumed.workspace.path, "/work/agent-controller");
+  assert.equal(resumed.workspace.path, "/work/next-coder");
   assert.equal(resumed.updatedAt, "2026-01-01T00:05:00.000Z");
 });
 
@@ -38,8 +38,8 @@ test("onboarding readiness requires operational evidence and accepts browser-onl
     networkUrl: "http://127.0.0.1:3773",
     provider: { harness: "openai", instanceId: "codex", model: "gpt-5.4" },
     workspace: {
-      path: "/work/agent-controller",
-      title: "Agent Controller",
+      path: "/work/next-coder",
+      title: "Next Coder",
       projectId: "project_1",
     },
     environmentId: "env_1",
@@ -131,8 +131,8 @@ test("registered-device readiness requires matching configuration and credential
     networkUrl: "http://127.0.0.1:3773",
     provider: { harness: "openai", instanceId: "codex", model: "gpt-5.4" },
     workspace: {
-      path: "/work/agent-controller",
-      title: "Agent Controller",
+      path: "/work/next-coder",
+      title: "Next Coder",
       projectId: "project_1",
     },
     environmentId: "env_1",

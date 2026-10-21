@@ -187,7 +187,7 @@ test("plan limits are inert unless billing is explicitly enforced", async (t) =>
   const created = await requestJson(baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Controller", profile: "agent-controller" },
+    body: { label: "Controller", profile: "next-coder" },
   });
   assert.ok(created.device.id, "device creation must work with billing disabled");
 });
@@ -202,7 +202,7 @@ test("with billing enforced the free tier cannot register a device", async (t) =
   const response = await fetch(new URL("/v1/devices", baseUrl), {
     method: "POST",
     headers: { "content-type": "application/json", ...authHeaders },
-    body: JSON.stringify({ label: "Controller", profile: "agent-controller" }),
+    body: JSON.stringify({ label: "Controller", profile: "next-coder" }),
   });
   const body = await response.json();
   assert.equal(response.status, 402);
@@ -228,7 +228,7 @@ test("with billing enforced an upgraded plan unlocks devices and shell", async (
   const created = await requestJson(baseUrl, "/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Controller", profile: "agent-controller" },
+    body: { label: "Controller", profile: "next-coder" },
   });
   assert.ok(created.device.id);
 

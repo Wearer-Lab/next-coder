@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Agent Controller",
-  "short_name": "Controller",
+  "name": "Next Coder",
+  "short_name": "Next Coder",
   "description": "Operate remote coding agents, T3 Code environments, and physical controllers from one high-trust console.",
   "start_url": "/#quick",
   "scope": "/",

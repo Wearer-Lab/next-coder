@@ -2,7 +2,7 @@
 //
 // This file is the board: power-on reporting, pins, radios, the one physical button, and the loop
 // that drives everything else. The product lives next door — src/ui.cpp owns the five screens, the
-// shared AgentControllerCore owns the gateway conversation, and src/audio.cpp owns the codec.
+// shared NextCoderCore owns the gateway conversation, and src/audio.cpp owns the codec.
 //
 // The controller is usable from the glass: pick a thread, hold to record a voice note, run a saved
 // action, read the reply, approve a held command. There is no keyboard and there will not be one;
@@ -161,7 +161,7 @@ void setup() {
   delay(2000);
 
   Serial.println();
-  Serial.println("=== Agent Controller — Hosyond ES3C28P 2.8\" IPS ESP32-S3 ===");
+  Serial.println("=== Next Coder — Hosyond ES3C28P 2.8\" IPS ESP32-S3 ===");
   Serial.printf("Model:       %s\n", HARDWARE_MODEL);
   Serial.printf("Firmware:    %s\n", FIRMWARE_VERSION);
   reportMemory();

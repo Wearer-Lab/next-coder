@@ -6,8 +6,8 @@ import { ProfilePicker, diffCapabilities } from "./ProfilePicker";
 
 const profiles: DeviceProfile[] = [
   {
-    id: "agent-controller",
-    label: "Agent controller",
+    id: "next-coder",
+    label: "Next Coder",
     description: "Full remote agent control.",
     capabilities: ["status", "agent_prompt", "shell_input"],
   },
@@ -30,7 +30,7 @@ test("shows what each profile grants before it is assigned", () => {
     />,
   );
 
-  const agentCard = screen.getByRole("radio", { name: /agent controller/i });
+  const agentCard = screen.getByRole("radio", { name: /next coder/i });
   expect(agentCard).not.toBeChecked();
   expect(screen.getByRole("radio", { name: /read only/i })).toBeChecked();
 
@@ -55,9 +55,9 @@ test("reports the selected profile back to the caller", () => {
     />,
   );
 
-  fireEvent.click(screen.getByRole("radio", { name: /agent controller/i }));
+  fireEvent.click(screen.getByRole("radio", { name: /next coder/i }));
 
-  expect(onChange).toHaveBeenCalledWith("agent-controller");
+  expect(onChange).toHaveBeenCalledWith("next-coder");
 });
 
 test("warns which capabilities a reassignment revokes", () => {
@@ -67,7 +67,7 @@ test("warns which capabilities a reassignment revokes", () => {
       legend="Policy profile"
       profiles={profiles}
       value="read-only"
-      assignedProfileId="agent-controller"
+      assignedProfileId="next-coder"
       onChange={vi.fn()}
     />,
   );
@@ -85,8 +85,8 @@ test("stays quiet when the picker still matches the assigned profile", () => {
       name="test-profile"
       legend="Policy profile"
       profiles={profiles}
-      value="agent-controller"
-      assignedProfileId="agent-controller"
+      value="next-coder"
+      assignedProfileId="next-coder"
       onChange={vi.fn()}
     />,
   );

@@ -164,7 +164,7 @@ test("device presence is computed from recent activity", async () => {
         id: "dev_online",
         userId: "user_1",
         label: "Online controller",
-        profile: "agent-controller",
+        profile: "next-coder",
         claimedAt: recent,
         lastSeenAt: recent,
         status: { lastHeartbeatAt: recent, firmwareVersion: "0.1.7" },
@@ -175,7 +175,7 @@ test("device presence is computed from recent activity", async () => {
         id: "dev_offline",
         userId: "user_1",
         label: "Offline controller",
-        profile: "agent-controller",
+        profile: "next-coder",
         claimedAt: "2000-01-01T00:00:00.000Z",
         lastSeenAt: "2000-01-01T00:00:00.000Z",
         status: { lastHeartbeatAt: "2000-01-01T00:00:00.000Z" },
@@ -203,7 +203,7 @@ test("device inventory exposes the confirmed gateway profile selection", () => {
       id: "dev_gateway",
       userId: "user_1",
       label: "Desk controller",
-      profile: "agent-controller",
+      profile: "next-coder",
       claimedAt: "2026-08-08T12:00:00.000Z",
       config: { environmentId: "env_studio" },
       gatewaySelection: {
@@ -232,7 +232,7 @@ test("observability summary rolls up reliability signals", async () => {
         id: "dev_online",
         userId: "user_1",
         label: "Online controller",
-        profile: "agent-controller",
+        profile: "next-coder",
         claimedAt: recent,
         lastSeenAt: recent,
         status: { lastHeartbeatAt: recent, firmwareVersion: "0.2.0", batteryPercent: 18 },
@@ -243,7 +243,7 @@ test("observability summary rolls up reliability signals", async () => {
         id: "dev_offline",
         userId: "user_1",
         label: "Offline controller",
-        profile: "agent-controller",
+        profile: "next-coder",
         claimedAt: old,
         lastSeenAt: old,
         status: { lastHeartbeatAt: old, firmwareVersion: "0.1.0", batteryPercent: 91 },
@@ -358,7 +358,7 @@ test("observability summary rolls up reliability signals", async () => {
 });
 
 test("file store persists users, tokens, devices, and audit logs", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-controller-store-"));
+  const dir = await mkdtemp(join(tmpdir(), "next-coder-store-"));
   const dataFile = join(dir, "store.json");
   try {
     const first = await createFileStore(dataFile);
@@ -531,7 +531,7 @@ test("file store persists users, tokens, devices, and audit logs", async () => {
 });
 
 test("file store durably preserves pending device credentials and their promotion", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-controller-device-rotation-"));
+  const dir = await mkdtemp(join(tmpdir(), "next-coder-device-rotation-"));
   const dataFile = join(dir, "store.json");
   try {
     const first = await createFileStore(dataFile);
@@ -577,7 +577,7 @@ test("file store durably preserves pending device credentials and their promotio
 });
 
 test("file store encrypts T3 access tokens when a token key is configured", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-controller-encrypted-store-"));
+  const dir = await mkdtemp(join(tmpdir(), "next-coder-encrypted-store-"));
   const dataFile = join(dir, "store.json");
   try {
     const first = await createFileStore(dataFile, {
@@ -631,7 +631,7 @@ test("deleting an environment repairs every record that pointed at it", () => {
     scopes: ["orchestration:read"],
     status: "paired",
   });
-  const { device } = store.createDevice({ userId: "user_1", label: "Desk", profile: "agent-controller" });
+  const { device } = store.createDevice({ userId: "user_1", label: "Desk", profile: "next-coder" });
   store.updateDeviceConfig({
     userId: "user_1",
     deviceId: device.id,
@@ -711,7 +711,7 @@ test("archiving an environment destroys its credential, disconnects dependencies
     status: "reachable",
   });
   const enrolled = store.createConnector({ userId: "user_1", environmentId: environment.id, scopes: ["connector:connect"] });
-  const { device } = store.createDevice({ userId: "user_1", label: "Desk", profile: "agent-controller" });
+  const { device } = store.createDevice({ userId: "user_1", label: "Desk", profile: "next-coder" });
   store.updateDeviceConfig({
     userId: "user_1",
     deviceId: device.id,
@@ -757,7 +757,7 @@ function displayFixtureStore(now = Date.now()) {
         id: "dev_online",
         userId: "user_1",
         label: "Desk controller",
-        profile: "agent-controller",
+        profile: "next-coder",
         claimedAt: stale,
         lastSeenAt: fresh,
         status: { lastHeartbeatAt: fresh },
@@ -779,7 +779,7 @@ function displayFixtureStore(now = Date.now()) {
         id: "dev_other_user",
         userId: "user_2",
         label: "Someone else's controller",
-        profile: "agent-controller",
+        profile: "next-coder",
         claimedAt: stale,
         lastSeenAt: fresh,
         status: { lastHeartbeatAt: fresh },
@@ -1009,7 +1009,7 @@ test("the display payload keeps the exact shape firmware parses", async () => {
     "offlineDevices",
   ]);
   assert.deepEqual(display, {
-    title: "Agent Controller",
+    title: "Next Coder",
     state: "ready",
     line1: "2 env / 2 devices",
     line2: "dispatched: session_control",

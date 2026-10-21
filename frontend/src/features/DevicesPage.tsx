@@ -99,8 +99,8 @@ interface CredentialResult {
 
 const FALLBACK_PROFILES: DeviceProfile[] = [
   {
-    id: "agent-controller",
-    label: "Agent controller",
+    id: "next-coder",
+    label: "Next Coder",
     description: "Prompts, media, approvals, session control, and policy-screened shell input.",
     capabilities: ["status", "agent_prompt", "media_prompt", "session_control", "approval_response", "shell_input"],
   },
@@ -220,7 +220,7 @@ export function DevicesPage({
   const [internalFlow, setInternalFlow] = useState<DeviceOnboardingFlow | null>(null);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
   const [editLabel, setEditLabel] = useState("");
-  const [editProfile, setEditProfile] = useState("agent-controller");
+  const [editProfile, setEditProfile] = useState("next-coder");
   const [editConfig, setEditConfig] = useState<DeviceConfig>(() => defaultDeviceConfig());
   const profiles = c.deviceProfiles.length ? c.deviceProfiles : FALLBACK_PROFILES;
   const activeFlow = onboardingFlow ?? internalFlow;
@@ -585,7 +585,7 @@ function OnboardingDialog({
 }) {
   const [step, setStep] = useState(0);
   const [label, setLabel] = useState("Desk controller");
-  const [profile, setProfile] = useState("agent-controller");
+  const [profile, setProfile] = useState("next-coder");
   const [claimCode, setClaimCode] = useState("");
   const [environmentId, setEnvironmentId] = useState("");
   const [threadId, setThreadId] = useState("");
@@ -599,7 +599,7 @@ function OnboardingDialog({
     if (!flow) return;
     setStep(0);
     setLabel(flow === "claim" ? "" : "Desk controller");
-    setProfile("agent-controller");
+    setProfile("next-coder");
     setClaimCode("");
     setEnvironmentId(c.selectedEnvironmentId ?? "");
     setThreadId(c.selectedThreadId ?? "");
@@ -1603,7 +1603,7 @@ function DeviceGatewayAccessEditor({
       <div>
         <p id="device-gateway-access-title" className="ac-display text-sm">Gateway access</p>
         <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-          Choose how this controller reaches Agent Controller. The new URL is applied after the device completes its next config sync.
+          Choose how this controller reaches Next Coder. The new URL is applied after the device completes its next config sync.
         </p>
       </div>
 
@@ -2124,19 +2124,19 @@ function FirmwareFlashGuideModal({
 }) {
   const [copied, setCopied] = useState(false);
   const releaseVersion = nextFirmwarePatch(currentVersion);
-  const buildCommand = `AGENT_CONTROLLER_FIRMWARE_VERSION=${releaseVersion} \\
-AGENT_CONTROLLER_OTA_VERIFY_KEY="$OTA_SIGNING_KEY" \\
+  const buildCommand = `NEXT_CODER_FIRMWARE_VERSION=${releaseVersion} \\
+NEXT_CODER_OTA_VERIFY_KEY="$OTA_SIGNING_KEY" \\
 pio run -d firmware/esp32-controller \\
   -e crowpanel-esp32-213-epaper-secure`;
-  const publishCommand = `AGENT_CONTROLLER_URL=http://127.0.0.1:3996 \\
+  const publishCommand = `NEXT_CODER_URL=http://127.0.0.1:3996 \\
 FIRMWARE_FILE=firmware/esp32-controller/.pio/build/crowpanel-esp32-213-epaper-secure/firmware.bin \\
 FIRMWARE_VERSION=${releaseVersion} \\
 FIRMWARE_CHANNEL=stable \\
 node --env-file-if-exists=.env \\
   --env-file-if-exists=.env.local \\
   scripts/publish-firmware-release.mjs`;
-  const usbCommand = `AGENT_CONTROLLER_FIRMWARE_VERSION=${releaseVersion} \\
-AGENT_CONTROLLER_OTA_VERIFY_KEY="$OTA_SIGNING_KEY" \\
+  const usbCommand = `NEXT_CODER_FIRMWARE_VERSION=${releaseVersion} \\
+NEXT_CODER_OTA_VERIFY_KEY="$OTA_SIGNING_KEY" \\
 pio run -d firmware/esp32-controller \\
   -e crowpanel-esp32-213-epaper-secure -t upload`;
   const copyCommands = async () => {

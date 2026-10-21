@@ -80,7 +80,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
   const [deviceMode, setDeviceMode] = useState<OnboardingDeviceMode>("browser_only");
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [deviceLabel, setDeviceLabel] = useState("Desk controller");
-  const [deviceProfile, setDeviceProfile] = useState("agent-controller");
+  const [deviceProfile, setDeviceProfile] = useState("next-coder");
   const [claimCode, setClaimCode] = useState("");
   const [registeredDeviceId, setRegisteredDeviceId] = useState("");
   const [deviceCredentialCopied, setDeviceCredentialCopied] = useState(false);
@@ -441,7 +441,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
   const completeSetup = async () => {
     const result = await c.run(
       "onboarding-complete",
-      "Agent Controller is ready.",
+      "Next Coder is ready.",
       () => withStepError(() => c.saveOnboarding({
         status: "completed",
         currentStep: "ready",
@@ -475,7 +475,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
       <div className="onboarding-auth-gate">
         <EmptyState
           icon={ShieldCheck}
-          title="Sign in to configure Agent Controller"
+          title="Sign in to configure Next Coder"
           description="Setup progress, T3 environments, and controllers are scoped to your Clerk account."
           action={
             <Button variant="primary" onClick={() => c.clerk?.openSignIn()}>
@@ -730,7 +730,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
               ) : (
                 <div className="rounded-lg border border-control bg-surface-inset p-4">
                   <p className="font-display text-base font-semibold">Enroll the T3 computer</p>
-                  <p className="mt-1 text-sm text-ink-muted">Agent Controller will create a short-lived command and wait for the connector to redeem it.</p>
+                  <p className="mt-1 text-sm text-ink-muted">Next Coder will create a short-lived command and wait for the connector to redeem it.</p>
                   <Button className="mt-3" variant="primary" onClick={() => setConnectDialogOpen(true)}>
                     <Laptop className="size-4" /> {networkMode === "local" ? "Connect this computer" : "Connect another computer"}
                   </Button>
@@ -1025,7 +1025,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
                 icon={Sparkles}
                 title={c.onboardingReadiness?.ready ? "Everything is connected" : "A setup item needs attention"}
                 description={c.onboardingReadiness?.ready
-                  ? "Your first T3 thread produced an agent reply and Agent Controller has the context it needs."
+                  ? "Your first T3 thread produced an agent reply and Next Coder has the context it needs."
                   : "Review the readiness checks below before completing setup."}
               />
 
@@ -1054,7 +1054,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
                       {gatewayRemoteReady ? "Remote access is ready" : "Finish tunnel setup on this machine"}
                     </h2>
                     <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-                      This is separate from the T3 environment connection. It controls whether you can open Agent Controller from another phone or computer.
+                      This is separate from the T3 environment connection. It controls whether you can open Next Coder from another phone or computer.
                     </p>
                   </div>
                   <StatusBadge
@@ -1085,7 +1085,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
                 ) : (
                   <div className="onboarding-command">
                     <div>
-                      <p className="ac-eyebrow">Run on the Agent Controller host</p>
+                      <p className="ac-eyebrow">Run on the Next Coder host</p>
                       <code>{gatewayTunnelCommand}</code>
                     </div>
                     <Button
@@ -1127,7 +1127,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
                   busy={c.busyAction === "onboarding-complete"}
                   onClick={() => void completeSetup()}
                 >
-                  Open Agent Controller <ArrowRight className="size-4" />
+                  Open Next Coder <ArrowRight className="size-4" />
                 </Button>
               </div>
             </div>
@@ -1163,7 +1163,7 @@ function WelcomeStep({
       <div className="onboarding-welcome__mark">
         <Rocket className="size-7" />
       </div>
-      <p className="ac-eyebrow">Agent Controller setup</p>
+      <p className="ac-eyebrow">Next Coder setup</p>
       <h2 className="ac-display-title">From sign-in to a working agent thread</h2>
       <p className="onboarding-welcome__copy">
         We’ll configure the T3 host, verify its network path, select a workspace and model,

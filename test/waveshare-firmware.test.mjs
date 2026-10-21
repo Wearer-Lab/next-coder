@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const SHARED = join(ROOT, "firmware/shared/AgentControllerCore/src");
+const SHARED = join(ROOT, "firmware/shared/NextCoderCore/src");
 const BOARD = join(ROOT, "firmware/Waveshare-ESP32-S3-Touch-AMOLED-1.75C");
 
 test("shared firmware capabilities preserve proven boards and gate unproven surfaces", async () => {

@@ -15,7 +15,7 @@ test("factory provisioning returns a scannable claim label", async (t) => {
   const result = await requestJson(baseUrl, "/v1/factory/devices", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { label: "Factory controller", profile: "agent-controller", gatewayBaseUrl: "https://gw.example" },
+    body: { label: "Factory controller", profile: "next-coder", gatewayBaseUrl: "https://gw.example" },
   });
 
   assert.ok(result.claimCode);
@@ -44,7 +44,7 @@ test("batch provisioning labels every device", async (t) => {
   const result = await requestJson(baseUrl, "/v1/factory/batches", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { count: 3, profile: "agent-controller", gatewayBaseUrl: "https://gw.example" },
+    body: { count: 3, profile: "next-coder", gatewayBaseUrl: "https://gw.example" },
   });
 
   assert.equal(result.devices.length, 3);
@@ -67,7 +67,7 @@ test("a device setup code carries a claim URL for the QR on screen", async (t) =
   const provisioned = await requestJson(baseUrl, "/v1/factory/devices", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { label: "Unclaimed", profile: "agent-controller" },
+    body: { label: "Unclaimed", profile: "next-coder" },
   });
 
   const setup = await requestJson(baseUrl, "/v1/device/setup-code", {
@@ -124,7 +124,7 @@ test("claim URLs and labels are redacted from support diagnostics", async (t) =>
   const provisioned = await requestJson(baseUrl, "/v1/factory/devices", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { label: "Factory controller", profile: "agent-controller" },
+    body: { label: "Factory controller", profile: "next-coder" },
   });
   await requestJson(baseUrl, "/v1/devices/claim", {
     method: "POST",
@@ -165,7 +165,7 @@ test("a claim code survives boot, expires, and only rotates on request", async (
   const provisioned = await requestJson(baseUrl, "/v1/factory/devices", {
     method: "POST",
     headers: { authorization: "Bearer factory-secret" },
-    body: { label: "Boxed controller", profile: "agent-controller" },
+    body: { label: "Boxed controller", profile: "next-coder" },
   });
   const deviceHeaders = {
     "x-device-id": provisioned.device.id,

@@ -372,7 +372,7 @@ export function createStore(seed = {}, options = {}) {
     return null;
   }
 
-  function createDevice({ userId, label, profile = "agent-controller" }) {
+  function createDevice({ userId, label, profile = "next-coder" }) {
     const user = ensureUser({ userId });
     const secret = createSecret();
     const device = {
@@ -403,7 +403,7 @@ export function createStore(seed = {}, options = {}) {
     return { device: publicDevice(device), secret };
   }
 
-  function preprovisionDevice({ label, profile = "agent-controller", hardwareModel = null }) {
+  function preprovisionDevice({ label, profile = "next-coder", hardwareModel = null }) {
     const secret = createSecret();
     const claimCode = createHumanCode();
     const device = {

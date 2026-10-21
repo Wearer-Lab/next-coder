@@ -1,6 +1,6 @@
-# Agent Controller Cloudflare runtime
+# Next Coder Cloudflare runtime
 
-This package is the Cloudflare-native edge runtime for Agent Controller. It serves the built React
+This package is the Cloudflare-native edge runtime for Next Coder. It serves the built React
 console, consumes short-lived connector WebSocket tickets, routes connector traffic through one
 Durable Object per T3 environment, and delegates the existing Node control plane to the private
 Worker/Container package in `../cloudflare-control-plane`. The Node gateway is intentionally not
@@ -133,7 +133,7 @@ ticket, connector-event, and background capabilities. Its Container calls this W
 `ControlPlaneConnectorRouterEntrypoint` through a private Service Binding; it does not call the
 local `/internal` HTTP route or expose the router on a public URL.
 
-Both Worker packages emit the fixed, content-free `agent-controller.cloud-telemetry.v1` schema to
+Both Worker packages emit the fixed, content-free `next-coder.cloud-telemetry.v1` schema to
 their per-environment `TELEMETRY` Analytics Engine binding and, locally only, sampled structured
 console logs. Automatic
 invocation logs are disabled, and persistent Workers Logs/traces are held at a zero sample because

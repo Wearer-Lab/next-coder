@@ -107,7 +107,7 @@ test("connector probe cache becomes explicitly stale and an unknown probe contra
   assert.deepEqual(stale.recovery, { code: "connector_offline", action: "CHECK T3 CODE" });
 
   adapter.invalidateCapabilities(connectorEnvironment);
-  response = { schema: "agent-controller.t3-probe.v999" };
+  response = { schema: "next-coder.t3-probe.v999" };
   await assert.rejects(
     adapter.capabilities(connectorEnvironment),
     (error) => error?.code === "t3_capability_probe_incompatible",

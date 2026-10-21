@@ -144,7 +144,7 @@ test("owner rollout API rejects cross-account allowlists and evidence-free promo
   const owner = await auth(baseUrl, "owner");
   const other = await auth(baseUrl, "other");
   const otherDevice = await json(baseUrl, "/v1/devices", { method: "POST", headers: other,
-    body: { label: "Other device", profile: "agent-controller" } });
+    body: { label: "Other device", profile: "next-coder" } });
 
   const crossAccount = await fetch(new URL("/v1/release-rollouts", baseUrl), { method: "POST",
     headers: { "content-type": "application/json", ...owner }, body: JSON.stringify({
@@ -172,7 +172,7 @@ test("owner rollout API rejects cross-account allowlists and evidence-free promo
 });
 
 test("file store acknowledges rollout mutations only after they survive restart", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-controller-rollout-"));
+  const directory = await mkdtemp(join(tmpdir(), "next-coder-rollout-"));
   const path = join(directory, "store.json");
   const first = await createFileStore(path);
   const rollout = await first.createReleaseRollout({

@@ -170,7 +170,7 @@ test("Windows auto-start uses a verified node+npx-cli argument-array process and
 
 test("Windows process inspection and termination use fixed system tools with PID-only argument arrays", async () => {
   const calls = [];
-  const env = { SystemRoot: "C:\\Windows", AGENT_CONTROLLER_T3_TOKEN: "must-not-reach-tools" };
+  const env = { SystemRoot: "C:\\Windows", NEXT_CODER_T3_TOKEN: "must-not-reach-tools" };
   const identity = await inspectProcessCommand(4242, {
     platform: "win32",
     env,
@@ -185,8 +185,8 @@ test("Windows process inspection and termination use fixed system tools with PID
   assert.match(calls[0].file, /WindowsPowerShell\\v1\.0\\powershell\.exe$/i);
   assert.equal(calls[0].args.includes("-EncodedCommand"), true);
   assert.equal(calls[0].args.some((arg) => /4242/.test(arg)), false);
-  assert.equal(calls[0].options.env.AGENT_CONTROLLER_INSPECT_PID, "4242");
-  assert.equal("AGENT_CONTROLLER_T3_TOKEN" in calls[0].options.env, false);
+  assert.equal(calls[0].options.env.NEXT_CODER_INSPECT_PID, "4242");
+  assert.equal("NEXT_CODER_T3_TOKEN" in calls[0].options.env, false);
   assert.deepEqual(calls[1].args, ["/PID", "4242", "/T"]);
   assert.deepEqual(calls[2].args, ["/PID", "4242", "/T", "/F"]);
   assert.equal(calls.some(({ file }) => /cmd(?:\.exe)?$/i.test(file)), false);

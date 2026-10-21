@@ -1,5 +1,5 @@
 {
-  "name": "@agent-controller/control-plane-runtime",
+  "name": "@next-coder/control-plane-runtime",
   "version": "0.1.0",
   "private": true,
   "type": "module",

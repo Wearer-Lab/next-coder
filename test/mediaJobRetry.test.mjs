@@ -341,7 +341,7 @@ async function setupGateway(t, { features = ["display", "buttons", "microphone"]
   const created = await call("/v1/devices", {
     method: "POST",
     headers: authHeaders,
-    body: { label: "Kitchen controller", profile: "agent-controller" },
+    body: { label: "Kitchen controller", profile: "next-coder" },
   });
   const deviceHeaders = { "x-device-id": created.device.id, "x-device-secret": created.secret };
   await call(`/v1/devices/${created.device.id}/config`, {

@@ -59,8 +59,8 @@ const CAPABILITY_SET = new Set(DEVICE_CAPABILITIES);
 
 const DEVICE_PROFILES = [
   {
-    id: "agent-controller",
-    label: "Agent controller",
+    id: "next-coder",
+    label: "Next Coder",
     description: "Full remote agent control for prompts, media, status, approvals, agent questions, session control, thread creation, and policy-screened shell input. Provider approvals may be allowed once, declined or cancelled; \"allow for this session\" is reserved for the console.",
     capabilities: [
       "status",
@@ -99,6 +99,12 @@ const DEVICE_PROFILES = [
 
 const PROFILE_BY_ID = new Map(DEVICE_PROFILES.map((profile) => [profile.id, profile]));
 
+// Devices provisioned before the rename carry the legacy profile id on their record. It is not a
+// listed profile and is never offered to an owner, but it has to keep resolving to the same
+// capability set: dropping it to the deny-by-default fallback would silently strip a deployed
+// device of the capabilities it was sold with.
+const LEGACY_PROFILE_IDS = new Map([["agent-controller", "next-coder"]]);
+
 /** Profile used whenever a profile reference cannot be resolved. Deny-by-default. */
 export const FALLBACK_PROFILE_ID = "read-only";
 
@@ -110,14 +116,15 @@ export function listDeviceProfiles() {
 }
 
 export function getDeviceProfile(profileId) {
-  return PROFILE_BY_ID.get(profileId) ?? null;
+  const resolved = typeof profileId === "string" ? LEGACY_PROFILE_IDS.get(profileId) ?? profileId : profileId;
+  return PROFILE_BY_ID.get(resolved) ?? null;
 }
 
 export function isKnownDeviceProfile(profileId) {
-  return PROFILE_BY_ID.has(profileId);
+  return getDeviceProfile(profileId) !== null;
 }
 
-export function normalizeDeviceProfile(profileId, fallback = "agent-controller") {
+export function normalizeDeviceProfile(profileId, fallback = "next-coder") {
   const profile = typeof profileId === "string" && profileId.trim() ? profileId.trim() : fallback;
   return profile;
 }

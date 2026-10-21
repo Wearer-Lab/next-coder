@@ -2,7 +2,7 @@
 //
 // Account, policy, routing, credentials, claim state, and T3 state stay in the cloud gateway. This
 // file owns only the T190 display and its optional external encoder. The network conversation is
-// the shared AgentControllerCore implementation used by the other controller boards.
+// the shared NextCoderCore implementation used by the other controller boards.
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -155,7 +155,7 @@ const char* screenName(Screen value) {
     case Screen::ConfirmAction: return "CONFIRM ACTION";
     case Screen::ConfirmReset: return "RESET NETWORK";
     case Screen::Result: return "RESULT";
-    default: return "AGENT CONTROLLER";
+    default: return "NEXT CODER";
   }
 }
 
@@ -305,7 +305,7 @@ void renderGatewayBoundary() {
 
 void renderHome() {
   const bool live = gateway.link() == GatewayLink::Claimed;
-  drawHeader(gateway.display().title.length() ? gateway.display().title : String("Agent Controller"),
+  drawHeader(gateway.display().title.length() ? gateway.display().title : String("Next Coder"),
              live ? upper(gateway.display().state) : String("OFFLINE"),
              live ? kAccent : kMuted);
   drawLine(31, "ENV  " + clipped(browse.environmentLabel().length()
@@ -822,11 +822,11 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   delay(1000);
   Serial.println();
-  Serial.println("=== Agent Controller - Vision Master T190 ===");
+  Serial.println("=== Next Coder - Vision Master T190 ===");
   Serial.printf("Model: %s  Firmware: %s\n", HARDWARE_MODEL, FIRMWARE_VERSION);
 
   beginDisplay();
-  drawHeader("AGENT CONTROLLER", "BOOT");
+  drawHeader("NEXT CODER", "BOOT");
   drawLine(52, "Starting secure controller", kInk, 2);
   drawLine(89, "Loading device identity...", kMuted);
 

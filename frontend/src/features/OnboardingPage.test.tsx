@@ -53,7 +53,7 @@ function controller(overrides: Record<string, unknown> = {}) {
     connection: "connected",
     projects: [],
     devices: [],
-    deviceProfiles: [{ id: "agent-controller", label: "Agent Controller" }],
+    deviceProfiles: [{ id: "next-coder", label: "Next Coder" }],
     deviceSecret: null,
     busyAction: null,
     clerk: { userLabel: "person@example.test" },
@@ -98,7 +98,7 @@ test("uses computer-first connector choices without asking for a network tunnel"
   expect(screen.queryByLabelText(/Public T3 URL/i)).toBeNull();
 });
 
-test("does not send cloud users back to a nonexistent Agent Controller host for tunnel setup", async () => {
+test("does not send cloud users back to a nonexistent Next Coder host for tunnel setup", async () => {
   const onboarding: OnboardingState = {
     ...baseOnboarding,
     currentStep: "ready",
@@ -136,7 +136,7 @@ test("does not send cloud users back to a nonexistent Agent Controller host for 
   expect(screen.queryByText(/first agent command was accepted by T3/u)).toBeNull();
   expect(screen.queryByText("Optional remote console")).toBeNull();
   expect(screen.queryByText("Finish tunnel setup on this machine")).toBeNull();
-  expect(screen.queryByText("Run on the Agent Controller host")).toBeNull();
+  expect(screen.queryByText("Run on the Next Coder host")).toBeNull();
 });
 
 test("recovers a pending one-time device registration without silently duplicating it", async () => {
@@ -147,8 +147,8 @@ test("recovers a pending one-time device registration without silently duplicati
     networkUrl: "http://127.0.0.1:3773",
     provider: { harness: "openai", instanceId: "codex", model: "gpt-5.4" },
     workspace: {
-      path: "/work/agent-controller",
-      title: "Agent Controller",
+      path: "/work/next-coder",
+      title: "Next Coder",
       projectId: "project_1",
     },
     environmentId: "env_1",
@@ -186,7 +186,7 @@ test("recovers a pending one-time device registration without silently duplicati
     devices: [{
       id: "device_1",
       label: "Desk controller",
-      profile: "agent-controller",
+      profile: "next-coder",
       config: { environmentId: "env_1", threadId: "thread_1" },
     }],
     saveOnboarding,

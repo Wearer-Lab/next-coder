@@ -10,7 +10,7 @@ export const remoteAccessOptions: Array<{
     id: "serve",
     label: "Tailscale Serve",
     visibility: "Private tailnet",
-    description: "Recommended. Reach Agent Controller over HTTPS from your signed-in Tailscale devices.",
+    description: "Recommended. Reach Next Coder over HTTPS from your signed-in Tailscale devices.",
   },
   {
     id: "funnel",

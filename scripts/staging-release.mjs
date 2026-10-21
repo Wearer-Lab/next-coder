@@ -7,9 +7,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { readEnv } from "./environment.mjs";
+
 import { runStagingQualification } from "./qualify-staging.mjs";
 
-export const RELEASE_EVIDENCE_SCHEMA = "agent-controller.staging-release.v1";
+export const RELEASE_EVIDENCE_SCHEMA = "next-coder.staging-release.v1";
 export const REQUIRED_CONTROL_PLANE_SECRETS = Object.freeze([
   "PUBLIC_BASE_URL",
   "CONVEX_URL",
@@ -87,9 +89,9 @@ export function normalizeReleaseInput(environment = process.env) {
     expectedControlPlaneVersion: requireVersion(environment.STAGING_RELEASE_CURRENT_CONTROL_PLANE_VERSION, "current_control_plane_version_invalid"),
     repositoryRoot: resolve(environment.STAGING_RELEASE_REPOSITORY_ROOT ?? process.cwd()),
     evidencePath: resolve(environment.STAGING_RELEASE_EVIDENCE_PATH ?? join(process.cwd(), "staging-release-evidence.json")),
-    stagingUrl: environment.AGENT_CONTROLLER_STAGING_URL?.trim() || null,
-    mediaBucket: environment.AGENT_CONTROLLER_STAGING_MEDIA_BUCKET?.trim() || null,
-    firmwareBucket: environment.AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET?.trim() || null,
+    stagingUrl: readEnv(environment, "NEXT_CODER_STAGING_URL")?.trim() || null,
+    mediaBucket: readEnv(environment, "NEXT_CODER_STAGING_MEDIA_BUCKET")?.trim() || null,
+    firmwareBucket: readEnv(environment, "NEXT_CODER_STAGING_FIRMWARE_BUCKET")?.trim() || null,
   };
 }
 
@@ -179,7 +181,7 @@ export function validateMigrationCompatibility(previous, candidate, { rollback =
 export function buildMutationPlan(input) {
   const short = input.targetCommit.slice(0, 12);
   const tag = input.operation === "rollback" ? `ac-stg-rollback-${short}` : `ac-stg-${short}`;
-  const message = `agent-controller staging ${input.operation} ${input.targetCommit}`;
+  const message = `next-coder staging ${input.operation} ${input.targetCommit}`;
   const edge = wranglerCommand("edge", "cloudflare", [
     "deploy", "--env", "staging", "--strict", "--tag", tag, "--message", message,
   ], process.cwd());
@@ -240,7 +242,7 @@ export async function runReadOnlyPreflight(input, dependencies = {}) {
   await validateLocalRelease(input, { runner });
   requireLiveEnvironment(input, environment);
 
-  const tempRoot = join(tmpdir(), `agent-controller-staging-preflight-${process.pid}`);
+  const tempRoot = join(tmpdir(), `next-coder-staging-preflight-${process.pid}`);
   await mkdir(tempRoot, { recursive: true, mode: 0o700 });
   for (const step of buildReadOnlyPlan(input.repositoryRoot, tempRoot)) await runner(step);
 
@@ -469,8 +471,8 @@ export function requireDeploymentCommit(status, commit, code = "deployment_sourc
     ?? version?.annotations?.workers_message
     ?? deployment?.annotations?.["workers/message"]
     ?? deployment?.annotations?.workers_message;
-  if (message !== `agent-controller staging deploy ${commit}`
-    && message !== `agent-controller staging rollback ${commit}`) {
+  if (message !== `next-coder staging deploy ${commit}`
+    && message !== `next-coder staging rollback ${commit}`) {
     throw new StagingReleaseError(code);
   }
 }

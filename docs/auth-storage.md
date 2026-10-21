@@ -58,7 +58,7 @@ They include:
 - `schema.ts`: users, API tokens, devices, environments, media uploads, commands, firmware releases,
   owner-scoped release rollouts and per-target assignments, audit logs.
 - `users.ts`: current user lookup and upsert.
-- `agentController.ts`: initial device/config/firmware queries and mutations.
+- `nextCoder.ts`: initial device/config/firmware queries and mutations.
 - `gatewayStore.ts`: Store API queries and mutations used by the Node gateway.
 
 Set:

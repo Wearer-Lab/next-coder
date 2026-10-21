@@ -20,7 +20,7 @@ const BASE_CONFIG = {
 };
 
 async function bootstrap(t, config) {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-vision-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-vision-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { ...BASE_CONFIG, mediaDir, ...config } });
@@ -71,7 +71,7 @@ test("a described image carries its description to the agent as attachment conte
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-vision-dispatch-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-vision-dispatch-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
   const { server } = createApp({ config: { ...BASE_CONFIG, mediaDir, visionProvider: "mock" } });
   await listen(server);

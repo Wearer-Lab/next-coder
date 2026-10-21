@@ -157,7 +157,7 @@ void setup() {
   delay(2000);               // native USB CDC enumeration; bounded and boot-only
 
   Serial.println();
-  Serial.println("=== Agent Controller — Waveshare AMOLED 1.75C safe bring-up ===");
+  Serial.println("=== Next Coder — Waveshare AMOLED 1.75C safe bring-up ===");
   Serial.printf("Model:       %s\n", HARDWARE_MODEL);
   Serial.printf("Firmware:    %s\n", FIRMWARE_VERSION);
   Serial.println("Capabilities: none (AMOLED/touch/audio remain unverified and disabled)");

@@ -1,6 +1,6 @@
 # Hardware Controller Protocol
 
-This document describes hardware protocol v2 for the ESP32 agent controller and the temporary
+This document describes hardware protocol v2 for the ESP32 next coder and the temporary
 protocol-v1 compatibility path.
 
 Project-wide firmware progress is maintained in
@@ -77,15 +77,15 @@ means functional terminal grammar, not decorative noise.
 - Show user-created titles in their original case where space permits. Truncate with `~` rather
   than allowing a label to collide with the state, metadata, or control rail.
 
-### Agent Controller glyph set
+### Next Coder glyph set
 
-These are original Agent Controller semantics, designed for a 12-by-12 one-bit cell. They must not
+These are original Next Coder semantics, designed for a 12-by-12 one-bit cell. They must not
 copy the T3 Code wordmark or branded artwork. A glyph is a navigation aid; the adjacent ASCII label
 remains authoritative.
 
 | Glyph name | Pixel concept | Meaning |
 |---|---|---|
-| `ac_mark` | Square terminal frame containing `>_` | Agent Controller identity, boot, and Home |
+| `ac_mark` | Square terminal frame containing `>_` | Next Coder identity, boot, and Home |
 | `thread` | Three offset horizontal traces joined by a rail | T3 thread list or active thread |
 | `status` | Prompt caret followed by two short telemetry lines | Snapshot/status |
 | `action` | Prompt caret entering a small node | Saved prompt or generic remote action |
@@ -119,14 +119,14 @@ All product screens use the same visible coordinate contract:
 | Physical control rail | `x=2..43`, `y=2..119` | Centered top MENU, center rotary/OK, bottom BACK |
 | Rail divider | `x=43`, `y=2..119` | One-pixel boundary matching the left-side bezel controls |
 | Header eyebrow | `x=47..247`, `y=1` | Small mono state word on the left, position marker on the right |
-| Header glyph | `x=49..60`, `y=14..25` | One 12-by-12 Agent Controller glyph |
+| Header glyph | `x=49..60`, `y=14..25` | One 12-by-12 Next Coder glyph |
 | Header title | starts `x=67`, `y=14` | Screen/resource title in the 8-by-16 face, upper-cased |
 | Header rule | `x=47..247`, `y=30` | One-pixel separator |
 | Body | `x=47..247`, `y=31..99` | Three 23-pixel list rows, or two compact detail lines |
 | List baselines | `y=36`, `59`, `82` | Cursor, 12-by-12 glyph, label, and right metadata |
 | Detail prompts | `y=36`, `66` | `# Hardware Controller Protocol
 
-This document describes hardware protocol v2 for the ESP32 agent controller and the temporary
+This document describes hardware protocol v2 for the ESP32 next coder and the temporary
 protocol-v1 compatibility path.
 
 Project-wide firmware progress is maintained in
@@ -203,15 +203,15 @@ means functional terminal grammar, not decorative noise.
 - Show user-created titles in their original case where space permits. Truncate with `~` rather
   than allowing a label to collide with the state, metadata, or control rail.
 
-### Agent Controller glyph set
+### Next Coder glyph set
 
-These are original Agent Controller semantics, designed for a 12-by-12 one-bit cell. They must not
+These are original Next Coder semantics, designed for a 12-by-12 one-bit cell. They must not
 copy the T3 Code wordmark or branded artwork. A glyph is a navigation aid; the adjacent ASCII label
 remains authoritative.
 
 | Glyph name | Pixel concept | Meaning |
 |---|---|---|
-| `ac_mark` | Square terminal frame containing `>_` | Agent Controller identity, boot, and Home |
+| `ac_mark` | Square terminal frame containing `>_` | Next Coder identity, boot, and Home |
 | `thread` | Three offset horizontal traces joined by a rail | T3 thread list or active thread |
 | `status` | Prompt caret followed by two short telemetry lines | Snapshot/status |
 | `action` | Prompt caret entering a small node | Saved prompt or generic remote action |
@@ -571,8 +571,8 @@ content-type: application/json
 
 ```json
 {
-  "label": "Agent Controller",
-  "profile": "agent-controller"
+  "label": "Next Coder",
+  "profile": "next-coder"
 }
 ```
 
@@ -657,7 +657,7 @@ Example response:
     "rotated": true,
     "claimCode": "ABCDE-23456",
     "claimCodeExpiresAt": "2026-09-06T09:48:18.923Z",
-    "instructions": "Sign in to the Agent Controller dashboard and claim this device with the displayed code."
+    "instructions": "Sign in to the Next Coder dashboard and claim this device with the displayed code."
   },
   "claimCode": "ABCDE-23456",
   "claimCodeExpiresAt": "2026-09-06T09:48:18.923Z"
@@ -677,7 +677,7 @@ GET /v1/device-profiles
 
 Manufacturing, claim, and owner-managed updates store one profile per device. The gateway enforces that profile on every intent:
 
-- `agent-controller`: normal hardware profile for prompts, media, status, approvals, agent questions, session control, and policy-screened shell input.
+- `next-coder`: normal hardware profile for prompts, media, status, approvals, agent questions, session control, and policy-screened shell input.
 - `read-only`: status only.
 - `power-controller`: high-trust profile for web clients or advanced devices; dangerous shell input still requires approval.
 
@@ -935,7 +935,7 @@ Example response:
     "menu": ["status", "prompt", "shell", "macro", "media", "stop"],
     "device": {
       "id": "dev_...",
-      "profile": "agent-controller",
+      "profile": "next-coder",
       "lastSeenAt": "2026-06-14T21:37:43.155Z",
       "presence": {
         "state": "online",
@@ -978,7 +978,7 @@ Example response:
 
 The firmware scaffold fetches this at boot and periodically. The compiled `ENVIRONMENT_ID`, `THREAD_ID`, `DEFAULT_AGENT_PROMPT`, and `DEFAULT_SHELL_COMMAND` values are only fallbacks for development or offline bring-up.
 
-`gatewayAccessMode` describes how the controller reaches Agent Controller: `local`, `tailscale`, or
+`gatewayAccessMode` describes how the controller reaches Next Coder: `local`, `tailscale`, or
 `online`. `gatewayUrl` is the corresponding device-reachable URL. A controller does not normally
 join a Tailnet itself; Tailscale mode assumes a routed LAN/subnet path to the gateway. Online mode
 requires HTTPS. Before persisting a changed URL, firmware authenticates against
@@ -1669,7 +1669,7 @@ The committed scaffold currently includes:
 - Firmware update manifest polling.
 - Optional OTA image download, SHA-256 verification, and apply using the ESP32 OTA partition API.
 - Display polling.
-- E-ink rendering through the vendored JD79661 driver and shared 250-by-122 Agent Controller UI
+- E-ink rendering through the vendored JD79661 driver and shared 250-by-122 Next Coder UI
   module with original one-bit glyphs, a hardware-aligned control rail, content regions, and
   unchanged-frame suppression.
 - Home, three-row Actions, Threads, and Gateways lists, plus compact Detail/result screens. MENU

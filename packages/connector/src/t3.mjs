@@ -61,7 +61,7 @@ export async function probeT3Capabilities(environment, options = {}) {
   const snapshotContract = Array.isArray(snapshot?.projects) && Array.isArray(snapshot?.threads);
   const configContract = Array.isArray(config?.providers);
   return {
-    schema: "agent-controller.t3-probe.v1",
+    schema: "next-coder.t3-probe.v1",
     installedVersion: semanticVersion(metadata?.serverVersion ?? metadata?.version),
     probes: {
       metadata: metadataResult.status === "fulfilled" ? "passed" : "failed",
@@ -100,7 +100,7 @@ export async function exchangePairingToken({ baseUrl, pairingToken, fetchImpl = 
     subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
     requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
     scope: "orchestration:read orchestration:write terminal:operate",
-    client_label: "Agent Controller Connector",
+    client_label: "Next Coder Connector",
     client_device_type: "bot",
   });
   const controller = new AbortController();

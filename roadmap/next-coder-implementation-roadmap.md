@@ -1,4 +1,4 @@
-# Agent Controller Implementation Roadmap
+# Next Coder Implementation Roadmap
 
 > **Superseded in part.** This document tracks the original twelve-phase build and remains the
 > ledger of record for hardware and commercial execution (eFuse ceremony, OTA rollback, hardware
@@ -70,7 +70,7 @@ The remaining qualification gaps for Phases 3, 6, and 8 are tracked in
 
 ```text
 Controller device ── authenticated HTTPS/WSS ─┐
-                                              ├── Agent Controller cloud control plane
+                                              ├── Next Coder cloud control plane
 Web console / phone PWA ── HTTPS/SSE ─────────┤   Cloudflare edge + private control plane
                                               │   Convex state + R2 media + Queue/Cron work
 User machine                                  │
@@ -206,7 +206,7 @@ Production user flow:
 1. User opens the web dashboard.
 2. The console mints a short-lived, single-use connector enrollment code and a copyable `npx`
    command.
-3. The user runs `npx @agent-controller/connector connect --server <cloud-origin> --code <code>`.
+3. The user runs `npx @next-coder/connector connect --server <cloud-origin> --code <code>`.
 4. The connector discovers or safely launches local T3, performs local T3 authentication, and keeps
    the resulting access material in the OS credential store or an explicit mode-`0600` fallback.
 5. The connector redeems the cloud code for an environment-scoped standing credential, exchanges it

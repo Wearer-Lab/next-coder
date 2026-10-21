@@ -76,7 +76,7 @@ test("shows connector fleet evidence and revokes a standing connector secret", a
   expect(screen.getByRole("heading", { name: "Workspace computers" })).toBeVisible();
   expect(screen.getByText("Studio connector")).toBeVisible();
   expect(screen.getByText(/v0.2.0 · darwin-arm64/u)).toBeVisible();
-  expect(screen.getByText("npx @agent-controller/connector doctor")).toBeVisible();
+  expect(screen.getByText("npx @next-coder/connector doctor")).toBeVisible();
 
   fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
   fireEvent.click(await screen.findByRole("button", { name: "Revoke connector" }));

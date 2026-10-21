@@ -1,6 +1,6 @@
 # Staging qualification
 
-This runbook produces a redacted, machine-readable check of a deployed Agent Controller origin. It
+This runbook produces a redacted, machine-readable check of a deployed Next Coder origin. It
 does not deploy anything, provision resources, create credentials, or infer that local tests are
 hosted proof. An operator must run it after an explicitly authorized staging deployment.
 
@@ -41,7 +41,7 @@ Use a dedicated staging user and connector-backed environment. Put the short-liv
 token in an environment variable so it does not enter shell history or the process argument list:
 
 ```bash
-export AGENT_CONTROLLER_STAGING_ACCESS_TOKEN='staging-session-token'
+export NEXT_CODER_STAGING_ACCESS_TOKEN='staging-session-token'
 npm run qualify:staging -- \
   --base-url 'https://staging.example.com' \
   --environment-id 'env_staging_test' \
@@ -49,7 +49,7 @@ npm run qualify:staging -- \
   --provider-instance 'codex' \
   --model 'staging-model' \
   > staging-readiness-evidence.json
-unset AGENT_CONTROLLER_STAGING_ACCESS_TOKEN
+unset NEXT_CODER_STAGING_ACCESS_TOKEN
 ```
 
 The token may instead be placed in a regular mode-`0600` file and supplied with
@@ -75,8 +75,8 @@ This mode is intentionally mutating. It creates exactly one new test thread and 
 prompt. Use only an isolated test project and add the explicit `--exercise-first-command` flag:
 
 ```bash
-export AGENT_CONTROLLER_STAGING_ACCESS_TOKEN='staging-session-token'
-export AGENT_CONTROLLER_STAGING_PROMPT='Staging qualification: reply with a short readiness confirmation.'
+export NEXT_CODER_STAGING_ACCESS_TOKEN='staging-session-token'
+export NEXT_CODER_STAGING_PROMPT='Staging qualification: reply with a short readiness confirmation.'
 npm run qualify:staging -- \
   --base-url 'https://staging.example.com' \
   --environment-id 'env_staging_test' \
@@ -85,7 +85,7 @@ npm run qualify:staging -- \
   --model 'staging-model' \
   --exercise-first-command \
   > staging-first-command-evidence.json
-unset AGENT_CONTROLLER_STAGING_ACCESS_TOKEN AGENT_CONTROLLER_STAGING_PROMPT
+unset NEXT_CODER_STAGING_ACCESS_TOKEN NEXT_CODER_STAGING_PROMPT
 ```
 
 The command refuses to launch until every boundary and readiness check has passed. It requires the
@@ -103,7 +103,7 @@ destructive operator decision.
 ## Evidence and redaction
 
 Standard output is one JSON object with schema
-`agent-controller.staging-qualification.v1`. It contains the target public origin, timestamps,
+`next-coder.staging-qualification.v1`. It contains the target public origin, timestamps,
 durations, fixed check names and failure codes, safe state labels/counts, and truncated SHA-256
 references for resource correlation. It never contains:
 

@@ -15,7 +15,7 @@ test("gateway profiles switch with exact revisions and retain the active URL on 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const auth = await createAuthHeaders(baseUrl);
   const created = await requestJson(baseUrl, "/v1/devices", {
-    method: "POST", headers: auth, body: { label: "Gateway controller", profile: "agent-controller" },
+    method: "POST", headers: auth, body: { label: "Gateway controller", profile: "next-coder" },
   });
   const deviceAuth = { "x-device-id": created.device.id, "x-device-secret": created.secret };
 
@@ -89,7 +89,7 @@ test("gateway profiles switch with exact revisions and retain the active URL on 
 });
 
 test("factory upload stores an immutable managed artifact and devices download through authenticated gateway", async (t) => {
-  const firmwareDir = await mkdtemp(join(tmpdir(), "agent-controller-firmware-"));
+  const firmwareDir = await mkdtemp(join(tmpdir(), "next-coder-firmware-"));
   t.after(() => rm(firmwareDir, { recursive: true, force: true }));
   const config = { ...loadConfig({}), factoryToken: "factory-secret", otaSigningKey: "test-signing-key",
     firmwareDir, firmwareStorageProvider: "disk", maxFirmwareBytes: 1024 * 1024,
@@ -115,7 +115,7 @@ test("factory upload stores an immutable managed artifact and devices download t
 
   const auth = await createAuthHeaders(baseUrl);
   const created = await requestJson(baseUrl, "/v1/devices", { method: "POST", headers: auth,
-    body: { label: "OTA controller", profile: "agent-controller" } });
+    body: { label: "OTA controller", profile: "next-coder" } });
   const download = await fetch(upload.manifest.url, { headers: {
     "x-device-id": created.device.id, "x-device-secret": created.secret,
   } });

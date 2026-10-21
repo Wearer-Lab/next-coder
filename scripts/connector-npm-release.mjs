@@ -8,8 +8,8 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
-export const CONNECTOR_PACKAGE_NAME = "@agent-controller/connector";
-export const CONNECTOR_BIN_NAME = "agent-controller-connect";
+export const CONNECTOR_PACKAGE_NAME = "@next-coder/connector";
+export const CONNECTOR_BIN_NAME = "next-coder-connect";
 export const CONNECTOR_TAG_PREFIX = "connector-v";
 export const RELEASE_EVIDENCE_SCHEMA_VERSION = 1;
 
@@ -103,7 +103,7 @@ export function validatePackageManifest(manifest, { version, githubRepository, g
   if (manifest.private === true) {
     throw new ConnectorReleaseError("The connector package is marked private.", "package_private");
   }
-  if (manifest.bin?.[CONNECTOR_BIN_NAME] !== "./bin/agent-controller-connect.mjs") {
+  if (manifest.bin?.[CONNECTOR_BIN_NAME] !== "./bin/next-coder-connect.mjs") {
     throw new ConnectorReleaseError("The connector bin identity changed.", "package_bin_invalid");
   }
   if (manifest.engines?.node !== ">=22") {
@@ -160,7 +160,7 @@ export function validatePackMetadata(packed, { version }) {
   if (!packed || packed.name !== CONNECTOR_PACKAGE_NAME || packed.version !== version) {
     throw new ConnectorReleaseError("npm pack returned an unexpected package identity or version.", "pack_identity_invalid");
   }
-  if (packed.filename !== `agent-controller-connector-${version}.tgz`) {
+  if (packed.filename !== `next-coder-connector-${version}.tgz`) {
     throw new ConnectorReleaseError("npm pack returned an unexpected tarball name.", "pack_filename_invalid");
   }
   if (!Number.isSafeInteger(packed.size) || packed.size <= 0 || packed.size > 1024 * 1024) {
@@ -173,7 +173,7 @@ export function validatePackMetadata(packed, { version }) {
     throw new ConnectorReleaseError("The connector file count is empty or exceeds the release bound.", "pack_file_count_invalid");
   }
   const paths = packed.files.map((file) => file.path);
-  for (const required of ["LICENSE", "README.md", "package.json", "bin/agent-controller-connect.mjs", "src/index.mjs"]) {
+  for (const required of ["LICENSE", "README.md", "package.json", "bin/next-coder-connect.mjs", "src/index.mjs"]) {
     if (!paths.includes(required)) throw new ConnectorReleaseError(`Packed connector is missing ${required}.`, "pack_required_file_missing");
   }
   for (const path of paths) {
@@ -184,7 +184,7 @@ export function validatePackMetadata(packed, { version }) {
       throw new ConnectorReleaseError(`Sensitive or development-only packed path: ${path}.`, "pack_sensitive_path");
     }
   }
-  const bin = packed.files.find((file) => file.path === "bin/agent-controller-connect.mjs");
+  const bin = packed.files.find((file) => file.path === "bin/next-coder-connect.mjs");
   if ((bin.mode & 0o111) === 0) {
     throw new ConnectorReleaseError("The packed connector bin is not executable.", "pack_bin_not_executable");
   }
@@ -268,7 +268,7 @@ async function prepare() {
   const packed = validatePackMetadata(result[0], context);
   const tarballPath = join(outputDir, packed.filename);
 
-  const scratch = await mkdtemp(join(tmpdir(), "agent-controller-connector-release-"));
+  const scratch = await mkdtemp(join(tmpdir(), "next-coder-connector-release-"));
   try {
     const installDir = join(scratch, "install");
     await exec("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", installDir, tarballPath], {
@@ -277,7 +277,7 @@ async function prepare() {
     });
     const bin = join(installDir, "node_modules", ".bin", CONNECTOR_BIN_NAME);
     const help = await exec(bin, ["--help"], { cwd: scratch });
-    if (!help.stdout.includes("Agent Controller connector")) {
+    if (!help.stdout.includes("Next Coder connector")) {
       throw new ConnectorReleaseError("The clean-installed connector help smoke failed.", "pack_help_smoke_failed");
     }
     const versionOutput = await exec(bin, ["update"], { cwd: scratch });

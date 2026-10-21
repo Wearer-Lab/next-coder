@@ -37,7 +37,7 @@ test("camera prompt delivers the image to T3 as a real attachment", async (t) =>
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-attach-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-attach-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { ...MEDIA_CONFIG, mediaDir } });
@@ -97,7 +97,7 @@ test("camera prompt delivers the image to T3 as a real attachment", async (t) =>
 });
 
 test("signed media URL serves bytes without a session and rejects tampering", async (t) => {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-signed-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-signed-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { ...MEDIA_CONFIG, mediaDir } });
@@ -175,7 +175,7 @@ test("stored command records omit media bytes and the signed URL", async (t) => 
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-redact-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-redact-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { ...MEDIA_CONFIG, mediaDir } });
@@ -268,7 +268,7 @@ test("openai transcription provider transcribes stored audio", async (t) => {
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-stt-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-stt-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server, mediaJobRunner } = createApp({
@@ -353,7 +353,7 @@ test("the parakeet sidecar drives the same job pipeline, over HTTP and off the r
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-parakeet-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-parakeet-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server, mediaJobRunner } = createApp({
@@ -441,7 +441,7 @@ test("a container the sidecar cannot open fails clearly and leaves the audio pla
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-parakeet-container-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-parakeet-container-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server, mediaJobRunner } = createApp({
@@ -507,7 +507,7 @@ test("a rate-limited provider is retried until the budget runs out, then fails t
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-stt-fail-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-stt-fail-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server, mediaJobRunner } = createApp({
@@ -583,7 +583,7 @@ test("a provider error that cannot succeed on retry fails on the first attempt",
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-stt-terminal-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-stt-terminal-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server, mediaJobRunner } = createApp({
@@ -635,7 +635,7 @@ test("transcription is refused up front when no provider is configured", async (
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-stt-off-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-stt-off-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({
@@ -679,7 +679,7 @@ test("transcript versions are redacted from a support bundle, the stage machine 
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-stt-support-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-stt-support-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server, mediaJobRunner } = createApp({
@@ -753,7 +753,7 @@ test("a project launch carries media on its very first turn", async (t) => {
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-launch-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-launch-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { ...MEDIA_CONFIG, mediaDir } });
@@ -842,7 +842,7 @@ test("a project launch refuses media owned by another user", async (t) => {
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-launch-owner-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-launch-owner-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { ...MEDIA_CONFIG, mediaDir } });
@@ -895,7 +895,7 @@ test("a turn is refused when it references unknown media or too many attachments
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-limits-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-limits-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { ...MEDIA_CONFIG, mediaDir } });
@@ -1066,7 +1066,7 @@ async function startGateway(t) {
     globalThis.fetch = originalFetch;
   });
 
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-multi-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-multi-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const { server } = createApp({ config: { ...MEDIA_CONFIG, mediaDir } });

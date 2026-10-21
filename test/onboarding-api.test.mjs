@@ -12,8 +12,8 @@ test("onboarding API persists progress and completes only after operational read
       return jsonResponse({
         projects: [{
           id: "project_1",
-          title: "Agent Controller",
-          workspaceRoot: "/work/agent-controller",
+          title: "Next Coder",
+          workspaceRoot: "/work/next-coder",
           defaultModelSelection: { instanceId: "codex", model: "gpt-5.4" },
         }],
         threads: [],
@@ -93,8 +93,8 @@ test("onboarding API persists progress and completes only after operational read
       networkUrl: "https://t3.example",
       provider: { harness: "openai", instanceId: "codex", model: "gpt-5.4" },
       workspace: {
-        path: "/work/agent-controller",
-        title: "Agent Controller",
+        path: "/work/next-coder",
+        title: "Next Coder",
         projectId: "project_1",
       },
       environmentId: environment.environment.id,
@@ -126,8 +126,8 @@ test("onboarding API persists progress and completes only after operational read
     networkUrl: "https://t3.example",
     provider: { harness: "openai", instanceId: "codex", model: "gpt-5.4" },
     workspace: {
-      path: "/work/agent-controller",
-      title: "Agent Controller",
+      path: "/work/next-coder",
+      title: "Next Coder",
       projectId: "project_1",
     },
     environmentId: environment.environment.id,

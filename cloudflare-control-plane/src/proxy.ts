@@ -31,10 +31,10 @@ export function prepareContainerRequest(request: Request, target: Exclude<ProxyT
   headers.delete("host");
   headers.delete("content-length");
   for (const name of [...headers.keys()]) {
-    if (name.startsWith("x-agent-controller-internal-")) headers.delete(name);
+    if (name.startsWith("x-next-coder-internal-")) headers.delete(name);
   }
-  headers.set("x-agent-controller-container-proxy", "1");
-  if (target === "internal") headers.set("x-agent-controller-internal-capability", "1");
+  headers.set("x-next-coder-container-proxy", "1");
+  if (target === "internal") headers.set("x-next-coder-internal-capability", "1");
 
   const method = request.method;
   return new Request(request.url, {

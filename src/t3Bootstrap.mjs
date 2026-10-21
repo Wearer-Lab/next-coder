@@ -264,7 +264,7 @@ export async function startT3Server({
       "--base-url",
       expectedBaseUrl,
       "--label",
-      "Agent Controller",
+      "Next Coder",
       "--ttl",
       "1h",
       "--json",

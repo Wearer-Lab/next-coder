@@ -339,7 +339,7 @@ export function createApp({
       }
 
       if (req.method === "GET" && url.pathname === "/health") {
-        return sendJson(res, 200, { ok: true, service: "agent-controller", demoMode: config.demoMode });
+        return sendJson(res, 200, { ok: true, service: "next-coder", demoMode: config.demoMode });
       }
 
       // Unauthenticated on purpose, and it says nothing a probe on the LAN could not already infer
@@ -352,7 +352,7 @@ export function createApp({
 
       if (req.method === "GET" && url.pathname === "/v1/discovery") {
         return sendJson(res, 200, {
-          service: "agent-controller",
+          service: "next-coder",
           name: config.discoveryName ?? hostname(),
           authProvider: config.authProvider,
           claimRequired: true,
@@ -658,7 +658,7 @@ export function createApp({
         await enforceFactoryWrite(req, res, rateLimiter, config);
         const body = await readJson(req);
         const count = requireCount(body.count);
-        const labelPrefix = optionalString(body.labelPrefix) ?? "Agent Controller";
+        const labelPrefix = optionalString(body.labelPrefix) ?? "Next Coder";
         const profile = requireDeviceProfile(body.profile);
         const gatewayBaseUrl = optionalString(body.gatewayBaseUrl)
           ?? config.publicBaseUrl
@@ -3260,7 +3260,7 @@ export function createApp({
             rotated: true,
             claimCodeExpiresAt: setup.claimCodeExpiresAt ?? null,
             claimUrl: label.claimUrl ?? null,
-            instructions: "Sign in to the Agent Controller dashboard and claim this device with the displayed code.",
+            instructions: "Sign in to the Next Coder dashboard and claim this device with the displayed code.",
           },
           claimCode: setup.claimCode,
           claimCodeExpiresAt: setup.claimCodeExpiresAt ?? null,
@@ -3916,7 +3916,7 @@ export function createApp({
         return sendBuffer(res, 200, artifact, {
           "content-type": "application/octet-stream",
           "cache-control": device ? "private, max-age=31536000, immutable" : "private, no-store",
-          "content-disposition": `attachment; filename="agent-controller-${release.version}.bin"`,
+          "content-disposition": `attachment; filename="next-coder-${release.version}.bin"`,
           "x-firmware-sha256": release.sha256,
         });
       }
@@ -6846,7 +6846,7 @@ async function createCompanionHandoffResponse({
         ecc: "M",
         scale: 4,
         border: 4,
-        title: "Open Agent Controller companion capture",
+        title: "Open Next Coder companion capture",
         xmlDeclaration: false,
       }),
     } : {}),

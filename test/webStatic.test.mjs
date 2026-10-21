@@ -81,7 +81,7 @@ test("static serving does not escape the web dist directory", async (t) => {
   const escaped = await fetch(`${baseUrl}/icons/..%2f..%2f..%2fpackage.json`);
   const body = await escaped.text();
   assert.notEqual(escaped.status, 200);
-  assert.ok(!body.includes("\"agent-controller\""), "must not leak package.json");
+  assert.ok(!body.includes("\"next-coder\""), "must not leak package.json");
 });
 
 // Regression: a missing static file used to reject outside the request try/catch, surfacing as

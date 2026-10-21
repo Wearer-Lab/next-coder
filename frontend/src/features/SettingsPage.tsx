@@ -256,7 +256,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
             <p className="ic-card text-sm text-ink-muted">No connector has enrolled yet. Connect a computer from Environments or Initial setup.</p>
           )}
           <div className="grid gap-2 sm:grid-cols-2">
-            {["npx @agent-controller/connector status", "npx @agent-controller/connector doctor"].map((command) => (
+            {["npx @next-coder/connector status", "npx @next-coder/connector doctor"].map((command) => (
               <button key={command} type="button" className="ic-command" onClick={() => void copyRemoteAccessCommand(command, "Connector command")}>{command}</button>
             ))}
           </div>
@@ -268,7 +268,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
         <SectionHeader
           eyebrow="Advanced self-hosted gateway access"
           title="Open this console from another device"
-          description="Optional for self-hosted Agent Controller gateways. This controls console access only; connector-mode T3 computers do not require Tailscale, an inbound port, or a public URL."
+          description="Optional for self-hosted Next Coder gateways. This controls console access only; connector-mode T3 computers do not require Tailscale, an inbound port, or a public URL."
           action={
             <StatusBadge
               tone={tunnelReady ? "success" : c.remoteAccess ? "warning" : "neutral"}
@@ -391,7 +391,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
             </div>
 
             <p className="border-t border-control pt-4 text-xs leading-relaxed text-ink-muted">
-              This tunnel exposes the Agent Controller console only. Connector-mode T3 computers continue to dial out independently and keep their credentials local.
+              This tunnel exposes the Next Coder console only. Connector-mode T3 computers continue to dial out independently and keep their credentials local.
             </p>
           </div>
         </div>

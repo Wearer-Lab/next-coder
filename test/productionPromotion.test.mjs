@@ -141,10 +141,10 @@ async function evidenceFixture({
 } = {}) {
   const evidenceRoot = await mkdtemp(join(tmpdir(), "production-promotion-evidence-"));
   const documents = {
-    release: { schema: "agent-controller.staging-release.v1", result: "passed", operation: "deploy", targetCommit: TARGET, finishedAt: releaseFinishedAt },
-    qualification: { schema: "agent-controller.staging-qualification.v1", result: "passed", target: { origin: "https://staging.example" }, finishedAt: manifestCreatedAt },
-    capacity: { schema: "agent-controller.staging-capacity.v1", result: "passed", targetCommit: TARGET, finishedAt: manifestCreatedAt },
-    security: { schema: "agent-controller.staging-security.v1", result: "passed", targetCommit: TARGET, finishedAt: manifestCreatedAt },
+    release: { schema: "next-coder.staging-release.v1", result: "passed", operation: "deploy", targetCommit: TARGET, finishedAt: releaseFinishedAt },
+    qualification: { schema: "next-coder.staging-qualification.v1", result: "passed", target: { origin: "https://staging.example" }, finishedAt: manifestCreatedAt },
+    capacity: { schema: "next-coder.staging-capacity.v1", result: "passed", targetCommit: TARGET, finishedAt: manifestCreatedAt },
+    security: { schema: "next-coder.staging-security.v1", result: "passed", targetCommit: TARGET, finishedAt: manifestCreatedAt },
   };
   const references = {};
   for (const [name, document] of Object.entries(documents)) {
@@ -198,10 +198,10 @@ function promotionEnvironment() {
     PRODUCTION_PROMOTION_CONFIRMATION: `promote:production:${TARGET}:${manifestHash}`,
     PRODUCTION_PROMOTION_DEFAULT_BRANCH: "main",
     PRODUCTION_PROMOTION_DISPATCH_REF: "main",
-    AGENT_CONTROLLER_STAGING_URL: "https://staging.example",
-    AGENT_CONTROLLER_PRODUCTION_URL: "https://production.example",
-    AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET: "agent-controller-media-production",
-    AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET: "agent-controller-firmware-production",
+    NEXT_CODER_STAGING_URL: "https://staging.example",
+    NEXT_CODER_PRODUCTION_URL: "https://production.example",
+    NEXT_CODER_PRODUCTION_MEDIA_BUCKET: "agent-controller-media-production",
+    NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET: "agent-controller-firmware-production",
   };
 }
 

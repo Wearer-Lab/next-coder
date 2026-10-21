@@ -72,7 +72,7 @@ exercises did not happen.
 
 ```json
 {
-  "schema": "agent-controller.staging-promotion-manifest.v1",
+  "schema": "next-coder.staging-promotion-manifest.v1",
   "targetCommit": "<40-character lowercase commit>",
   "createdAt": "<ISO-8601, under 72 hours old at dispatch>",
   "artifacts": {
@@ -127,7 +127,7 @@ to satisfy.
 
 ```json
 {
-  "schema": "agent-controller.final-qualification-manifest.v1",
+  "schema": "next-coder.final-qualification-manifest.v1",
   "targetCommit": "<40-character lowercase commit>",
   "createdAt": "<ISO-8601, under 14 days old>",
   "evidence": {
@@ -148,7 +148,7 @@ Every record has exactly five top-level fields and no others:
 
 ```json
 {
-  "schema": "agent-controller.final.<surface>.v1",
+  "schema": "next-coder.final.<surface>.v1",
   "result": "passed",
   "targetCommit": "<same candidate commit>",
   "finishedAt": "<ISO-8601, under 14 days old>",

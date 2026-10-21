@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const FIRMWARE = join(ROOT, "firmware");
 const FIRMWARE_SOURCE_DIRS = [
-  "shared/AgentControllerCore/src",
+  "shared/NextCoderCore/src",
   "CrowPanel-ESP32-2.13-E-paper/src",
   "Hosyond-ESP32-S3-2.8-Touchscreen/src",
   "Waveshare-ESP32-S3-Touch-AMOLED-1.75C/src",
@@ -42,13 +42,13 @@ test("every firmware device-credential HTTP path crosses the shared TLS gate fir
 
   assert.ok(credentialPaths.length >= 6, "the scan did not find the known firmware credential paths");
   assert.ok(
-    credentialPaths.some((file) => file.endsWith("shared/AgentControllerCore/src/GatewayClient.cpp")),
+    credentialPaths.some((file) => file.endsWith("shared/NextCoderCore/src/GatewayClient.cpp")),
     "the shared controller heartbeat was not covered",
   );
 });
 
 test("the shared TLS policy fails closed and URL persistence uses it", async () => {
-  const tls = await readFile(join(FIRMWARE, "shared/AgentControllerCore/src/GatewayTls.h"), "utf8");
+  const tls = await readFile(join(FIRMWARE, "shared/NextCoderCore/src/GatewayTls.h"), "utf8");
   assert.match(tls, /SECURE_BUILD_TLS_VERIFY/u);
   assert.match(tls, /#undef INSECURE_SKIP_TLS_VERIFY\s+#define INSECURE_SKIP_TLS_VERIFY 0/u);
   assert.match(tls, /inline bool gatewayUrlAllowed/u);
@@ -57,14 +57,14 @@ test("the shared TLS policy fails closed and URL persistence uses it", async () 
   assert.match(tls, /if \(!clockReady\(\)\)/u);
   assert.match(tls, /if \(!gatewayUrlAllowed\(url\)\)/u);
 
-  const store = await readFile(join(FIRMWARE, "shared/AgentControllerCore/src/DeviceStore.cpp"), "utf8");
+  const store = await readFile(join(FIRMWARE, "shared/NextCoderCore/src/DeviceStore.cpp"), "utf8");
   assert.match(store, /discardInvalidGatewayUrl\(gatewayUrl_/u);
   assert.match(store, /setGatewayUrl[\s\S]*gateway_tls::gatewayUrlAllowed\(trimmed\)/u);
   assert.match(store, /replaceGatewayProfiles[\s\S]*gateway_tls::gatewayUrlAllowed\(profiles\[index\]\.url\)/u);
   assert.match(store, /stageGatewaySwitch[\s\S]*gateway_tls::gatewayUrlAllowed\(profile\.url\)/u);
 
   const provisioning = await readFile(
-    join(FIRMWARE, "shared/AgentControllerCore/src/Provisioning.cpp"),
+    join(FIRMWARE, "shared/NextCoderCore/src/Provisioning.cpp"),
     "utf8",
   );
   assert.match(provisioning, /gateway_tls::gatewayUrlAllowed\(gateway\)/u);
@@ -83,7 +83,7 @@ test("Vision Master delegates the canonical bounded heartbeat to the shared cont
   assert.doesNotMatch(source, /"\/health"/u);
 
   const shared = await readFile(
-    join(FIRMWARE, "shared/AgentControllerCore/src/GatewayClient.cpp"),
+    join(FIRMWARE, "shared/NextCoderCore/src/GatewayClient.cpp"),
     "utf8",
   );
   assert.match(shared, /"\/v1\/device\/heartbeat"/u);

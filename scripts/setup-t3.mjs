@@ -75,7 +75,7 @@ try {
 
   let gateway = null;
   if (options.gatewayUrl) {
-    console.log("\nConnecting T3 Code to Agent Controller...");
+    console.log("\nConnecting T3 Code to Next Coder...");
     gateway = await connectGateway({
       gatewayUrl: options.gatewayUrl,
       gatewayToken: options.gatewayToken,
@@ -202,7 +202,7 @@ function parsePort(value) {
 }
 
 function printHelp() {
-  console.log(`Agent Controller T3 Code setup
+  console.log(`Next Coder T3 Code setup
 
 Usage:
   npm run setup:t3
@@ -223,7 +223,7 @@ Important options:
   --model ID                 Initial model id
   --tunnel TYPE              local, tailscale, lan, or custom
   --public-url URL           Public URL for a custom tunnel
-  --gateway-url URL          Agent Controller gateway URL
+  --gateway-url URL          Next Coder gateway URL
   --gateway-token TOKEN      Existing platform token
   --gateway-dev-user ID      Create a local development token
   --connect-code CODE        Enrollment code copied from the console's Add environment flow

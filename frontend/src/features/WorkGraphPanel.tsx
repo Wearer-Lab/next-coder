@@ -65,7 +65,7 @@ export function WorkGraphPanel({ state, status }: WorkGraphPanelProps) {
           <div className="work-inspector__state">
             <Bot className="size-4" aria-hidden="true" />
             <p>
-              This thread window contains no <code>task.*</code> activities. Agent Controller does
+              This thread window contains no <code>task.*</code> activities. Next Coder does
               not infer agents from tool names, messages, or timing.
             </p>
           </div>

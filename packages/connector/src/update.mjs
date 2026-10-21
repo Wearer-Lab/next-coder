@@ -22,7 +22,10 @@ import {
 } from "./service.mjs";
 
 const execFileAsync = promisify(execFile);
-const PACKAGE_NAME = "@agent-controller/connector";
+const PACKAGE_NAME = "@next-coder/connector";
+const PACKAGE_SCOPE_DIRECTORY = "@next-coder";
+const PACKAGE_BIN_ENTRY = "next-coder-connect";
+const PACKAGE_BIN_PATH = "./bin/next-coder-connect.mjs";
 
 export async function checkConnectorUpdate({ targetVersion = null, fs = nodeFs, env = process.env, findExecutable = findExecutableOnPath, run = runNpm } = {}) {
   const npm = await findExecutable("npm", { fs, env });
@@ -71,10 +74,10 @@ export async function applyConnectorUpdate({
   if (active && !restartService) throw updateError("The managed connector is running. Re-run with --restart-service to permit an explicit restart, or stop it first.", "UPDATE_RESTART_REQUIRED");
   const check = await checkConnectorUpdate({ targetVersion, fs, env, findExecutable, run });
   if (!check.updateAvailable) return { ...check, applied: false, restarted: false };
-  const staging = await fs.mkdtemp(join(tmpdir(), "agent-controller-connector-update-"));
+  const staging = await fs.mkdtemp(join(tmpdir(), "next-coder-connector-update-"));
   try {
     await (run ?? runNpm)(check.npm, ["install", "--prefix", staging, "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", `${PACKAGE_NAME}@${check.latest}`], { env });
-    const packageDir = join(staging, "node_modules", "@agent-controller", "connector");
+    const packageDir = join(staging, "node_modules", PACKAGE_SCOPE_DIRECTORY, "connector");
     const manifest = await readVerifiedPackage(packageDir, check.latest, fs);
     const previousState = await loadConnectorState(stateDir);
     await beginServiceRuntimeUpdate({ ...serviceOptions, packageDir, packageVersion: manifest.version, wasActive: active });
@@ -160,10 +163,12 @@ async function readVerifiedPackage(packageDir, expectedVersion, fs) {
   let manifest;
   try { manifest = JSON.parse(await fs.readFile(join(packageDir, "package.json"), "utf8")); }
   catch { throw updateError("The downloaded connector package is missing or invalid.", "UPDATE_PACKAGE_INVALID"); }
-  if (manifest.name !== PACKAGE_NAME || manifest.version !== expectedVersion || manifest.bin?.["agent-controller-connect"] !== "./bin/agent-controller-connect.mjs" || manifest.engines?.node !== ">=22") {
+  // A downloaded package must carry the current identity exactly. The legacy identity is only
+  // tolerated for a runtime that is already installed and has to be verifiable for rollback.
+  if (manifest.name !== PACKAGE_NAME || manifest.version !== expectedVersion || manifest.bin?.[PACKAGE_BIN_ENTRY] !== PACKAGE_BIN_PATH || manifest.engines?.node !== ">=22") {
     throw updateError("The downloaded connector package failed identity checks.", "UPDATE_PACKAGE_INVALID");
   }
-  await fs.access(join(packageDir, "bin", "agent-controller-connect.mjs"));
+  await fs.access(join(packageDir, "bin", "next-coder-connect.mjs"));
   return manifest;
 }
 

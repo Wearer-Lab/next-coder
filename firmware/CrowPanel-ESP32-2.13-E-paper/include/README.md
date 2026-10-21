@@ -107,7 +107,7 @@ Use a sparse, one-bit field-terminal style:
 - slash counts such as `2/7`, compact verbs, and `~` for truncation;
 - no spinner, blinking cursor, marquee, scanline texture, or large decorative black fill.
 
-Agent Controller uses its own 12x12 one-bit glyph family. The identity mark is a terminal frame with
+Next Coder uses its own 12x12 one-bit glyph family. The identity mark is a terminal frame with
 `>_`. Capability glyphs cover thread, status, action, shell, macro, approval, continue, interrupt,
 stop, audio, image, gateway, firmware, success, warning, and error. Every glyph must be paired with
 text; never copy T3 Code branding or use an icon as the only status signal. Pixel concepts and

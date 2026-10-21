@@ -1,4 +1,4 @@
-# Agent Controller API
+# Next Coder API
 
 This is the initial platform API for device management and T3 Code orchestration.
 
@@ -44,7 +44,7 @@ GET /v1/device-profiles
 
 Profiles define the capabilities the policy engine will allow for a device:
 
-- `agent-controller`: prompts, media prompts, status, approvals, agent questions, session control, and policy-screened shell input.
+- `next-coder`: prompts, media prompts, status, approvals, agent questions, session control, and policy-screened shell input.
 - `read-only`: status only.
 - `power-controller`: high-trust control profile for signed-in web clients and advanced devices; dangerous shell input still requires approval.
 
@@ -98,8 +98,8 @@ content-type: application/json
     "model": "gpt-5.4"
   },
   "workspace": {
-    "path": "/work/agent-controller",
-    "title": "Agent Controller"
+    "path": "/work/next-coder",
+    "title": "Next Coder"
   }
 }
 ```
@@ -171,7 +171,7 @@ content-type: application/json
 ```json
 {
   "label": "Desk controller",
-  "profile": "agent-controller"
+  "profile": "next-coder"
 }
 ```
 
@@ -183,7 +183,7 @@ Response includes a one-time device secret:
     "id": "dev_...",
     "userId": "user_dev",
     "label": "Desk controller",
-    "profile": "agent-controller"
+    "profile": "next-coder"
   },
   "secret": "..."
 }
@@ -200,7 +200,7 @@ content-type: application/json
 ```json
 {
   "label": "Controller batch A",
-  "profile": "agent-controller"
+  "profile": "next-coder"
 }
 ```
 
@@ -231,8 +231,8 @@ content-type: application/json
 ```json
 {
   "count": 10,
-  "labelPrefix": "Agent Controller",
-  "profile": "agent-controller",
+  "labelPrefix": "Next Coder",
+  "profile": "next-coder",
   "gatewayBaseUrl": "https://gateway.example.com",
   "hardwareModel": "e213-esp32-s3r8",
   "firmwareVersion": "0.1.0",
@@ -420,7 +420,7 @@ Response:
     "rotated": true,
     "claimCode": "ABCDE-23456",
     "claimCodeExpiresAt": "2026-09-06T09:48:18.923Z",
-    "instructions": "Sign in to the Agent Controller dashboard and claim this device with the displayed code."
+    "instructions": "Sign in to the Next Coder dashboard and claim this device with the displayed code."
   },
   "claimCode": "ABCDE-23456",
   "claimCodeExpiresAt": "2026-09-06T09:48:18.923Z"
@@ -1243,7 +1243,7 @@ again:
   "session": { "id": "cxn_...", "status": "pending", "expiresAt": "..." },
   "code": "ABCDE-FGHIJ",
   "gatewayUrl": "https://gateway.example",
-  "command": "npx @agent-controller/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'"
+  "command": "npx @next-coder/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'"
 }
 ```
 
@@ -1422,7 +1422,7 @@ authorization: Bearer PLATFORM_TOKEN
 ```
 
 Add `?refresh=1` for a fresh bounded probe. The response carries
-`manifest.schema: "agent-controller.t3-capabilities.v1"`, the adapter contract, installed version,
+`manifest.schema: "next-coder.t3-capabilities.v1"`, the adapter contract, installed version,
 probe/freshness/source metadata, separately gated feature and attachment states, runtime/interaction
 modes, approval decisions, and a bounded recovery action. The legacy `capabilities` booleans remain
 as a compatibility projection of that manifest; they are no longer inferred from scopes alone.
@@ -1583,7 +1583,7 @@ The response includes the raw T3 snapshot plus the compact screen summary. The g
     "status": "reachable"
   },
   "snapshot": {
-    "projects": [{ "id": "project_...", "title": "Agent Controller" }],
+    "projects": [{ "id": "project_...", "title": "Next Coder" }],
     "threads": [{ "id": "thread_...", "title": "Implementation" }]
   },
   "screen": {
@@ -1609,7 +1609,7 @@ content-type: application/json
 {
   "version": "0.2.0",
   "hardwareModel": "e213-esp32-s3r8",
-  "url": "https://cdn.example.com/firmware/agent-controller-0.2.0.bin",
+  "url": "https://cdn.example.com/firmware/next-coder-0.2.0.bin",
   "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "sizeBytes": 901385,
   "mandatory": false,
@@ -2077,7 +2077,7 @@ are relayed live through the thread stream and kept nowhere.
 
 ### Answering a question is a capability
 
-`user_input_response`, held by `agent-controller` and `power-controller` and not by `read-only`.
+`user_input_response`, held by `next-coder` and `power-controller` and not by `read-only`.
 Deliberately **one** capability rather than two: the `approval_response` / `approval_response_persistent`
 split exists because `acceptForSession` writes a standing permission rule that outlives the moment,
 and nothing here does that — an answer is consumed by the turn that asked. Free text is the most
@@ -2262,10 +2262,10 @@ http://127.0.0.1:3996/
 
 The React application can register or claim devices, rotate device secrets, revoke devices, pair or
 dependency-preview/remove T3 environments, upload media, send prompts with ordered stored-media
-attachments, approve or reject high-risk Agent Controller commands, request status, stop sessions,
+attachments, approve or reject high-risk Next Coder commands, request status, stop sessions,
 review audit activity, answer provider approvals and structured questions, read streamed messages
 and tools, and inspect T3-native task/subagent/background work. T3 supplies the task identity,
-status, and optional parent links; Agent Controller does not create a second orchestrator or infer a
+status, and optional parent links; Next Coder does not create a second orchestrator or infer a
 graph from model prose. Durable privacy-minimal in-app notifications, optional queued Web Push, and
 scheduled-worker liveness are implemented; deployed Web Push/live-T3/browser/hardware qualification
 remains tracked in [roadmap/IMPLEMENTATION-STATUS.md](../roadmap/IMPLEMENTATION-STATUS.md).
@@ -2613,7 +2613,7 @@ If a newer release exists:
   "manifest": {
     "version": "0.2.0",
     "hardwareModel": "e213-esp32-s3r8",
-    "url": "https://cdn.example.com/firmware/agent-controller-0.2.0.bin",
+    "url": "https://cdn.example.com/firmware/next-coder-0.2.0.bin",
     "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "sizeBytes": 901385,
     "mandatory": false,
@@ -2847,7 +2847,7 @@ will show the last few tokens of every reply.
 
 For T3-native agents and background work, `thread.activity-appended.payload.activity.kind` is one
 of `task.started`, `task.progress`, `task.updated`, or `task.completed`. The activity payload fields
-used by Agent Controller are the exact T3 0.0.32 contract fields:
+used by Next Coder are the exact T3 0.0.32 contract fields:
 
 | Field | Meaning |
 |---|---|
@@ -2925,13 +2925,13 @@ PORT=8877 DATA_FILE=.data/dev.json node src/server.mjs
 Terminal 3:
 
 ```bash
-AGENT_CONTROLLER_URL=http://127.0.0.1:8877 node scripts/simulate-device.mjs
+NEXT_CODER_URL=http://127.0.0.1:8877 node scripts/simulate-device.mjs
 ```
 
 Or run the automated local smoke flow:
 
 ```bash
-AGENT_CONTROLLER_URL=http://127.0.0.1:8877 node scripts/smoke-local.mjs
+NEXT_CODER_URL=http://127.0.0.1:8877 node scripts/smoke-local.mjs
 ```
 
 Then register the mock T3 environment:

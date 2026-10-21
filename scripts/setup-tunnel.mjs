@@ -93,7 +93,7 @@ try {
   console.log(`Visibility: ${isPublic ? "public internet (gateway authentication still required)" : "private tailnet only"}`);
   if (options.writeEnv) {
     console.log(envChanged
-      ? `Updated ${envFile}; restart Agent Controller to load PUBLIC_BASE_URL and Clerk's authorized party.`
+      ? `Updated ${envFile}; restart Next Coder to load PUBLIC_BASE_URL and Clerk's authorized party.`
       : `${envFile} already contains the remote URL.`);
   } else {
     console.log(`Set PUBLIC_BASE_URL=${publicBaseUrl} and add the same origin to CLERK_AUTHORIZED_PARTIES.`);
@@ -173,7 +173,7 @@ function runInteractive(command, args) {
 }
 
 function printHelp() {
-  console.log(`Agent Controller remote access setup
+  console.log(`Next Coder remote access setup
 
 Usage:
   npm run setup:tunnel -- --mode serve --write-env
@@ -188,7 +188,7 @@ Modes:
   funnel-off   Disable the public HTTPS mapping on the selected HTTPS port
 
 Options:
-  --gateway-port PORT   Local Agent Controller port (default: PORT or 3996)
+  --gateway-port PORT   Local Next Coder port (default: PORT or 3996)
   --https-port PORT     Tailscale HTTPS port (default: 443)
   --write-env           Set PUBLIC_BASE_URL and append CLERK_AUTHORIZED_PARTIES
   --env-file PATH       Environment file to update (default: .env)

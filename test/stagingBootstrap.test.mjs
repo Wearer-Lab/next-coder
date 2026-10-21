@@ -69,7 +69,7 @@ test("fresh bootstrap plan is exact, dependency-safe, and ends with inventory pl
 test("bootstrap refuses ambiguous existing, mismatched staging, and production resources", () => {
   const input = normalized();
   assert.throws(() => validateBootstrapState(input, { ...emptyState(), queues: [STAGING_QUEUES[0]] }), code("bootstrap_target_not_empty_use_resume"));
-  assert.throws(() => validateBootstrapState(input, { ...emptyState(), queues: ["agent-controller-other-staging"] }), code("mismatched_staging_resource_present"));
+  assert.throws(() => validateBootstrapState(input, { ...emptyState(), queues: ["next-coder-other-staging"] }), code("mismatched_staging_resource_present"));
   assert.throws(() => validateBootstrapState(input, { ...emptyState(), queues: [PRODUCTION_QUEUES[0]], services: [PRODUCTION_SERVICES.edge] }), code("production_resource_present"));
 });
 
@@ -83,7 +83,7 @@ test("resume accepts only the same stub/version marker and does not recreate exi
     edge: {
       exists: true,
       version: EDGE_VERSION,
-      message: `agent-controller staging bootstrap-stub ${TARGET} ${BOOTSTRAP_ID}`,
+      message: `next-coder staging bootstrap-stub ${TARGET} ${BOOTSTRAP_ID}`,
     },
   };
   assert.equal(validateBootstrapState(input, state), true);
@@ -92,7 +92,7 @@ test("resume accepts only the same stub/version marker and does not recreate exi
   assert.equal(plan[0].kind, "deploy-control-bootstrap");
   assert.throws(() => validateBootstrapState(input, {
     ...state,
-    edge: { ...state.edge, message: "agent-controller staging bootstrap-stub deadbeef wrong" },
+    edge: { ...state.edge, message: "next-coder staging bootstrap-stub deadbeef wrong" },
   }), code("edge_bootstrap_owner_mismatch"));
 });
 
@@ -106,7 +106,7 @@ test("abort cleanup is explicit and limited to a matching stub with no private c
     edge: {
       exists: true,
       version: EDGE_VERSION,
-      message: `agent-controller staging bootstrap-stub ${TARGET} ${BOOTSTRAP_ID}`,
+      message: `next-coder staging bootstrap-stub ${TARGET} ${BOOTSTRAP_ID}`,
     },
   };
   assert.equal(validateBootstrapState(input, state), true);
@@ -119,7 +119,7 @@ test("abort cleanup is explicit and limited to a matching stub with no private c
   assert.throws(() => validateBootstrapState(input, {
     ...state,
     services: [...state.services, STAGING_SERVICES.controlPlane],
-    controlPlane: { exists: true, version: CONTROL_VERSION, message: `agent-controller staging bootstrap-control ${TARGET} ${BOOTSTRAP_ID}` },
+    controlPlane: { exists: true, version: CONTROL_VERSION, message: `next-coder staging bootstrap-control ${TARGET} ${BOOTSTRAP_ID}` },
   }), code("expected_control_plane_version_required"));
 });
 
@@ -146,8 +146,8 @@ test("redacted evidence contains hashes and state only, never resource names, ve
     ...emptyState(),
     queues: [...STAGING_QUEUES],
     buckets: [input.mediaBucket, input.firmwareBucket],
-    edge: { exists: true, version: EDGE_VERSION, message: `agent-controller staging deploy ${TARGET}` },
-    controlPlane: { exists: true, version: CONTROL_VERSION, message: `agent-controller staging deploy ${TARGET}` },
+    edge: { exists: true, version: EDGE_VERSION, message: `next-coder staging deploy ${TARGET}` },
+    controlPlane: { exists: true, version: CONTROL_VERSION, message: `next-coder staging deploy ${TARGET}` },
   };
   const evidence = buildEvidence({
     input,
@@ -208,9 +208,9 @@ function environment(operation, versions) {
     STAGING_BOOTSTRAP_DEFAULT_BRANCH: "main",
     STAGING_BOOTSTRAP_DISPATCH_REF: "main",
     STAGING_BOOTSTRAP_REPOSITORY_ROOT: process.cwd(),
-    AGENT_CONTROLLER_STAGING_URL: "https://staging.example.test",
-    AGENT_CONTROLLER_STAGING_MEDIA_BUCKET: "agent-controller-media-staging",
-    AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET: "agent-controller-firmware-staging",
+    NEXT_CODER_STAGING_URL: "https://staging.example.test",
+    NEXT_CODER_STAGING_MEDIA_BUCKET: "agent-controller-media-staging",
+    NEXT_CODER_STAGING_FIRMWARE_BUCKET: "agent-controller-firmware-staging",
   };
 }
 

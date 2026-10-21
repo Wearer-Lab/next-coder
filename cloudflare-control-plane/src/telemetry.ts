@@ -1,6 +1,6 @@
 import type { RuntimeBindings } from "./env";
 
-export const TELEMETRY_SCHEMA = "agent-controller.cloud-telemetry.v1";
+export const TELEMETRY_SCHEMA = "next-coder.cloud-telemetry.v1";
 const SAFE_DIMENSION = /^[a-z0-9][a-z0-9_.:-]{0,63}$/u;
 const DEFAULT_SUCCESS_SAMPLE_RATE = 0.05;
 const REJECTION_SAMPLE_RATE = 0.1;

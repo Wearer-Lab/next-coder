@@ -97,7 +97,7 @@ mutations or let a credential-version integer substitute for the rotation id; do
 a replaced-staging race. Revocation clears both hashes.
 
 The packaged connector stores its standing secret in an OS facility when one is available:
-`com.agent-controller.connector` generic-password items on macOS, Secret Service items with the same
+`com.next-coder.connector` generic-password items on macOS, Secret Service items with the same
 service attribute on Linux, and generic Windows Credential Manager entries through the built-in
 PowerShell/P/Invoke adapter. Secret values travel through subprocess stdin, never argv. State JSON
 contains only the backend and an A/B slot pointer; rotation keeps the pending value in a separate
@@ -287,7 +287,7 @@ failed dispatch releases the claim — otherwise one second of T3 downtime would
 out of reach for the rest of the session.
 
 Policy: `approval_response_persistent` is its own capability, held by `power-controller` (the
-console) and not by `agent-controller`. A standing grant made from a 240x320 panel, where the
+console) and not by `next-coder`. A standing grant made from a 240x320 panel, where the
 request detail is clipped, is not the same act as making it in the console. Under a `maxAutoRisk`
 ceiling of medium or lower it escalates to a gateway confirmation instead of dispatching.
 `read-only` **sees** pending approvals — listing is a read — and is offered no decision at all.
@@ -616,7 +616,7 @@ from `T3_TOKEN_ENCRYPTION_KEY`). Secret generation always happens in Node, never
 
 Factory pre-provisions (`preprovisionDevice` → claim code) → user claims (`claimDevice`) → device authenticates with its
 own secret. Supports `rotateDeviceSecret`, `resetDeviceForTransfer`, and `revokeDevice`. Each device carries a **profile**
-(`src/profiles.mjs`: `agent-controller`, `read-only`, `power-controller`) that maps to a capability set.
+(`src/profiles.mjs`: `next-coder`, `read-only`, `power-controller`) that maps to a capability set.
 
 **Claim codes are stable, not rotating.** `ensureUnclaimedDeviceClaimCode({deviceId, rotate})` returns the existing code
 untouched while it is unexpired — `POST /v1/device/setup-code` answers `200` with `rotated: false` and `claimCode: null`,
@@ -668,7 +668,7 @@ identity, and client request IDs. Legacy base64 JSON routes remain for older cli
 physical controller proof are still separate release qualifications.
 
 Firmware has one raw transport implementation: `media::uploadSession()` in shared
-`AgentControllerCore/MediaUpload.{h,cpp}`. `GatewayClient`, `GatewayVoice`, and CrowPanel's optional
+`NextCoderCore/MediaUpload.{h,cpp}`. `GatewayClient`, `GatewayVoice`, and CrowPanel's optional
 audio/camera carrier wrapper delegate to it. CrowPanel retains its verified board pins, compile-time
 capability gates, capture buffers, and e-ink review flow; its former board-local base64 stream was
 removed. The `crowpanel-esp32-213-epaper-capture-placeholder` environment forces the checked-in
@@ -785,7 +785,7 @@ per-task input/stop/resume command, so there are no fake per-agent controls; the
 remain parent-thread operations.
 
 `src/t3CapabilityManifest.mjs` is the versioned adapter boundary for direct and connector T3 calls.
-Its `agent-controller.t3-capabilities.v1` projection comes from read-only response shapes,
+Its `next-coder.t3-capabilities.v1` projection comes from read-only response shapes,
 `server.getConfig` flags, scopes, and actual adapter method availability—not the reported T3 version.
 Fresh manifests are cached for five minutes and stale fallback is labeled. T3 0.0.32 certifies image
 attachments only; audio/file and nonexistent per-task input/stop/resume controls must remain absent.
@@ -866,7 +866,7 @@ claim outlived the gateway change that fixed it. The routes are
 `GET/POST /v1/device/environments` and `/v1/device/projects` alongside the thread pair
 (`docs/hardware-protocol.md`, "Environment, project, and thread API"); each level is scoped by the
 one above and every id is checked server-side, so the owner still keeps the boundary. The firmware
-client is `firmware/shared/AgentControllerCore/src/GatewayBrowse.cpp`, in its own translation unit
+client is `firmware/shared/NextCoderCore/src/GatewayBrowse.cpp`, in its own translation unit
 with its own state rather than as members on `GatewayClient`, and the Hosyond board drives it.
 Two limits are real: changing environment clears the project and thread server-side, and
 `POST /v1/device/config/project` reads `projectId` as a **required** string — so a device can narrow
@@ -893,7 +893,7 @@ because a picker of identical `New thread` rows is the dead end this endpoint re
 Bluetooth earbuds cannot be a microphone source on any current or planned board. On-board mics or a phone
 companion are the two real paths.
 
-`firmware/shared/AgentControllerCore` (via `lib_extra_dirs`) owns the writable device state and orb
+`firmware/shared/NextCoderCore` (via `lib_extra_dirs`) owns the writable device state and orb
 renderer the boards share:
 `DeviceStore` wraps NVS (namespace `agentctl`) for identity, gateway URL, Wi-Fi credentials, the cached claim code, and
 the config cache; `Provisioning` is the boot state machine plus a SoftAP captive portal. **`controller_config.h` is a

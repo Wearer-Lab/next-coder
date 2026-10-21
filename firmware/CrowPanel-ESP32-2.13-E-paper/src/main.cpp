@@ -39,7 +39,7 @@
 
 // Writable device state and the provisioning state machine. Device id, secret, gateway URL, and
 // Wi-Fi credentials now live in NVS: the values in controller_config.h are a bench seed used only
-// when NVS is empty, never a source of truth. See firmware/shared/AgentControllerCore.
+// when NVS is empty, never a source of truth. See firmware/shared/NextCoderCore.
 #include <DeviceStore.h>
 #include <Provisioning.h>
 
@@ -47,7 +47,7 @@
 // Both default to 0, so a board with neither microphone nor camera builds and
 // behaves exactly as before.
 #include "media_capture.h"
-#include "agent_controller_ui.h"
+#include "next_coder_ui.h"
 
 #ifndef HARDWARE_MODEL
 #define HARDWARE_MODEL "e213-esp32-s3r8"
@@ -275,7 +275,7 @@ int selectedFollowUpIndex = 0;
 bool followUpMode = false;
 
 struct DisplayModel {
-  String title = "Agent Controller";
+  String title = "Next Coder";
   String state = "boot";
   String line1 = "Starting";
   String line2 = "Connecting WiFi";
@@ -527,26 +527,26 @@ void drawDisplay() {
   if (signature == lastRenderedSignature) return;
   lastRenderedSignature = signature;
 
-  acui::Frame frame;
+  ncuri::Frame frame;
   frame.state = displayModel.state;
 
   if (resetConfirmOpen) {
     frame.title = "RESET//CONFIRM";
-    frame.icon = acui::Icon::Warning;
+    frame.icon = ncuri::Icon::Warning;
     frame.line1 = displayModel.line1;
     frame.line2 = displayModel.line2;
     frame.backLabel = "CANCEL";
   } else if (stopConfirmOpen) {
     frame.title = "STOP//CONFIRM";
     frame.state = "RISK";
-    frame.icon = acui::Icon::Stop;
+    frame.icon = ncuri::Icon::Stop;
     frame.line1 = "Stop active T3 run?";
     frame.line2 = pendingStopLabel;
     frame.backLabel = "CANCEL";
   } else if (actionConfirmOpen) {
     frame.title = "ACTION//CONFIRM";
     frame.state = "CONFIRM";
-    frame.icon = acui::Icon::Warning;
+    frame.icon = ncuri::Icon::Warning;
     frame.line1 = pendingActionControl.label;
     frame.line2 = runtimeConfig.threadId.length() > 0
       ? String("Target ") + shortThreadId(runtimeConfig.threadId)
@@ -555,41 +555,41 @@ void drawDisplay() {
   } else if (firmwarePromptOpen) {
     frame.title = "OTA//UPDATE";
     frame.state = "AVAILABLE";
-    frame.icon = acui::Icon::Firmware;
+    frame.icon = ncuri::Icon::Firmware;
     frame.line1 = String("Install ") + pendingFirmwareVersion + "?";
     frame.line2 = ENABLE_OTA_APPLY ? String("Signed release ready") : String("USB flash required");
     frame.backLabel = "LATER";
   } else if (uiScreen == UiScreen::Actions) {
     frame.title = "AC//MENU";
-    frame.icon = acui::Icon::Home;
+    frame.icon = ncuri::Icon::Home;
     frame.listMode = true;
     constexpr size_t actionCount = 3;  // Threads + Gateway + Firmware.
     // The position marker has its own header slot; the title stays a headline.
     frame.position = String(selectedActionIndex + 1) + "/" + String(actionCount);
     frame.state = "READY";
     for (size_t actionIndex = 0; actionIndex < actionCount; actionIndex += 1) {
-      acui::Row& output = frame.rows[frame.rowCount++];
+      ncuri::Row& output = frame.rows[frame.rowCount++];
       output.selected = actionIndex == static_cast<size_t>(selectedActionIndex);
       if (actionIndex == 0) {
         output.label = "Threads";
         output.meta = threadOptionCount > 0 ? String(threadOptionCount) : String("LIST");
-        output.icon = acui::Icon::Thread;
+        output.icon = ncuri::Icon::Thread;
       } else if (actionIndex == 1) {
         output.label = "Gateway";
         output.meta = "NET";
-        output.icon = acui::Icon::Gateway;
+        output.icon = ncuri::Icon::Gateway;
       } else {
         output.label = firmwareUpdateAvailable
           ? String("Update ") + pendingFirmwareVersion
           : String("Firmware");
         output.meta = firmwareUpdateAvailable ? String("READY") : String("CHECK");
-        output.icon = acui::Icon::Firmware;
+        output.icon = ncuri::Icon::Firmware;
       }
     }
     frame.backLabel = "HOME";
   } else if (uiScreen == UiScreen::Threads) {
     frame.title = "AC//THREADS";
-    frame.icon = acui::Icon::Thread;
+    frame.icon = ncuri::Icon::Thread;
     frame.listMode = threadOptionCount > 0;
     if (threadOptionCount > 0) {
       frame.position = String(selectedThreadIndex + 1) + "/" + String(threadOptionCount);
@@ -608,18 +608,18 @@ void drawDisplay() {
       for (size_t row = 0; row < 3 && pageStart + row < threadOptionCount; row += 1) {
         const size_t threadIndex = pageStart + row;
         const ThreadOption& thread = threadOptions[threadIndex];
-        acui::Row& output = frame.rows[frame.rowCount++];
+        ncuri::Row& output = frame.rows[frame.rowCount++];
         output.label = thread.title;
         output.meta = thread.selected ? String("ACTIVE")
           : (thread.status.length() > 0 ? thread.status : String("IDLE"));
-        output.icon = acui::Icon::Thread;
+        output.icon = ncuri::Icon::Thread;
         output.selected = threadIndex == static_cast<size_t>(selectedThreadIndex);
       }
     }
     frame.backLabel = "BACK";
   } else if (uiScreen == UiScreen::ThreadActions) {
     frame.title = "T//ACTIONS";
-    frame.icon = acui::Icon::Action;
+    frame.icon = ncuri::Icon::Action;
     const size_t threadActionCount = menuCount + 1;  // Latest response + assigned actions.
     frame.listMode = true;
     if (threadActionCount > 0) {
@@ -629,10 +629,10 @@ void drawDisplay() {
       for (size_t row = 0; row < 3 && pageStart + row < threadActionCount; row += 1) {
         const size_t visualIndex = pageStart + row;
         if (visualIndex == 0) {
-          acui::Row& output = frame.rows[frame.rowCount++];
+          ncuri::Row& output = frame.rows[frame.rowCount++];
           output.label = "Latest response";
           output.meta = "VIEW";
-          output.icon = acui::Icon::Agent;
+          output.icon = ncuri::Icon::Agent;
           output.selected = selectedMenuIndex == 0;
           continue;
         }
@@ -640,7 +640,7 @@ void drawDisplay() {
         const DeviceControl& control = controls[controlIndex];
         const bool missingThread = control.requiresThread && runtimeConfig.threadId.length() == 0;
         const bool available = control.enabled && !missingThread;
-        acui::Row& output = frame.rows[frame.rowCount++];
+        ncuri::Row& output = frame.rows[frame.rowCount++];
         output.label = control.label;
         output.disabled = !available;
         output.selected = visualIndex == static_cast<size_t>(selectedMenuIndex);
@@ -648,13 +648,13 @@ void drawDisplay() {
           : (!control.enabled ? String("LOCK")
             : (control.requiresConfirmation ? String("CONFIRM") : String("RUN")));
         if (control.kind == "status") {
-          output.icon = acui::Icon::Status;
+          output.icon = ncuri::Icon::Status;
           if (available) output.meta = "VIEW";
         } else if (control.kind == "stop") {
-          output.icon = acui::Icon::Stop;
+          output.icon = ncuri::Icon::Stop;
           if (available) output.meta = "CONFIRM";
         } else {
-          output.icon = acui::Icon::Action;
+          output.icon = ncuri::Icon::Action;
         }
       }
     }
@@ -662,16 +662,16 @@ void drawDisplay() {
   } else if (uiScreen == UiScreen::ThreadOutput) {
     if (followUpMode) {
       frame.title = "T//FOLLOW UPS";
-      frame.icon = acui::Icon::Action;
+      frame.icon = ncuri::Icon::Action;
       frame.listMode = followUpActionCount > 0;
       frame.state = followUpActionCount > 0 ? String("SELECT") : String("EMPTY");
       if (followUpActionCount > 0) {
         frame.position = String(selectedFollowUpIndex + 1) + "/" + String(followUpActionCount);
         for (size_t i = 0; i < followUpActionCount; i += 1) {
-          acui::Row& output = frame.rows[frame.rowCount++];
+          ncuri::Row& output = frame.rows[frame.rowCount++];
           output.label = followUpActions[i].label;
           output.meta = "CONFIRM";
-          output.icon = acui::Icon::Action;
+          output.icon = ncuri::Icon::Action;
           output.selected = i == static_cast<size_t>(selectedFollowUpIndex);
         }
       } else {
@@ -682,7 +682,7 @@ void drawDisplay() {
       frame.backLabel = "BACK";
     } else {
       frame.title = "AGENT//RESPONSE";
-      frame.icon = acui::Icon::Agent;
+      frame.icon = ncuri::Icon::Agent;
       frame.state = responseState;
       frame.textPageMode = true;
       frame.position = String(responsePage + 1) + "/" + String(responsePageCount);
@@ -693,7 +693,7 @@ void drawDisplay() {
     }
   } else if (uiScreen == UiScreen::Gateways) {
     frame.title = "AC//GATEWAYS";
-    frame.icon = acui::Icon::Gateway;
+    frame.icon = ncuri::Icon::Gateway;
     const size_t profileCount = deviceStore.gatewayProfileCount();
     frame.listMode = profileCount > 0;
     if (profileCount > 0) {
@@ -711,34 +711,34 @@ void drawDisplay() {
         const size_t profileIndex = pageStart + row;
         const GatewayProfile* profile = deviceStore.gatewayProfile(profileIndex);
         if (profile == nullptr) continue;
-        acui::Row& output = frame.rows[frame.rowCount++];
+        ncuri::Row& output = frame.rows[frame.rowCount++];
         output.label = profile->label;
         const bool active = profile->id == deviceStore.activeGatewayProfileId()
           || normalizeGatewayBase(profile->url) == activeGatewayBase();
         output.meta = active ? String("ACTIVE") : profile->mode;
-        output.icon = acui::Icon::Gateway;
+        output.icon = ncuri::Icon::Gateway;
         output.selected = profileIndex == static_cast<size_t>(selectedGatewayProfileIndex);
       }
     }
     frame.backLabel = "BACK";
   } else {
     frame.title = uiScreen == UiScreen::Home ? String("AGENT//CTRL") : displayModel.title;
-    frame.icon = uiScreen == UiScreen::Home ? acui::Icon::Agent
-      : (displayModel.state == "error" || displayModel.state == "failed" ? acui::Icon::Error
+    frame.icon = uiScreen == UiScreen::Home ? ncuri::Icon::Agent
+      : (displayModel.state == "error" || displayModel.state == "failed" ? ncuri::Icon::Error
         : (displayModel.state == "ready" || displayModel.state == "complete"
-          || displayModel.state == "completed" ? acui::Icon::Success : acui::Icon::Status));
+          || displayModel.state == "completed" ? ncuri::Icon::Success : ncuri::Icon::Status));
     frame.line1 = displayModel.line1;
     frame.line2 = displayModel.line2;
     if (uiScreen == UiScreen::Home) {
       frame.summaryMode = true;
       frame.rowCount = 3;
-      frame.rows[0].icon = acui::Icon::Thread;
+      frame.rows[0].icon = ncuri::Icon::Thread;
       frame.rows[0].label = selectedThreadLabel();
       frame.rows[0].meta = runtimeConfig.threadId.length() > 0 ? String("ACTIVE") : String("SELECT");
-      frame.rows[1].icon = acui::Icon::Gateway;
+      frame.rows[1].icon = ncuri::Icon::Gateway;
       frame.rows[1].label = displayModel.line1.length() > 0 ? displayModel.line1 : String("Gateway status pending");
       frame.rows[1].meta = "SYSTEM";
-      frame.rows[2].icon = acui::Icon::Status;
+      frame.rows[2].icon = ncuri::Icon::Status;
       frame.rows[2].label = displayModel.line2.length() > 0 ? displayModel.line2 : String("No commands yet");
       frame.rows[2].meta = displayModel.state;
       frame.backLabel = "BACK";
@@ -747,7 +747,7 @@ void drawDisplay() {
     }
   }
 
-  acui::render(frame);
+  ncuri::render(frame);
 #endif
 }
 
@@ -974,14 +974,14 @@ void renderProvisioningState() {
       displayModel.line2 = status.portalUrl;
       break;
     case ProvisioningState::Connecting:
-      displayModel.title = "Agent Controller";
+      displayModel.title = "Next Coder";
       displayModel.state = "connecting";
       displayModel.line1 = "Joining WiFi";
       displayModel.line2 = status.detail;
       break;
     case ProvisioningState::Online:
       uiScreen = UiScreen::Home;
-      displayModel.title = "Agent Controller";
+      displayModel.title = "Next Coder";
       displayModel.state = "online";
       displayModel.line1 = "Connected";
       displayModel.line2 = status.detail;
@@ -1220,7 +1220,7 @@ void fetchSetupCode(bool force = false, bool rotate = false) {
 
   if (claimed) {
     deviceStore.clearClaimCode();
-    displayModel.title = "Agent Controller";
+    displayModel.title = "Next Coder";
     displayModel.state = "claimed";
     displayModel.line1 = "Device claimed";
     displayModel.line2 = "Loading config";
@@ -2056,7 +2056,7 @@ bool applyFirmwareUpdate(JsonObject manifest) {
 }
 
 #if ENABLE_AUDIO_CAPTURE || ENABLE_CAMERA_CAPTURE
-// Uploads one capture through AgentControllerCore's private raw session protocol and returns the
+// Uploads one capture through NextCoderCore's private raw session protocol and returns the
 // finalized media id,
 // or an empty String on failure. `httpCodeOut` always receives the transport
 // result so the caller can put something specific on the display.
@@ -3048,7 +3048,7 @@ void handleButtons() {
   if (stopConfirmOpen) {
     if (pending & kKeyOkBit) {
       stopConfirmOpen = false;
-      displayModel.title = "Agent Controller";
+      displayModel.title = "Next Coder";
       displayModel.state = "stopping";
       displayModel.line1 = "Stopping active run";
       displayModel.line2 = "Please wait";
@@ -3397,7 +3397,7 @@ void pollReservedStopHold() {
   }
   detailReturnScreen = uiScreen == UiScreen::Home ? UiScreen::Home : UiScreen::Actions;
   uiScreen = UiScreen::Detail;
-  displayModel.title = "Agent Controller";
+  displayModel.title = "Next Coder";
   displayModel.state = "stopping";
   displayModel.line1 = "Stopping active run";
   displayModel.line2 = "Please wait";

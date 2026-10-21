@@ -5,9 +5,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createGzip } from "node:zlib";
 
+import { readEnv } from "../../scripts/environment.mjs";
+
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(packageRoot, "..");
-const defaultImage = "agent-controller-control-plane:local-smoke";
+const defaultImage = "next-coder-control-plane:local-smoke";
 const targetPlatform = "linux/amd64";
 const emulatedStartupTimeoutMs = 90_000;
 // Budget for the image as a gzip-compressed `docker save` archive. Neither `docker image inspect
@@ -74,8 +76,8 @@ export async function validateReleaseFiles() {
 }
 
 export async function runContainerSmoke({
-  image = process.env.AGENT_CONTROLLER_CONTAINER_IMAGE ?? defaultImage,
-  build = process.env.AGENT_CONTROLLER_CONTAINER_SKIP_BUILD !== "1",
+  image = readEnv(process.env, "NEXT_CODER_CONTAINER_IMAGE") ?? defaultImage,
+  build = readEnv(process.env, "NEXT_CODER_CONTAINER_SKIP_BUILD") !== "1",
 } = {}) {
   const releaseFiles = await validateReleaseFiles();
   await capture("docker", ["version", "--format", "{{.Server.Arch}}"]);
@@ -121,7 +123,7 @@ export async function runContainerSmoke({
   assert.deepEqual(imageContents.appFiles, ["node_modules", "package-lock.json", "package.json", "src"]);
   assert.deepEqual(imageContents.runtimeDependencies, releaseFiles.runtimeDependencies);
 
-  const containerName = `agent-controller-container-smoke-${process.pid}`;
+  const containerName = `next-coder-container-smoke-${process.pid}`;
   let created = false;
   const startupStartedAt = Date.now();
   try {

@@ -18,6 +18,6 @@ export class AgentControllerGatewayContainer extends Container<RuntimeBindings> 
 
   override onError(error: unknown): never {
     // Never stringify error causes: startup environment values may contain secrets.
-    throw new Error(error instanceof Error ? `Agent Controller container ${error.name}` : "Agent Controller container failed");
+    throw new Error(error instanceof Error ? `Next Coder container ${error.name}` : "Next Coder container failed");
   }
 }

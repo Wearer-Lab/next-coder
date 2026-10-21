@@ -5,10 +5,10 @@ Milestones 0–5 are partial, with Milestones 2 and 3 substantially implemented.
 item-level progress ledger is
 [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md). This roadmap supersedes the
 product-usability portions of
-[agent-controller-implementation-roadmap.md](agent-controller-implementation-roadmap.md), which
+[next-coder-implementation-roadmap.md](next-coder-implementation-roadmap.md), which
 remains useful for the original platform, hardware, and commercial scope.
 
-This roadmap covers the request to make Agent Controller an unrestricted, convenient control
+This roadmap covers the request to make Next Coder an unrestricted, convenient control
 surface for arbitrary agent requests; bring media and voice into the main composer; improve the
 T3 Code connection and recovery flow; show and control the complete T3 conversation, including
 approvals, user-input requests, subagents, and parallel work; and make obsolete environments easy
@@ -77,11 +77,11 @@ silicon evidence; compilation and local tests must not be presented as physical 
    reason-specific recovery, first-turn attachments, and multi-attachment support landed together
    as Milestone 0.5.
 10. **A dispatch acknowledgement is not an agent conversation.** T3 remains the canonical source
-    for thread messages, activities, session state, checkpoints, and background work. Agent
-    Controller must load the selected thread detail and follow its live stream until it settles;
+    for thread messages, activities, session state, checkpoints, and background work. Next Coder
+    must load the selected thread detail and follow its live stream until it settles;
     the local `dispatched` command is only an acknowledgement and audit link.
-11. **Keep Agent Controller approvals and T3 provider approvals distinct.** A gateway policy
-    approval authorizes Agent Controller to dispatch a command. A T3 approval answers a provider
+11. **Keep Next Coder approvals and T3 provider approvals distinct.** A gateway policy
+    approval authorizes Next Coder to dispatch a command. A T3 approval answers a provider
     request that occurred after dispatch. Give both visible source labels, different stable IDs,
     and separate response endpoints even when they appear in one pending-interactions area.
 12. **Expose T3-native subagents and parallel work instead of inventing a second orchestrator.**
@@ -268,7 +268,7 @@ and dispatches it reliably to T3.
 
 1. Add `TRANSCRIPTION_PROVIDER=parakeet` and a dedicated adapter instead of overloading the OpenAI
    branch. Configure service URL, model, timeout, maximum duration, language, and concurrency.
-2. Run `nvidia/parakeet-tdt-0.6b-v2` on the Agent Controller server through a small local ASR
+2. Run `nvidia/parakeet-tdt-0.6b-v2` on the Next Coder server through a small local ASR
    service using NVIDIA NeMo. It is a compact 600M-parameter English model with punctuation,
    capitalization, word timestamps, and CC-BY-4.0 terms. CPU inference is the default deployment;
    a GPU is an optional throughput accelerator, not a requirement. Keep the ASR runtime in a local
@@ -296,7 +296,7 @@ and dispatches it reliably to T3.
 Current upstream T3 Code's typed `ChatAttachment` union contains image attachments only. Therefore:
 
 1. Set `audioDirect: false` in the T3 capability adapter by default.
-2. Transcribe audio and send text; retain the original audio in Agent Controller for playback and
+2. Transcribe audio and send text; retain the original audio in Next Coder for playback and
    audit/retention policy.
 3. Add direct audio only when a probed T3 version advertises an audio attachment contract and the
    selected provider accepts it. Use the transcript as fallback context, never send an unknown
@@ -426,7 +426,7 @@ flows with precise status, guided next actions, and no silent contract mismatch.
 ### First-run connection
 
 The console is now the starting point for the production flow. It creates a single-use pairing code
-and copyable `npx @agent-controller/connector` command; the local connector discovers or starts T3,
+and copyable `npx @next-coder/connector` command; the local connector discovers or starts T3,
 redeems the code over an outbound connection, and registers the environment without sending the T3
 token to the cloud. Layered readiness reports connector, T3, provider, project, and model state.
 
@@ -506,7 +506,7 @@ token to the cloud. Layered readiness reports connector, T3, provider, project, 
 
 ### Outcome
 
-After a user sends a request, Agent Controller becomes a complete remote control surface for that
+After a user sends a request, Next Coder becomes a complete remote control surface for that
 T3 thread: it shows the agent's response as it streams, tool and command activity, working and
 background status, approvals and questions that need an answer, and subagent/parallel-task progress.
 The user can follow up, answer, approve, interrupt, or stop without opening T3 Code.
@@ -524,7 +524,7 @@ The user can follow up, answer, approve, interrupt, or stop without opening T3 C
 2. Relay normalized thread events to the signed-in browser through the existing gateway SSE
    connection or a dedicated authenticated per-thread stream. Scope every subscription by user,
    environment, and thread; unsubscribe when the selection changes or the last viewer leaves.
-3. Introduce a versioned Agent Controller view contract rather than exposing raw T3 wire objects:
+3. Introduce a versioned Next Coder view contract rather than exposing raw T3 wire objects:
 
    ```ts
    interface ThreadDetailView {
@@ -542,7 +542,7 @@ The user can follow up, answer, approve, interrupt, or stop without opening T3 C
    ```
 
 4. Keep T3 authoritative for transcript and provider activity. Cache only resumable sequence,
-   minimal last-known state, unread markers, and Agent Controller's own response audit. On refresh,
+   minimal last-known state, unread markers, and Next Coder's own response audit. On refresh,
    reload detail from T3 rather than reconstructing a transcript from gateway `Command` records.
 5. Coalesce high-frequency assistant deltas and task progress before sending/rendering them. Preserve
    message/activity IDs and task linkage so parallel streams never splice into the wrong output.
@@ -572,10 +572,10 @@ The user can follow up, answer, approve, interrupt, or stop without opening T3 C
 ### Approvals and structured user input
 
 1. Normalize both approval realms into `PendingInteractionView`, but retain a source discriminator
-   (`agent-controller-policy` or `t3-provider`), the source request ID, environment/thread/turn IDs,
+   (`next-coder-policy` or `t3-provider`), the source request ID, environment/thread/turn IDs,
    risk/detail, available decisions, creation time, and resolution.
 2. Route decisions by source:
-   - Agent Controller policy: keep `/v1/commands/:id/approve|reject`.
+   - Next Coder policy: keep `/v1/commands/:id/approve|reject`.
    - T3 provider: dispatch `thread.approval.respond` using the T3 `requestId` and advertised
      decision set. Support `acceptForSession` only when the current provider exposes it; label its
      scope precisely and never silently translate it to a permanent grant.
@@ -630,15 +630,15 @@ The user can follow up, answer, approve, interrupt, or stop without opening T3 C
 
 ### Acceptance criteria
 
-- Within one second of T3 accepting a turn event, an online Agent Controller viewer sees its
+- Within one second of T3 accepting a turn event, an online Next Coder viewer sees its
   working state or first streamed output under normal LAN conditions.
 - A refresh or WebSocket reconnect resumes from sequence without missing or duplicating messages,
   task activities, or decisions.
 - The user can read the final T3 answer, send a follow-up, interrupt a running turn, and stop a
   session without opening T3 Code.
-- Both Agent Controller policy approvals and T3 provider approvals are visible, correctly labeled,
+- Both Next Coder policy approvals and T3 provider approvals are visible, correctly labeled,
   and resolved through the correct backend path.
-- Every structured T3 user-input request can be answered from Agent Controller.
+- Every structured T3 user-input request can be answered from Next Coder.
 - Parallel/subagent work remains visibly active after the parent turn settles, and each structured
   task's status/output is attributable to the correct node.
 - Unsupported per-agent controls are absent—not disabled-looking promises—and the UI explains the
@@ -731,7 +731,7 @@ The completed repair has dedicated frontend, server, and store coverage in the c
 
 **State: partial.** Versioned thread detail/events, separate pending interactions, typed recovery,
 captured fixtures, the persistent acknowledged subscription, durable request identity, and the
-expanded probe-derived `agent-controller.t3-capabilities.v1` manifest have landed. The work-node
+expanded probe-derived `next-coder.t3-capabilities.v1` manifest have landed. The work-node
 view remains an ephemeral T3 read projection by design; duplicating T3 task truth into
 memory/file/Convex would create a second stale graph. Remaining work is deployed live-T3 contract
 qualification and failure/recovery evidence.
@@ -756,7 +756,7 @@ deployed live-T3/Web Push/browser/device qualification. Any future per-task cont
 until T3 exposes a certified stable target command.
 
 This closes the critical post-dispatch gap shown in the screenshots: the user can see and control
-what T3 is doing instead of leaving Agent Controller to finish the task in T3 Code.
+what T3 is doing instead of leaving Next Coder to finish the task in T3 Code.
 
 ### Milestone 2 — Composer and connection (2–3 weeks)
 
@@ -804,7 +804,7 @@ T3/provider pair advertises it; no undocumented feature-flag names are treated a
 The initiative is complete when a new user can connect their first T3 environment from the console
 with one copied command, then — on a laptop or a phone — choose an environment/thread, type or speak
 any normal-language request, add or reuse media in the composer, review processing when desired, and
-see one traceable request reach T3. From the same Agent Controller thread, they can watch the live
+see one traceable request reach T3. From the same Next Coder thread, they can watch the live
 response and tool activity, answer T3 questions, resolve the correct approval, inspect parallel
 subagents, understand when background work is still active, send a follow-up, and interrupt or stop
 work without opening T3 Code. A small controller can initiate the same flow through a supported

@@ -18,7 +18,7 @@
 #include <Arduino.h>
 
 // The nine states the upstream library defines, each with its own render mode. The names are the
-// library's; the mapping from an Agent Controller thread state is in orbModeForAgentState().
+// library's; the mapping from a Next Coder thread state is in orbModeForAgentState().
 enum class OrbMode : uint8_t {
   Orbits,   // working    — particles on inclined orbits
   Globe,    // searching  — a scan meridian sweeps a dotted globe
@@ -140,7 +140,7 @@ class ThinkingOrb {
   uint8_t lonDensity_ = 0;
 };
 
-// Maps an Agent Controller thread/session state string to an orb mode. Unknown states fall back to
+// Maps a Next Coder thread/session state string to an orb mode. Unknown states fall back to
 // Ring, the calm one, because an unrecognised state is not a reason to look busy.
 OrbMode orbModeForAgentState(const String& state);
 

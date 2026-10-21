@@ -142,8 +142,8 @@ test("connector offline recovery keeps credentials local and uses status plus do
   });
 
   expect(screen.getByRole("dialog", { name: /Bring the connector back online/u })).toBeVisible();
-  expect(screen.getByText("npx @agent-controller/connector status")).toBeVisible();
-  expect(screen.getByText("npx @agent-controller/connector doctor")).toBeVisible();
+  expect(screen.getByText("npx @next-coder/connector status")).toBeVisible();
+  expect(screen.getByText("npx @next-coder/connector doctor")).toBeVisible();
   expect(screen.getByText(/without sending T3 or provider credentials/u)).toBeVisible();
 });
 

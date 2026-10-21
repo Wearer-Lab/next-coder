@@ -6,7 +6,7 @@ import {
   T3_ADAPTER_CONTRACT_VERSION,
 } from "./t3CapabilityManifest.mjs";
 
-// Agent Controller's orchestration and websocket contracts were verified live against this
+// Next Coder's orchestration and websocket contracts were verified live against this
 // release. Raise the ceiling only after the contract suite passes against a newer T3 host.
 export const T3_COMPATIBILITY_POLICY = Object.freeze({
   minimumVersion: "0.0.28",
@@ -55,7 +55,7 @@ export function buildT3ReleaseStatus(latestVersion, latestError = null) {
     recommendedVersion: newerThanTested || !latest ? maximum : latest,
     status: latestError ? "unavailable" : newerThanTested ? "review_required" : "supported",
     alert: newerThanTested
-      ? `T3 Code ${latest} is newer than the latest version Agent Controller has verified (${maximum}).`
+      ? `T3 Code ${latest} is newer than the latest version Next Coder has verified (${maximum}).`
       : null,
   };
 }
@@ -211,7 +211,7 @@ export function evaluateT3Compatibility({
     findings.push({
       level: "danger",
       code: "contract_failed",
-      message: "A read-only T3 API contract used by Agent Controller failed its compatibility check.",
+      message: "A read-only T3 API contract used by Next Coder failed its compatibility check.",
     });
   } else if (!installedVersion) {
     status = "unknown";

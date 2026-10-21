@@ -1,20 +1,20 @@
 {
-  "name": "@agent-controller/connector",
+  "name": "@next-coder/connector",
   "version": "0.1.0",
-  "description": "Outbound bridge between a local T3 Code environment and Agent Controller",
+  "description": "Outbound bridge between a local T3 Code environment and Next Coder",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/spyhack225/agent-controller.git",
+    "url": "git+https://github.com/spyhack225/next-coder.git",
     "directory": "packages/connector"
   },
-  "homepage": "https://github.com/spyhack225/agent-controller#readme",
+  "homepage": "https://github.com/spyhack225/next-coder#readme",
   "bugs": {
-    "url": "https://github.com/spyhack225/agent-controller/issues"
+    "url": "https://github.com/spyhack225/next-coder/issues"
   },
   "type": "module",
   "bin": {
-    "agent-controller-connect": "./bin/agent-controller-connect.mjs"
+    "next-coder-connect": "./bin/next-coder-connect.mjs"
   },
   "exports": {
     ".": "./src/index.mjs"
@@ -33,7 +33,7 @@
     "pack:smoke": "node scripts/pack-smoke.mjs"
   },
   "keywords": [
-    "agent-controller",
+    "next-coder",
     "t3-code",
     "connector"
   ],

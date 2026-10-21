@@ -1,6 +1,6 @@
 # T3-native agents and work
 
-Agent Controller does not run, name, or coordinate subagents. It projects the task lifecycle that
+Next Coder does not run, name, or coordinate subagents. It projects the task lifecycle that
 T3 Code already publishes on a thread and keeps T3 authoritative for identity, hierarchy, status,
 usage, and output.
 
@@ -29,7 +29,7 @@ contains no live T3, provider, project, prompt, or user data.
 `frontend/src/workGraph.ts` folds one latest-state node per `payload.taskId`:
 
 - `agentKind: agent|background` is trusted because T3 stamps it at ingestion. An older row without
-  that stamp is labeled `task`; Agent Controller does not infer an agent from `taskType`, prose,
+  that stamp is labeled `task`; Next Coder does not infer an agent from `taskType`, prose,
   tool names, timing, or model output.
 - `parentAgentId` is the preferred parent edge. `agentId` is used only when T3 explicitly identifies
   the owning agent and no `parentAgentId` is present. A missing parent stays visible as “outside

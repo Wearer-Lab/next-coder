@@ -31,11 +31,11 @@ test("repository secret scan blocks runtime data and private credential files", 
   assert.deepEqual(scanTrackedPaths([
     ".env.example",
     ".env.local",
-    ".data/agent-controller.json",
+    ".data/next-coder.json",
     "certs/device.key",
   ]), [
     { path: ".env.local", rule: "environment-file" },
-    { path: ".data/agent-controller.json", rule: "runtime-data" },
+    { path: ".data/next-coder.json", rule: "runtime-data" },
     { path: "certs/device.key", rule: "private-key-file" },
   ]);
 });

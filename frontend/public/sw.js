@@ -1,4 +1,4 @@
-/* Agent Controller service worker.
+/* Next Coder service worker.
  *
  * Caching rules, in priority order:
  *   1. Anything that is not a same-origin GET is bypassed entirely.
@@ -16,8 +16,8 @@
  */
 
 const VERSION = "v1";
-const SHELL_CACHE = `agent-controller-shell-${VERSION}`;
-const ASSET_CACHE = `agent-controller-assets-${VERSION}`;
+const SHELL_CACHE = `next-coder-shell-${VERSION}`;
+const ASSET_CACHE = `next-coder-assets-${VERSION}`;
 const SHELL_URL = "/";
 const PRECACHE_URLS = [
   "/",
@@ -104,7 +104,7 @@ self.addEventListener("activate", (event) => {
     const keys = await caches.keys();
     await Promise.all(
       keys
-        .filter((key) => key.startsWith("agent-controller-") && key !== SHELL_CACHE && key !== ASSET_CACHE)
+        .filter((key) => key.startsWith("next-coder-") && key !== SHELL_CACHE && key !== ASSET_CACHE)
         .map((key) => caches.delete(key)),
     );
     await self.clients.claim();
@@ -134,15 +134,15 @@ self.addEventListener("push", (event) => {
   try { payload = event.data?.json() ?? {}; } catch { payload = {}; }
   const title = typeof payload.title === "string" && payload.title.length <= 80
     ? payload.title
-    : "Agent Controller update";
+    : "Next Coder update";
   const body = typeof payload.body === "string" && payload.body.length <= 160
     ? payload.body
-    : "Open Agent Controller to review this update.";
+    : "Open Next Coder to review this update.";
   const candidateUrl = typeof payload.url === "string" ? payload.url : "/#activity?view=notifications";
   const url = candidateUrl.startsWith("/#activity?") ? candidateUrl : "/#activity?view=notifications";
   const tag = typeof payload.tag === "string" && /^[a-zA-Z0-9_-]{1,160}$/.test(payload.tag)
     ? payload.tag
-    : "agent-controller-attention";
+    : "next-coder-attention";
   event.waitUntil(self.registration.showNotification(title, { body, tag, data: { url } }));
 });
 

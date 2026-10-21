@@ -76,7 +76,7 @@ test("placeholder configs fail closed and the build runner excludes live configu
   assert.match(runner, /"controller_config\.h"/u);
   assert.match(runner, /"controller_config\.old\.h"/u);
   assert.match(runner, /controller_config\.example\.h/u);
-  assert.match(runner, /mkdtemp\(join\(tmpdir\(\), "agent-controller-firmware-matrix-"\)\)/u);
+  assert.match(runner, /mkdtemp\(join\(tmpdir\(\), "next-coder-firmware-matrix-"\)\)/u);
 });
 
 test("the isolated build staging step copies placeholders instead of live board configuration", async (t) => {

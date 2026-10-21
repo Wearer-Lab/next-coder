@@ -1,9 +1,9 @@
 # Remote access
 
-Agent Controller has two deliberately different remote-access models:
+Next Coder has two deliberately different remote-access models:
 
-1. **Managed cloud (the production design):** controllers and browsers connect to the stable Agent
-   Controller HTTPS/WSS origin. A connector running beside T3 Code initiates an authenticated
+1. **Managed cloud (the production design):** controllers and browsers connect to the stable Next
+   Coder HTTPS/WSS origin. A connector running beside T3 Code initiates an authenticated
    outbound connection to that cloud service and proxies T3 commands and events.
 2. **Self-hosted/advanced:** an operator exposes a locally running gateway or T3 server through
    Tailscale Serve, Funnel, or another independently secured network path.
@@ -18,7 +18,7 @@ topology.
 The intended path is:
 
 ```text
-controller or browser ── HTTPS/WSS ── Agent Controller cloud
+controller or browser ── HTTPS/WSS ── Next Coder cloud
                                          │
                                          └── authenticated WSS ── connector CLI ── local/Tailnet T3
 ```
@@ -38,7 +38,7 @@ The repository contains the connector package and its `bin` entry. The eventual 
 has this shape:
 
 ```bash
-npx @agent-controller/connector connect \
+npx @next-coder/connector connect \
   --server 'https://controller.example.com' \
   --code 'one-time-code'
 ```
@@ -63,9 +63,9 @@ is reachable over loopback.
 Production rules:
 
 - ESP32 controllers do not run Tailscale.
-- The Agent Controller cloud account does not join the user's Tailnet.
+- The Next Coder cloud account does not join the user's Tailnet.
 - No inbound port or public T3 endpoint is required for the common path.
-- Tailscale access does not replace Agent Controller authentication or connector authorization.
+- Tailscale access does not replace Next Coder authentication or connector authorization.
 - Cached environment state must be shown as stale/offline until the connector proves liveness.
 
 The packaged connector reports this optional layer through `status` and `doctor`. It performs only a
@@ -94,7 +94,7 @@ Prerequisites:
 - Install [Tailscale](https://tailscale.com/download) on the gateway host.
 - Sign in and confirm `tailscale status` reports the device as connected.
 - Install Tailscale on each remote phone or computer that should open the private URL.
-- Keep Agent Controller authentication enabled. Tailnet access is an additional boundary, not a
+- Keep Next Coder authentication enabled. Tailnet access is an additional boundary, not a
   replacement for Clerk.
 
 Run:
@@ -126,7 +126,7 @@ join the Tailnet and public reachability is intentionally required:
 npm run setup:tunnel -- --mode funnel --write-env
 ```
 
-The setup command refuses Funnel when Agent Controller uses development authentication. The
+The setup command refuses Funnel when Next Coder uses development authentication. The
 `--allow-public` override is for operators who have independently installed another production
 authentication layer; it is not a safe bypass for an unprotected gateway.
 
@@ -185,7 +185,7 @@ If no LAN devices need the gateway, binding to `127.0.0.1` reduces direct LAN ex
   resume with the replaced credential.
 - A local contract test does not prove hosted Service Binding, WAN, sleep/wake, or live-T3 behavior.
 
-Run `agent-controller-connect doctor --json` for the redacted cloud, T3, service, credential-storage,
+Run `next-coder-connect doctor --json` for the redacted cloud, T3, service, credential-storage,
 and optional Tailscale projection. If its `tailscale.guidance` array contains an action and this T3
 path actually uses the Tailnet, complete that action yourself and rerun doctor. Do not configure
 Serve for the managed-cloud connector; its cloud channel is outbound.
@@ -197,7 +197,7 @@ checks both `PATH` and the standard Tailscale application CLI location.
 
 ### The self-hosted HTTPS URL exists but sign-in fails
 
-- Restart Agent Controller after `--write-env` changes `.env`.
+- Restart Next Coder after `--write-env` changes `.env`.
 - Confirm `PUBLIC_BASE_URL` is the printed HTTPS origin.
 - Confirm `CLERK_AUTHORIZED_PARTIES` includes that origin.
 - Add the origin in Clerk if the frontend reports an origin or redirect restriction.

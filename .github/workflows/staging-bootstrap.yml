@@ -38,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent-controller-staging-bootstrap
+  group: next-coder-staging-bootstrap
   cancel-in-progress: false
 
 jobs:
@@ -86,9 +86,9 @@ jobs:
           STAGING_BOOTSTRAP_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           STAGING_BOOTSTRAP_DISPATCH_REF: ${{ github.ref_name }}
           STAGING_BOOTSTRAP_REPOSITORY_ROOT: ${{ github.workspace }}/release
-          AGENT_CONTROLLER_STAGING_URL: https://staging.invalid
-          AGENT_CONTROLLER_STAGING_MEDIA_BUCKET: agent-controller-media-staging
-          AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET: agent-controller-firmware-staging
+          NEXT_CODER_STAGING_URL: https://staging.invalid
+          NEXT_CODER_STAGING_MEDIA_BUCKET: agent-controller-media-staging
+          NEXT_CODER_STAGING_FIRMWARE_BUCKET: agent-controller-firmware-staging
         run: node ../automation/scripts/bootstrap-staging.mjs validate-local
       - name: Install locked dependencies
         working-directory: release
@@ -112,7 +112,7 @@ jobs:
     timeout-minutes: 60
     environment:
       name: staging-bootstrap
-      url: ${{ vars.AGENT_CONTROLLER_STAGING_URL }}
+      url: ${{ vars.NEXT_CODER_STAGING_URL || vars.AGENT_CONTROLLER_STAGING_URL }}
     steps:
       - name: Check out protected automation source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,9 +165,9 @@ jobs:
           STAGING_BOOTSTRAP_DISPATCH_REF: ${{ github.ref_name }}
           STAGING_BOOTSTRAP_REPOSITORY_ROOT: ${{ github.workspace }}/release
           STAGING_BOOTSTRAP_EVIDENCE_PATH: ${{ github.workspace }}/release/staging-bootstrap-evidence.json
-          AGENT_CONTROLLER_STAGING_URL: ${{ vars.AGENT_CONTROLLER_STAGING_URL }}
-          AGENT_CONTROLLER_STAGING_MEDIA_BUCKET: ${{ vars.AGENT_CONTROLLER_STAGING_MEDIA_BUCKET }}
-          AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET: ${{ vars.AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET }}
+          NEXT_CODER_STAGING_URL: ${{ vars.NEXT_CODER_STAGING_URL || vars.AGENT_CONTROLLER_STAGING_URL }}
+          NEXT_CODER_STAGING_MEDIA_BUCKET: ${{ vars.NEXT_CODER_STAGING_MEDIA_BUCKET || vars.AGENT_CONTROLLER_STAGING_MEDIA_BUCKET }}
+          NEXT_CODER_STAGING_FIRMWARE_BUCKET: ${{ vars.NEXT_CODER_STAGING_FIRMWARE_BUCKET || vars.AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BOOTSTRAP_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_STAGING_ACCOUNT_ID }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_STAGING_DEPLOY_KEY }}

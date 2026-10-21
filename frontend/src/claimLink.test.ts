@@ -72,9 +72,9 @@ describe("reading a scanned claim link", () => {
   });
 
   test("a corrupt stash is ignored rather than thrown", () => {
-    sessionStorage.setItem("agentControllerClaimLink", "{not json");
+    sessionStorage.setItem("nextCoderClaimLink", "{not json");
     expect(peekStashedClaimLink()).toBeNull();
-    sessionStorage.setItem("agentControllerClaimLink", JSON.stringify({ deviceId: "dev_1" }));
+    sessionStorage.setItem("nextCoderClaimLink", JSON.stringify({ deviceId: "dev_1" }));
     expect(peekStashedClaimLink()).toBeNull();
   });
 });

@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const SHARED = join(ROOT, "firmware/shared/AgentControllerCore/src");
+const SHARED = join(ROOT, "firmware/shared/NextCoderCore/src");
 const CROW = join(ROOT, "firmware/CrowPanel-ESP32-2.13-E-paper");
 
 test("CrowPanel delegates media transport to the shared raw upload-session client", async () => {
@@ -39,7 +39,7 @@ test("CrowPanel's hermetic capture build cannot consume a live ignored config", 
   const ini = await readFile(join(CROW, "platformio.ini"), "utf8");
   const main = await readFile(join(CROW, "src/main.cpp"), "utf8");
   const capture = await readFile(join(CROW, "src/media_capture.h"), "utf8");
-  const ui = await readFile(join(CROW, "src/agent_controller_ui.cpp"), "utf8");
+  const ui = await readFile(join(CROW, "src/next_coder_ui.cpp"), "utf8");
   const tls = await readFile(join(SHARED, "GatewayTls.h"), "utf8");
   assert.match(ini, /\[env:crowpanel-esp32-213-epaper-capture-placeholder\][\s\S]*-DCONTROLLER_CONFIG_PLACEHOLDER_BUILD=1/u);
   assert.match(main, /#if defined\(CONTROLLER_CONFIG_PLACEHOLDER_BUILD\)\s+#include "controller_config\.example\.h"/u);

@@ -1,7 +1,7 @@
 # Vision Master T190 firmware
 
 Board adapter for the Heltec Vision Master T190 (ESP32-S3R8 and 170x320 ST7789 TFT). It now uses
-the shared `AgentControllerCore` for writable NVS state, Wi-Fi provisioning, per-device
+the shared `NextCoderCore` for writable NVS state, Wi-Fi provisioning, per-device
 authentication, claim/revocation, TLS, compact gateway projections, controls, approvals, response
 paging, credential rotation, and environment/project/thread requests.
 

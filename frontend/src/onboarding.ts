@@ -73,7 +73,7 @@ export const networkOptions: Array<{
   {
     id: "local",
     label: "This computer",
-    description: "T3 and Agent Controller run on the same machine.",
+    description: "T3 and Next Coder run on the same machine.",
   },
   {
     id: "lan",

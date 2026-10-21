@@ -35,7 +35,7 @@ test("Convex store adapter maps Store API calls to configured Convex functions",
   const created = await store.createDevice({
     userId: "user_1",
     label: "Controller",
-    profile: "agent-controller",
+    profile: "next-coder",
   });
   const devices = await store.listDevices("user_1");
   const authed = await store.authenticateDevice("dev_1", "secret");
@@ -151,7 +151,7 @@ test("Convex store adapter maps Store API calls to configured Convex functions",
   assert.equal(calls[0].name, "gatewayStore:createDevice");
   assert.equal(calls[0].args.userId, "user_1");
   assert.equal(calls[0].args.label, "Controller");
-  assert.equal(calls[0].args.profile, "agent-controller");
+  assert.equal(calls[0].args.profile, "next-coder");
   assert.equal(calls[0].args.gatewaySecret, "gateway-secret");
   assert.match(calls[0].args.secretHash, /^[a-f0-9]{64}$/u);
   assert.notEqual(calls[0].args.secretHash, created.secret);
@@ -650,7 +650,7 @@ test("Convex store uses direct HTTP endpoints without the Convex runtime package
   assert.equal(requests[0].url, "https://convex.example/api/query");
   assert.equal(requests[0].method, "POST");
   assert.equal(requests[0].headers.authorization, "Convex deploy-token");
-  assert.equal(requests[0].headers["convex-client"], "agent-controller-gateway");
+  assert.equal(requests[0].headers["convex-client"], "next-coder-gateway");
   assert.deepEqual(requests[0].body, {
     path: "gatewayStore:listDevices",
     format: "convex_encoded_json",

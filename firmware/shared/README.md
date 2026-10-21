@@ -1,6 +1,6 @@
 # firmware/shared
 
-PlatformIO libraries shared by every Agent Controller board, pulled in with `lib_extra_dirs = ../shared`.
+PlatformIO libraries shared by every Next Coder board, pulled in with `lib_extra_dirs = ../shared`.
 
 The target is for every board to run the same client logic and differ only in its panel and input
 surface. Keeping that logic here is what will stop `CrowPanel-ESP32-2.13-E-paper`, `vision-master-t190`,
@@ -19,7 +19,7 @@ transport. Port plans:
 [`Waveshare`](../Waveshare-ESP32-S3-Touch-AMOLED-1.75C/README.md),
 [`Hosyond`](../Hosyond-ESP32-S3-2.8-Touchscreen/README.md).
 
-## AgentControllerCore
+## NextCoderCore
 
 | Unit | What it owns |
 |---|---|
@@ -89,7 +89,7 @@ rollout.
 ### The portal is not an auth surface
 
 It is an open AP serving one local form. It never carries the device secret, never talks to the
-gateway, and never asks for an Agent Controller account. A WPA passphrase the owner would have to
+gateway, and never asks for a Next Coder account. A WPA passphrase the owner would have to
 read off a 122x250 panel doubles the failure surface for no real gain.
 
 Credentials are validated by attempting the join **before** they are persisted, so a wrong password

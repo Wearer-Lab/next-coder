@@ -1727,7 +1727,7 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
   const downloadDiagnostics = useCallback(async () => {
     const bundle = await api<unknown>("/v1/support/diagnostics");
     downloadJson(
-      `agent-controller-diagnostics-${new Date().toISOString().replaceAll(":", "-")}.json`,
+      `next-coder-diagnostics-${new Date().toISOString().replaceAll(":", "-")}.json`,
       bundle,
     );
     setLastResult(bundle);

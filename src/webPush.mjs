@@ -187,9 +187,9 @@ export function createWebPushDeliveryRunner({
 
 export function privacyMinimalPayload(notification) {
   return {
-    title: STATIC_TITLES.get(notification?.kind) ?? "Agent Controller update",
-    body: "Open Agent Controller to review this update.",
-    tag: `agent-controller-${notification?.id ?? "update"}`,
+    title: STATIC_TITLES.get(notification?.kind) ?? "Next Coder update",
+    body: "Open Next Coder to review this update.",
+    tag: `next-coder-${notification?.id ?? "update"}`,
     url: `/#activity?view=notifications${notification?.id ? `&notification=${encodeURIComponent(notification.id)}` : ""}`,
   };
 }
@@ -212,7 +212,7 @@ async function sendWithWebPush({ subscription, payload, vapid }) {
   const response = await webpush.sendNotification(subscription, JSON.stringify(payload), {
     TTL: 300,
     urgency: "high",
-    topic: "agent-controller-attention",
+    topic: "next-coder-attention",
     timeout: 10_000,
     vapidDetails: { subject: vapid.subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey },
   });

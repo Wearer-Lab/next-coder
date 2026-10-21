@@ -173,7 +173,7 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
               <p className="landing__lede">
                 Two hundred and fifty units of the first hardware controller. E-ink face, one
                 encoder, and a claim code on the box. It talks to your own T3 Code host through the
-                Agent Controller gateway — never to us.
+                Next Coder gateway — never to us.
               </p>
 
               <RequestUnitForm onRequestUnit={onRequestUnit} />
@@ -199,7 +199,7 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
               <div className="hardland__eink-card">
                 <p className="eyebrow">On the e-ink face</p>
                 <div className="hardland__eink" aria-label="Simulated controller screen">
-                  <p>agent-controller</p>
+                  <p>next-coder</p>
                   <p>▸ approve shell input</p>
                   <p>2 waiting · gpt-5.4 · 86%</p>
                 </div>
@@ -269,7 +269,7 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
 
       <footer className="landing__footer">
         <div className="landing__inner landing__footer-inner">
-          <span>Agent Controller · batch 01</span>
+          <span>Next Coder · batch 01</span>
           <p className="landing__footer-meta">Docs · Hardware protocol · Security</p>
         </div>
       </footer>

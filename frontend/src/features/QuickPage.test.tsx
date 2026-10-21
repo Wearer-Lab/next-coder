@@ -31,8 +31,8 @@ function controller(overrides: Record<string, unknown> = {}) {
     busyAction: null,
     selectedEnvironment,
     environments: [selectedEnvironment],
-    threads: [{ id: "thread_1", label: "Agent Controller", status: "running", messages: [] }],
-    projects: [{ id: "project_1", label: "agent-controller" }],
+    threads: [{ id: "thread_1", label: "Next Coder", status: "running", messages: [] }],
+    projects: [{ id: "project_1", label: "next-coder" }],
     actions: [],
     media: [CLIP],
     pendingApprovals: [],
@@ -238,7 +238,7 @@ test("an environment with nothing loaded yet is fetched on arrival", async () =>
 test("resumes the selected thread in Operations", () => {
   const onNavigate = renderDashboard(controller());
 
-  expect(screen.getByRole("heading", { name: "Agent Controller" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Next Coder" })).toBeVisible();
   expect(screen.getByText("Studio Mac · 0 messages")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: /Open Operations/u }));
 

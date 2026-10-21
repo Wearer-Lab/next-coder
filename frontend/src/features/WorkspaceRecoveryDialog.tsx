@@ -88,12 +88,12 @@ function recoveryContent(
           {
             title: "Inspect the installed connector",
             body: `This connector reports ${versionLabel(connector?.connectorVersion)} using protocol ${versionLabel(connector?.protocolVersion == null ? null : String(connector.protocolVersion))}.`,
-            command: "npx @agent-controller/connector status",
+            command: "npx @next-coder/connector status",
           },
           {
             title: "Install a current published release",
             body: "Use your normal npm or npx update workflow, then create a new enrollment if the connector says its credential is no longer valid.",
-            command: "npm view @agent-controller/connector version",
+            command: "npm view @next-coder/connector version",
           },
         ],
       };
@@ -113,12 +113,12 @@ function recoveryContent(
             : t3Health === "auth_failed"
               ? "The connector reached T3 but its local credential was rejected. Refresh that credential on the workspace computer; do not paste it into this console."
               : "The cloud has no current connector heartbeat. Wake the computer, restore its network, and inspect the local process.",
-          command: "npx @agent-controller/connector status",
+          command: "npx @next-coder/connector status",
         },
         {
           title: "Run local diagnostics",
-          body: "Doctor checks the outbound cloud route and local T3 access without sending T3 or provider credentials to Agent Controller.",
-          command: "npx @agent-controller/connector doctor",
+          body: "Doctor checks the outbound cloud route and local T3 access without sending T3 or provider credentials to Next Coder.",
+          command: "npx @next-coder/connector doctor",
         },
       ],
     };
@@ -157,12 +157,12 @@ function recoveryContent(
         steps: [
           {
             title: "Start T3 Code on the workspace computer",
-            body: "Nothing is listening on the saved address. From the Agent Controller project on that machine, run the guided setup again:",
+            body: "Nothing is listening on the saved address. From the Next Coder project on that machine, run the guided setup again:",
             command: T3_SETUP_COMMAND,
           },
           {
             title: "Leave it running",
-            body: "Keep the terminal open until setup reports that T3 Code is listening and paired. Agent Controller reconnects on its own.",
+            body: "Keep the terminal open until setup reports that T3 Code is listening and paired. Next Coder reconnects on its own.",
           },
         ],
       };
@@ -195,7 +195,7 @@ function recoveryContent(
           {
             title: "Confirm the saved address",
             body: address
-              ? "Agent Controller is dialling this address:"
+              ? "Next Coder is dialling this address:"
               : "No address is saved for this environment. Add one in the connection settings.",
             command: address ?? undefined,
           },
@@ -214,7 +214,7 @@ function recoveryContent(
           {
             title: "Confirm the saved address",
             body: address
-              ? "Agent Controller is dialling this address:"
+              ? "Next Coder is dialling this address:"
               : "No address is saved for this environment. Add one in the connection settings.",
             command: address ?? undefined,
           },
@@ -258,7 +258,7 @@ function recoveryContent(
         steps: [
           {
             title: "Restart T3 Code on the workspace computer",
-            body: "From the Agent Controller project, run the guided setup again:",
+            body: "From the Next Coder project, run the guided setup again:",
             command: T3_SETUP_COMMAND,
           },
           {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { main } from "../src/cli.mjs";
 import { loadState, removeState, saveRuntimeState, saveState, STATE_VERSION } from "../src/config.mjs";
-import { CREDENTIAL_SERVICE, createCredentialStore, credentialAccounts, runCredentialCommand } from "../src/credentialStore.mjs";
+import { CREDENTIAL_SERVICE, createCredentialStore, credentialAccounts, LEGACY_CREDENTIAL_SERVICE, runCredentialCommand } from "../src/credentialStore.mjs";
 
 const sample = {
   version: STATE_VERSION,
@@ -65,7 +65,7 @@ test("Windows Credential Manager adapter passes only metadata in environment and
     calls.push({ file, args, options });
     assert.equal(args.includes("windows-secret"), false);
     assert.equal(Object.values(options.env).includes("windows-secret"), false);
-    const operation = options.env.AGENT_CONTROLLER_CREDENTIAL_OPERATION;
+    const operation = options.env.NEXT_CODER_CREDENTIAL_OPERATION;
     if (operation === "write") { value = options.input; return ok(); }
     if (operation === "read") return value == null ? { code: 1, stdout: "", stderr: "" } : ok(Buffer.from(value).toString("base64"));
     value = null; return ok();
@@ -77,6 +77,24 @@ test("Windows Credential Manager adapter passes only metadata in environment and
   assert.match(calls[0].file, /powershell\.exe$/i);
   assert.deepEqual(calls[0].args.slice(0, 3), ["-NoLogo", "-NoProfile", "-NonInteractive"]);
   assert.equal(calls[0].options.input, "windows-secret");
+});
+
+test("a credential stored under the legacy service name is still readable", async () => {
+  const values = new Map();
+  const key = (args) => `${args[args.indexOf("-s") + 1]}/${args[args.indexOf("-a") + 1]}`;
+  const run = async (file, args, options) => {
+    if (args[0] === "add-generic-password") { values.set(key(args), options.input); return ok(); }
+    if (args[0] === "find-generic-password") return values.has(key(args)) ? ok(`${values.get(key(args))}\n`) : { code: 44, stdout: "", stderr: "The specified item could not be found." };
+    values.delete(key(args));
+    return ok();
+  };
+  const store = await createCredentialStore({ platform: "darwin", fs: { access: async () => {} }, run });
+  values.set(`${LEGACY_CREDENTIAL_SERVICE}/account:one`, "standing-secret");
+  assert.equal(await store.read("account:one"), "standing-secret");
+  await store.write("account:one", "rotated-secret");
+  assert.equal(values.get(`${CREDENTIAL_SERVICE}/account:one`), "rotated-secret");
+  await store.delete("account:one");
+  assert.equal(values.size, 0);
 });
 
 test("credential subprocess failures, output limits, and timeouts never expose stdin", async () => {

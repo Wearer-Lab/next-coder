@@ -297,10 +297,10 @@ export function parseArguments(argv, environment = process.env) {
   return parseDrillArguments(argv, {
     environment,
     envDefaults: {
-      baseUrl: "AGENT_CONTROLLER_DRILL_URL",
-      accessToken: "AGENT_CONTROLLER_DRILL_ACCESS_TOKEN",
-      expectedDeploymentMode: "AGENT_CONTROLLER_DRILL_DEPLOYMENT_MODE",
-      requestTimeoutMs: "AGENT_CONTROLLER_DRILL_REQUEST_TIMEOUT_MS",
+      baseUrl: "NEXT_CODER_DRILL_URL",
+      accessToken: "NEXT_CODER_DRILL_ACCESS_TOKEN",
+      expectedDeploymentMode: "NEXT_CODER_DRILL_DEPLOYMENT_MODE",
+      requestTimeoutMs: "NEXT_CODER_DRILL_REQUEST_TIMEOUT_MS",
     },
     valueOptions: {
       "--base-url": "baseUrl",
@@ -317,18 +317,18 @@ export function parseArguments(argv, environment = process.env) {
 }
 
 export function helpText() {
-  return `Agent Controller staging drill: connector revocation (completion plan 4.2)
+  return `Next Coder staging drill: connector revocation (completion plan 4.2)
 
 Preflight (no mutation; every revocation check is reported as skipped, so the record cannot be
 filed as proof):
-  AGENT_CONTROLLER_DRILL_ACCESS_TOKEN=... npm run drill:connector-revocation -- \\
+  NEXT_CODER_DRILL_ACCESS_TOKEN=... npm run drill:connector-revocation -- \\
     --base-url https://staging.example.com
 
 Full drill (creates its own throwaway environment, enrolls, revokes, re-enrolls, archives):
-  AGENT_CONTROLLER_DRILL_ACCESS_TOKEN=... npm run drill:connector-revocation -- \\
+  NEXT_CODER_DRILL_ACCESS_TOKEN=... npm run drill:connector-revocation -- \\
     --base-url https://staging.example.com --exercise-revocation
 
-The platform token comes from AGENT_CONTROLLER_DRILL_ACCESS_TOKEN or a mode-0600 file passed with
+The platform token comes from NEXT_CODER_DRILL_ACCESS_TOKEN or a mode-0600 file passed with
 --access-token-file PATH. There is no option that takes a token as a command-line value.
 
 This drill never touches an environment it did not create, because enrollment supersedes an

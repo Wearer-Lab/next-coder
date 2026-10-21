@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Parakeet ASR sidecar for the Agent Controller gateway.
+"""Local Parakeet ASR sidecar for the Next Coder gateway.
 
 The gateway never imports Python and never blocks its event loop on inference: `src/transcription.mjs`
 POSTs a clip here over HTTP and waits on a socket, exactly as it would wait on a hosted API. This

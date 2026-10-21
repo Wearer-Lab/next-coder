@@ -64,7 +64,11 @@ GatewayCandidate discoverGateway(uint32_t timeoutMs) {
     buf[len] = '\0';
     const String payload(buf);
 
-    if (jsonString(payload, "service") != "agent-controller") continue;
+    const String service = jsonString(payload, "service");
+    // The service name is a wire value shared with src/discovery.mjs on the gateway. Accept the
+    // current "next-coder" name and the legacy "agent-controller" name, so a device keeps finding a
+    // gateway that has not been renamed yet.
+    if (service != "next-coder" && service != "agent-controller") continue;
     const String url = jsonString(payload, "baseUrl");
     if (url.length() == 0) continue;
 

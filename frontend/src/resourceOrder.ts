@@ -19,7 +19,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 
-const STORAGE_KEY = "agentControllerResourceOrder";
+const STORAGE_KEY = "nextCoderResourceOrder";
 
 /** Scope key → the ids of that list, in the order the operator arranged them. */
 export type ResourceOrder = Record<string, string[]>;

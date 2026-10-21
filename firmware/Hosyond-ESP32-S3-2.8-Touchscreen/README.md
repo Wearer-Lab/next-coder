@@ -281,7 +281,7 @@ be part-way through typing, so it stays behind a deliberate tap on the code itse
 
 The gateway grew device-facing endpoints for the two levels above a thread
 (`docs/hardware-protocol.md`, "Environment, project, and thread API"), and
-`firmware/shared/AgentControllerCore/src/GatewayBrowse.cpp` is the client for them:
+`firmware/shared/NextCoderCore/src/GatewayBrowse.cpp` is the client for them:
 `GET/POST /v1/device/environments` and `/v1/device/projects`, in their own translation unit with
 their own state rather than as new members on `GatewayClient`.
 

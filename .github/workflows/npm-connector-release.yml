@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       confirmation:
-        description: Enter publish:@agent-controller/connector@VERSION:TAG:COMMIT exactly.
+        description: Enter publish:@next-coder/connector@VERSION:TAG:COMMIT exactly.
         required: true
         type: string
 
@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent-controller-npm-connector-release
+  group: next-coder-npm-connector-release
   cancel-in-progress: false
 
 env:
@@ -120,7 +120,7 @@ jobs:
         with:
           name: npm-connector-candidate-${{ inputs.version }}-${{ inputs.target_commit_sha }}
           path: |
-            release/connector-release-artifacts/agent-controller-connector-${{ inputs.version }}.tgz
+            release/connector-release-artifacts/next-coder-connector-${{ inputs.version }}.tgz
             release/connector-release-artifacts/connector-release-evidence.json
           if-no-files-found: error
           retention-days: 1
@@ -199,7 +199,7 @@ jobs:
       - name: Refuse an immutable npm name and version that already exists
         working-directory: release
         env:
-          PACKAGE_SPEC: ${{ format('@agent-controller/connector@{0}', inputs.version) }}
+          PACKAGE_SPEC: ${{ format('@next-coder/connector@{0}', inputs.version) }}
         run: |
           set -euo pipefail
           mkdir -p connector-release-artifacts
@@ -220,7 +220,7 @@ jobs:
         id: publish
         working-directory: release
         env:
-          TARBALL_PATH: ${{ format('{0}/release/connector-release-artifacts/agent-controller-connector-{1}.tgz', github.workspace, inputs.version) }}
+          TARBALL_PATH: ${{ format('{0}/release/connector-release-artifacts/next-coder-connector-{1}.tgz', github.workspace, inputs.version) }}
         run: npm publish "$TARBALL_PATH" --access public --provenance --tag latest --ignore-scripts --json > connector-release-artifacts/npm-publish.json
       - name: Record the successful immutable publication
         working-directory: release
@@ -303,7 +303,7 @@ jobs:
       - name: Verify the registry digest and a clean external exact-version npm exec
         working-directory: release
         env:
-          PACKAGE_SPEC: ${{ format('@agent-controller/connector@{0}', inputs.version) }}
+          PACKAGE_SPEC: ${{ format('@next-coder/connector@{0}', inputs.version) }}
           REGISTRY_RESULT: ${{ github.workspace }}/release/connector-release-artifacts/npm-registry.json
           EXEC_RESULT: ${{ github.workspace }}/release/connector-release-artifacts/npm-exec.txt
         run: |
@@ -322,7 +322,7 @@ jobs:
           test "$VERIFIED" -eq 1
           (
             cd "$SCRATCH"
-            npm_config_cache="$CACHE" npm exec --yes --package="$PACKAGE_SPEC" -- agent-controller-connect update > "$EXEC_RESULT"
+            npm_config_cache="$CACHE" npm exec --yes --package="$PACKAGE_SPEC" -- next-coder-connect update > "$EXEC_RESULT"
           )
       - name: Finalize redacted npm release evidence
         working-directory: release

@@ -38,9 +38,9 @@ Configure these non-secret environment variables:
 
 | Variable | Meaning |
 | --- | --- |
-| `AGENT_CONTROLLER_STAGING_URL` | Exact HTTPS origin, with no path or trailing slash |
-| `AGENT_CONTROLLER_STAGING_MEDIA_BUCKET` | Expected staging media R2 bucket name |
-| `AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET` | Expected staging firmware R2 bucket name |
+| `NEXT_CODER_STAGING_URL` | Exact HTTPS origin, with no path or trailing slash |
+| `NEXT_CODER_STAGING_MEDIA_BUCKET` | Expected staging media R2 bucket name |
+| `NEXT_CODER_STAGING_FIRMWARE_BUCKET` | Expected staging firmware R2 bucket name |
 
 The workflow never puts a secret in an argument, repository file, artifact name, or log command. The
 three secrets are step-scoped only after the credential-free candidate gate and environment
@@ -93,7 +93,7 @@ The protected job repeats the current deployment status immediately before mutat
 split deployment, version mismatch, or deployment message that does not bind both services to the
 claimed current source commit. This prevents an operator from overwriting an intervening release or
 misidentifying the rollback base. The bootstrap procedure must therefore use the same
-`agent-controller staging deploy <commit>` deployment-message convention. It also performs:
+`next-coder staging deploy <commit>` deployment-message convention. It also performs:
 
 - Convex, edge Worker, and private control-plane dry-runs;
 - append-only Durable Object migration validation;
@@ -166,7 +166,7 @@ versions and operator reconstruction may be required.
 ## Evidence
 
 The workflow always attempts to upload `staging-release-evidence.json` with schema
-`agent-controller.staging-release.v1`. It contains source/automation commits, fixed stage names,
+`next-coder.staging-release.v1`. It contains source/automation commits, fixed stage names,
 bounded failure codes, durations, dependency order, SHA-256 references for Worker version IDs, and
 the already-redacted credential-free qualification result. It excludes raw version IDs, account and
 bucket identifiers, Cloudflare/Convex command output, errors, stacks, configuration bodies, and every

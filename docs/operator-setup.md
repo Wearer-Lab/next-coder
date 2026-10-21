@@ -34,7 +34,7 @@ Placeholders are written in capitals (`REPLACE_WITH_...`, `<40-character-commit>
 real values. Set these two shell variables once; every `gh` command below uses them:
 
 ```bash
-REPO='spyhack225/agent-controller'   # adjust if you forked or renamed
+REPO='spyhack225/next-coder'   # adjust if you forked or renamed
 BRANCH='main'                        # the repository default branch
 ```
 
@@ -77,7 +77,7 @@ Create these before touching GitHub. Each row says what the later stages actuall
 | 1.4 | Convex — production deployment | Same | Same | Same, production-scoped |
 | 1.5 | Clerk — staging instance | Any | Platform user authentication; cloud mode disables dev tokens, so a real Clerk user is required from qualification level 2 onward | Secret key, publishable key, JWT issuer domain |
 | 1.6 | Clerk — production instance | Any | Same | Same |
-| 1.7 | npm — `@agent-controller` organisation | Any | Owning the scope and registering `@agent-controller/connector` before the first trusted-publisher release | Package ownership; **no token is ever added to GitHub** |
+| 1.7 | npm — `@next-coder` organisation | Any | Owning the scope and registering `@next-coder/connector` before the first trusted-publisher release | Package ownership; **no token is ever added to GitHub** |
 | 1.8 | GitHub | The repository itself | Environments, reviewers, protected dispatch | Four environments |
 | 1.9 | A **T3 host for staging** | Your own machine | Qualification levels 2 and 3 need a live T3 Code with an authenticated provider, reachable only through its own connector | The enrolled connector, an environment id, a project id, a provider instance and model |
 
@@ -133,7 +133,7 @@ printf '%s' "$CLOUDFLARE_STAGING_ACCOUNT_ID" | grep -Eq '^[0-9a-f]{32}$' && echo
 
 Confirm in each provider's own console that: the Cloudflare staging account shows the Workers Paid
 plan; the Convex staging deployment exists and you can see its URL; the Clerk staging instance shows
-both keys and its issuer domain; the `@agent-controller` npm scope is owned by you.
+both keys and its issuer domain; the `@next-coder` npm scope is owned by you.
 
 **Recovery (Stage 1).** Nothing is coupled yet. Delete the account, project, or token and start
 again. If a token leaked, roll it in the provider console before continuing.
@@ -250,9 +250,9 @@ Assemble this table before creating any GitHub environment. Every value has exac
 
 Three equalities are checked by the bootstrap script and will fail the run if they are wrong:
 
-- `STAGING_RUNTIME_PUBLIC_BASE_URL` must equal `AGENT_CONTROLLER_STAGING_URL` exactly;
-- `STAGING_RUNTIME_S3_BUCKET` must equal `AGENT_CONTROLLER_STAGING_MEDIA_BUCKET` exactly;
-- `STAGING_RUNTIME_FIRMWARE_S3_BUCKET` must equal `AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET` exactly.
+- `STAGING_RUNTIME_PUBLIC_BASE_URL` must equal `NEXT_CODER_STAGING_URL` exactly;
+- `STAGING_RUNTIME_S3_BUCKET` must equal `NEXT_CODER_STAGING_MEDIA_BUCKET` exactly;
+- `STAGING_RUNTIME_FIRMWARE_S3_BUCKET` must equal `NEXT_CODER_STAGING_FIRMWARE_BUCKET` exactly.
 
 ---
 
@@ -295,7 +295,7 @@ and only production promotion waits.
 Create an environment (repeat for each of the four names):
 
 ```bash
-REPO="spyhack225/agent-controller"
+REPO="spyhack225/next-coder"
 ME_ID="$(gh api user --jq .id)"
 
 # Staging and npm-release: you are the reviewer, and you may approve your own dispatch.
@@ -336,9 +336,9 @@ untick **Allow administrators to bypass configured protection rules** in the env
 instead — do not leave it on.
 
 **Already done on 2026-09-09.** `staging-bootstrap`, `staging` and `npm-release` exist on
-`spyhack225/agent-controller` with the settings above: one required reviewer (the repository owner),
+`spyhack225/next-coder` with the settings above: one required reviewer (the repository owner),
 prevent-self-review off, default-branch-only deployments, and no administrator bypass. Verify with
-`gh api repos/spyhack225/agent-controller/environments --jq '.environments[].name'`. Their **secrets
+`gh api repos/spyhack225/next-coder/environments --jq '.environments[].name'`. Their **secrets
 are not set**, which is the remaining work in 4.1 through 4.3. `production` is deliberately absent
 until a second reviewer exists.
 
@@ -351,7 +351,7 @@ Consumed by `.github/workflows/staging-bootstrap.yml`, job `bootstrap`.
 | `CLOUDFLARE_BOOTSTRAP_API_TOKEN` | Staging bootstrap token |
 | `CLOUDFLARE_STAGING_ACCOUNT_ID` | Staging account ID |
 | `CONVEX_STAGING_DEPLOY_KEY` | Staging Convex deploy key |
-| `STAGING_RUNTIME_PUBLIC_BASE_URL` | The staging origin (equal to `AGENT_CONTROLLER_STAGING_URL`) |
+| `STAGING_RUNTIME_PUBLIC_BASE_URL` | The staging origin (equal to `NEXT_CODER_STAGING_URL`) |
 | `STAGING_RUNTIME_CONVEX_URL` | Convex deployment URL |
 | `STAGING_RUNTIME_GATEWAY_CONVEX_SECRET` | Stage 2.2 value |
 | `STAGING_RUNTIME_CLERK_SECRET_KEY` | Clerk staging secret key |
@@ -453,20 +453,20 @@ that.
 
 | Variable | Value | Read by |
 | --- | --- | --- |
-| `AGENT_CONTROLLER_STAGING_URL` | Staging origin | bootstrap, release, promotion |
-| `AGENT_CONTROLLER_STAGING_MEDIA_BUCKET` | Media bucket name | bootstrap, release |
-| `AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET` | Firmware bucket name | bootstrap, release |
-| `AGENT_CONTROLLER_PRODUCTION_URL` | Production origin | promotion |
-| `AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET` | Production media bucket name | promotion |
-| `AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET` | Production firmware bucket name | promotion |
+| `NEXT_CODER_STAGING_URL` | Staging origin | bootstrap, release, promotion |
+| `NEXT_CODER_STAGING_MEDIA_BUCKET` | Media bucket name | bootstrap, release |
+| `NEXT_CODER_STAGING_FIRMWARE_BUCKET` | Firmware bucket name | bootstrap, release |
+| `NEXT_CODER_PRODUCTION_URL` | Production origin | promotion |
+| `NEXT_CODER_PRODUCTION_MEDIA_BUCKET` | Production media bucket name | promotion |
+| `NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET` | Production firmware bucket name | promotion |
 
 ```bash
-gh variable set AGENT_CONTROLLER_STAGING_URL              --repo "$REPO" --body 'https://REPLACE_WITH_STAGING_ORIGIN'
-gh variable set AGENT_CONTROLLER_STAGING_MEDIA_BUCKET     --repo "$REPO" --body 'REPLACE_WITH_MEDIA_BUCKET-staging'
-gh variable set AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET  --repo "$REPO" --body 'REPLACE_WITH_FIRMWARE_BUCKET-staging'
-gh variable set AGENT_CONTROLLER_PRODUCTION_URL             --repo "$REPO" --body 'https://REPLACE_WITH_PRODUCTION_ORIGIN'
-gh variable set AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET    --repo "$REPO" --body 'REPLACE_WITH_MEDIA_BUCKET-production'
-gh variable set AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET --repo "$REPO" --body 'REPLACE_WITH_FIRMWARE_BUCKET-production'
+gh variable set NEXT_CODER_STAGING_URL                    --repo "$REPO" --body 'https://REPLACE_WITH_STAGING_ORIGIN'
+gh variable set NEXT_CODER_STAGING_MEDIA_BUCKET           --repo "$REPO" --body 'REPLACE_WITH_MEDIA_BUCKET-staging'
+gh variable set NEXT_CODER_STAGING_FIRMWARE_BUCKET        --repo "$REPO" --body 'REPLACE_WITH_FIRMWARE_BUCKET-staging'
+gh variable set NEXT_CODER_PRODUCTION_URL                   --repo "$REPO" --body 'https://REPLACE_WITH_PRODUCTION_ORIGIN'
+gh variable set NEXT_CODER_PRODUCTION_MEDIA_BUCKET          --repo "$REPO" --body 'REPLACE_WITH_MEDIA_BUCKET-production'
+gh variable set NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET       --repo "$REPO" --body 'REPLACE_WITH_FIRMWARE_BUCKET-production'
 ```
 
 **Verify (Stage 4)**
@@ -567,7 +567,7 @@ gh run download "$RUN_ID" --repo "$REPO" -n "staging-bootstrap-bootstrap-${TARGE
 jq '{schema, result, phases: [.phases[].name]}' ./evidence/staging-bootstrap-evidence.json
 ```
 
-The artifact schema is `agent-controller.staging-bootstrap.v1` and its `result` must be `passed`.
+The artifact schema is `next-coder.staging-bootstrap.v1` and its `result` must be `passed`.
 Then confirm the origin answers, and record the two Worker version IDs you will need in Stage 7:
 
 ```bash
@@ -663,7 +663,7 @@ jq '{schema, result}' ./evidence/staging-release-evidence.json
 curl -fsS 'https://REPLACE_WITH_STAGING_ORIGIN/health' | jq '.'
 ```
 
-Schema `agent-controller.staging-release.v1`, `result` passed. Re-read both active version IDs from
+Schema `next-coder.staging-release.v1`, `result` passed. Re-read both active version IDs from
 Cloudflare; they changed, and the rollback dispatch needs the new ones.
 
 ### 7.5 Dispatch the rollback
@@ -711,7 +711,7 @@ development ticket issuer return exactly `404`. A `401`, `403`, redirect, or suc
 is required is a failure, not a partial pass.
 
 **Verify:** the command exits zero and the JSON carries schema
-`agent-controller.staging-qualification.v1`. Keep the file with the release record.
+`next-coder.staging-qualification.v1`. Keep the file with the release record.
 
 ### 8.2 Level 2 — authenticated connector-first readiness (2.4)
 
@@ -724,7 +724,7 @@ First, get the staging stack a live T3 environment:
    completion plan Phase 3, so at this point run it from a checkout on that host:
 
    ```bash
-   node packages/connector/bin/agent-controller-connect.mjs connect \
+   node packages/connector/bin/next-coder-connect.mjs connect \
      --server 'https://REPLACE_WITH_STAGING_ORIGIN' \
      --code 'REPLACE_WITH_ONE_TIME_ENROLLMENT_CODE' \
      --install-service
@@ -738,7 +738,7 @@ Then run level 2. The token goes in an environment variable or a mode-`0600` fil
 command-line token option:
 
 ```bash
-export AGENT_CONTROLLER_STAGING_ACCESS_TOKEN='REPLACE_WITH_SHORT_LIVED_PLATFORM_SESSION_TOKEN'
+export NEXT_CODER_STAGING_ACCESS_TOKEN='REPLACE_WITH_SHORT_LIVED_PLATFORM_SESSION_TOKEN'
 npm run qualify:staging -- \
   --base-url 'https://REPLACE_WITH_STAGING_ORIGIN' \
   --environment-id 'REPLACE_WITH_ENVIRONMENT_ID' \
@@ -746,7 +746,7 @@ npm run qualify:staging -- \
   --provider-instance 'REPLACE_WITH_PROVIDER_INSTANCE' \
   --model 'REPLACE_WITH_MODEL' \
   > staging-readiness-evidence.json
-unset AGENT_CONTROLLER_STAGING_ACCESS_TOKEN
+unset NEXT_CODER_STAGING_ACCESS_TOKEN
 ```
 
 In cloud mode there is no platform API token to mint — `POST /v1/users/dev` is disabled, and level 1
@@ -765,8 +765,8 @@ This mode is **mutating**: it creates one new thread in the named project and se
 an isolated test project.
 
 ```bash
-export AGENT_CONTROLLER_STAGING_ACCESS_TOKEN='REPLACE_WITH_FRESH_SESSION_TOKEN'
-export AGENT_CONTROLLER_STAGING_PROMPT='Staging qualification: reply with a short readiness confirmation.'
+export NEXT_CODER_STAGING_ACCESS_TOKEN='REPLACE_WITH_FRESH_SESSION_TOKEN'
+export NEXT_CODER_STAGING_PROMPT='Staging qualification: reply with a short readiness confirmation.'
 npm run qualify:staging -- \
   --base-url 'https://REPLACE_WITH_STAGING_ORIGIN' \
   --environment-id 'REPLACE_WITH_ENVIRONMENT_ID' \
@@ -775,7 +775,7 @@ npm run qualify:staging -- \
   --model 'REPLACE_WITH_MODEL' \
   --exercise-first-command \
   > staging-first-command-evidence.json
-unset AGENT_CONTROLLER_STAGING_ACCESS_TOKEN AGENT_CONTROLLER_STAGING_PROMPT
+unset NEXT_CODER_STAGING_ACCESS_TOKEN NEXT_CODER_STAGING_PROMPT
 ```
 
 **Verify:** the launch response is `dispatched` and the authenticated command ledger reaches
@@ -816,7 +816,7 @@ Phases 4 to 6, and none of them may be inferred from a passing resource-name che
 | Staging origin | HTTPS, exact origin (no path, no trailing slash), not `localhost` |
 | Bootstrap confirmation | `bootstrap\|resume\|abort_cleanup` + `:staging:` + target SHA + `:` + bootstrap id |
 | Release confirmation | `deploy\|rollback` + `:staging:` + target SHA |
-| npm release confirmation | `publish:@agent-controller/connector@X.Y.Z:connector-vX.Y.Z:<commit>` |
+| npm release confirmation | `publish:@next-coder/connector@X.Y.Z:connector-vX.Y.Z:<commit>` |
 | Production confirmation | `promote:production:<target-commit>:<manifest-sha256>` |
 | Convex environment variables | `GATEWAY_CONVEX_SECRET` (set by bootstrap) and `CLERK_JWT_ISSUER_DOMAIN` (set by you, Stage 5) |
 
@@ -827,7 +827,7 @@ Phases 4 to 6, and none of them may be inferred from a passing resource-name che
 | License ratification | Apache-2.0, already in place | Stage 0 |
 | Staging origin: `workers.dev` or a custom domain | The repository config attaches no route, so `workers.dev` is what a deploy produces | Stage 1 |
 | Second reviewer identity (production only; staging and npm-release are solo-operable) | None recorded — needed before Phase 7, not before Phase 2 | Stage 4 |
-| npm package name and scope | `@agent-controller/connector` as committed | Stage 4.3 |
+| npm package name and scope | `@next-coder/connector` as committed | Stage 4.3 |
 | Which commit is the trivial follow-on **B** for the rollback proof | None recorded; it must not touch `convex/` or Worker topology | Stage 7 |
 | Where Parakeet inference runs | Operator-run sidecar next to the Container | Phase 4, not this document |
 | Container sizing: singleton versus partitioning | Singleton with the provisional 16-environment budget | Phase 4, not this document |
@@ -839,8 +839,8 @@ Recorded while cross-checking every name in this document against the workflow t
 workflow is authoritative in all five cases, and this document already follows it.
 
 1. **Production variables cannot be environment-only.** `production-promotion.md` says to configure
-   `AGENT_CONTROLLER_STAGING_URL`, `AGENT_CONTROLLER_PRODUCTION_URL`,
-   `AGENT_CONTROLLER_PRODUCTION_MEDIA_BUCKET` and `AGENT_CONTROLLER_PRODUCTION_FIRMWARE_BUCKET` as
+   `NEXT_CODER_STAGING_URL`, `NEXT_CODER_PRODUCTION_URL`,
+   `NEXT_CODER_PRODUCTION_MEDIA_BUCKET` and `NEXT_CODER_PRODUCTION_FIRMWARE_BUCKET` as
    `production` environment variables. The workflow's first job, `verify-evidence`, reads all four
    and has no `environment:` block, and `normalizePromotionInput` requires all four to be non-empty
    and the two URLs to be HTTPS. Environment-only definitions fail that job before any reviewer is

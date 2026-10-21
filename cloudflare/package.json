@@ -1,9 +1,9 @@
 {
-  "name": "@agent-controller/cloud-runtime",
+  "name": "@next-coder/cloud-runtime",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Cloudflare Worker and Durable Object runtime for Agent Controller.",
+  "description": "Cloudflare Worker and Durable Object runtime for Next Coder.",
   "scripts": {
     "build:console": "npm --prefix .. run build:app",
     "check": "npm run typecheck && npm test",

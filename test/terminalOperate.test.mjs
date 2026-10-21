@@ -26,7 +26,7 @@ test("terminal_input is a real capability that no built-in profile grants", () =
 
 test("a profile without terminal_input blocks it outright", () => {
   const result = evaluateIntentPolicy({
-    device: { profile: "agent-controller" },
+    device: { profile: "next-coder" },
     intent: { type: "terminal_input", terminalId: "t1", data: "ls\n" },
   });
   assert.equal(result.allowed, false);

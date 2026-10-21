@@ -166,7 +166,7 @@ const tiers: Array<{
 const faq = [
   {
     id: "faq-runs-model",
-    q: "Does Agent Controller run the model?",
+    q: "Does Next Coder run the model?",
     a: "No. The agent runs in the T3 Code environment on your own machine, against your own provider keys. The gateway authenticates you, screens the intent, and dispatches it — it never sees a model response it did not ask for.",
   },
   {
@@ -256,7 +256,7 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
               </h1>
 
               <p className="landing__lede landing__reveal" style={revealStyle("0.2s")}>
-                Agent Controller is the control plane between you and the T3 Code environment on your
+                Next Coder is the control plane between you and the T3 Code environment on your
                 own machine. It authenticates you, applies your policy, and dispatches the command. It
                 never runs the agent itself — your code and your models stay where they already are.
               </p>
@@ -462,7 +462,7 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
             <div className="brand-mark brand-mark--muted" aria-hidden="true">
               <TerminalSquare className="size-3.5" />
             </div>
-            <span>Agent Controller · self-hostable gateway · MIT firmware</span>
+            <span>Next Coder · self-hostable gateway · MIT firmware</span>
           </div>
           <MarketingSwitch current="home" />
           <p className="landing__footer-meta">Docs · Hardware protocol · Security · Status</p>

@@ -527,14 +527,16 @@ void clearListRegion(int16_t top) {
 // ---------------------------------------------------------------------------------------------
 
 // The device's own name, which is what the owner called it in the console — `device.label`, carried
-// to the hardware as the display payload's title. "AGENT CONTROLLER" was the product's name, not
-// this unit's, and on a desk with two of them it identified neither.
+// to the hardware as the display payload's title. "NEXT CODER" is the product's name, not this
+// unit's, and on a desk with two of them it identified neither.
 String deviceName() {
   if (gw) {
     const String& title = gw->display().title;
     // Both of these are the fallback the gateway or the parser substituted, not a name anybody
-    // chose, so neither is worth showing over the device's own id.
-    if (title.length() > 0 && title != "Controller" && title != "Agent Controller") {
+    // chose, so neither is worth showing over the device's own id. "Agent Controller" is the
+    // legacy spelling of the same product-name fallback.
+    if (title.length() > 0 && title != "Controller" && title != "Next Coder"
+        && title != "Agent Controller") {
       resolvedDeviceName = title;
       return title;
     }

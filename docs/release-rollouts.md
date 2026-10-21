@@ -42,7 +42,7 @@ rollout therefore selects and observes a cohort but reports `awaiting_operator_u
 runs the existing local update command on that computer:
 
 ```bash
-npx @agent-controller/connector update --apply --yes --restart-service --version TARGET_VERSION
+npx @next-coder/connector update --apply --yes --restart-service --version TARGET_VERSION
 ```
 
 The cloud never runs package-manager commands on a user's machine and never fabricates successful

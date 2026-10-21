@@ -70,7 +70,7 @@ function SetupTranscript() {
         <span className="devland__comment">on the machine already running T3 Code</span>
         {"\n"}
         <span className="devland__prompt">$</span>
-        {" AGENT_CONTROLLER_URL=https://gateway.agentcontroller.dev \\\n    SETUP_CODE=7QK2-M4XP npm run setup:t3\n\n"}
+        {" NEXT_CODER_URL=https://gateway.nextcoder.dev \\\n    SETUP_CODE=7QK2-M4XP npm run setup:t3\n\n"}
         <span className="devland__arrow">→</span>
         {" reached T3 Code at http://127.0.0.1:4381\n"}
         <span className="devland__arrow">→</span>
@@ -80,7 +80,7 @@ function SetupTranscript() {
         <span className="devland__arrow">→</span>
         {" snapshot                2 projects · 3 threads\n"}
         <span className="devland__ok">✓</span>
-        {" paired. open https://gateway.agentcontroller.dev"}
+        {" paired. open https://gateway.nextcoder.dev"}
       </pre>
     </div>
   );
@@ -212,7 +212,7 @@ export function DeveloperLandingPage({ authConfig, clerk }: DeveloperLandingPage
             <p>Free while it's nightly. Bring your own provider keys; they stay on your machine.</p>
             {accountActions}
             <p className="devland__wordmark">
-              gateway.agentcontroller.dev · self-host · MIT firmware
+              gateway.nextcoder.dev · self-host · MIT firmware
             </p>
           </div>
         </section>

@@ -35,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent-controller-staging-release
+  group: next-coder-staging-release
   cancel-in-progress: false
 
 jobs:
@@ -119,7 +119,7 @@ jobs:
     timeout-minutes: 45
     environment:
       name: staging
-      url: ${{ vars.AGENT_CONTROLLER_STAGING_URL }}
+      url: ${{ vars.NEXT_CODER_STAGING_URL || vars.AGENT_CONTROLLER_STAGING_URL }}
     steps:
       - name: Check out protected automation source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -172,9 +172,9 @@ jobs:
           STAGING_RELEASE_DISPATCH_REF: ${{ github.ref_name }}
           STAGING_RELEASE_REPOSITORY_ROOT: ${{ github.workspace }}/release
           STAGING_RELEASE_EVIDENCE_PATH: ${{ github.workspace }}/release/staging-release-evidence.json
-          AGENT_CONTROLLER_STAGING_URL: ${{ vars.AGENT_CONTROLLER_STAGING_URL }}
-          AGENT_CONTROLLER_STAGING_MEDIA_BUCKET: ${{ vars.AGENT_CONTROLLER_STAGING_MEDIA_BUCKET }}
-          AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET: ${{ vars.AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET }}
+          NEXT_CODER_STAGING_URL: ${{ vars.NEXT_CODER_STAGING_URL || vars.AGENT_CONTROLLER_STAGING_URL }}
+          NEXT_CODER_STAGING_MEDIA_BUCKET: ${{ vars.NEXT_CODER_STAGING_MEDIA_BUCKET || vars.AGENT_CONTROLLER_STAGING_MEDIA_BUCKET }}
+          NEXT_CODER_STAGING_FIRMWARE_BUCKET: ${{ vars.NEXT_CODER_STAGING_FIRMWARE_BUCKET || vars.AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}

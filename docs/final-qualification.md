@@ -1,6 +1,6 @@
 # Final end-to-end qualification evidence
 
-Agent Controller is complete only after one candidate has passed every external gate in the same
+Next Coder is complete only after one candidate has passed every external gate in the same
 cloud/connector/T3/controller journey. Local tests, a Worker dry-run, an npm tarball, or a firmware
 compile cannot close that claim individually.
 
@@ -20,11 +20,11 @@ checkout:
 npm run verify:final-qualification -- /path/to/evidence/final-qualification-manifest.json
 ```
 
-The manifest uses `agent-controller.final-qualification-manifest.v1`:
+The manifest uses `next-coder.final-qualification-manifest.v1`:
 
 ```json
 {
-  "schema": "agent-controller.final-qualification-manifest.v1",
+  "schema": "next-coder.final-qualification-manifest.v1",
   "targetCommit": "<40-character lowercase commit>",
   "createdAt": "<ISO-8601 timestamp>",
   "evidence": {

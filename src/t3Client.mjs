@@ -11,7 +11,7 @@ export async function exchangePairingToken({ baseUrl, pairingToken, scopes }) {
     subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
     requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
     scope: scopes.join(" "),
-    client_label: "Agent Controller Platform",
+    client_label: "Next Coder Platform",
     client_device_type: "bot",
   });
 
@@ -415,7 +415,7 @@ export function isEnvironmentTokenExpired(environment, now = Date.now()) {
 
 function deriveThreadTitle(text) {
   const compact = String(text ?? "").trim().replace(/\s+/gu, " ");
-  if (!compact) return "Agent Controller session";
+  if (!compact) return "Next Coder session";
   return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
 }
 

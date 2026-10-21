@@ -44,7 +44,7 @@ describe("privacy-safe cloud telemetry", () => {
 
     expect(points).toHaveLength(1);
     expect(points[0]?.blobs).toEqual([
-      "agent-controller.cloud-telemetry.v1", "edge", "production", "queue_dlq_risk",
+      "next-coder.cloud-telemetry.v1", "edge", "production", "queue_dlq_risk",
       "background", "failure", "5xx", "other", "gte_5m",
     ]);
     expect(points[0]?.doubles[0]).toBe(0);

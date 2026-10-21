@@ -9,7 +9,7 @@ function environment(manifest: T3CapabilityManifest | null): Environment {
 
 function manifest(overrides: Partial<T3CapabilityManifest> = {}): T3CapabilityManifest {
   return {
-    schema: "agent-controller.t3-capabilities.v1", contractVersion: "t3-adapter.v1",
+    schema: "next-coder.t3-capabilities.v1", contractVersion: "t3-adapter.v1",
     installedVersion: "0.0.32", probedAt: "2099-01-01T00:00:00.000Z",
     freshUntil: "2099-01-01T00:05:00.000Z", freshness: "fresh", source: "direct_probe",
     probes: {}, features: { dispatch: { state: "supported", evidence: "probe" }, launch: { state: "supported", evidence: "probe" } },

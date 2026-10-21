@@ -64,7 +64,7 @@ test("a generated final-qualification skeleton is rejected until a human fills i
 
   const verified = await verifyFinalQualification(complete.manifestPath, ANCHOR_STUB);
   assert.deepEqual(verified, {
-    schema: "agent-controller.final-qualification-manifest.v1",
+    schema: "next-coder.final-qualification-manifest.v1",
     result: "passed",
     targetCommit: COMMIT,
     evidenceSurfaces: 9,

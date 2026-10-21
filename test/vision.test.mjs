@@ -308,7 +308,7 @@ test("vision responses and prompt context normalize their text", () => {
 // store methods this module expects (updateMediaDescription / an image-aware
 // updateMediaProcessing); without them the module must degrade gracefully.
 async function seedImage(t, { withVisionMethods = true } = {}) {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-vision-"));
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-vision-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const buffer = Buffer.from(PNG_BASE64, "base64");

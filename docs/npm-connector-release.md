@@ -1,7 +1,7 @@
 # Protected npm connector release
 
 `.github/workflows/npm-connector-release.yml` is the only repository automation authorized to
-publish `@agent-controller/connector`. It is manual-only, publishes one exact stable version from
+publish `@next-coder/connector`. It is manual-only, publishes one exact stable version from
 one annotated `connector-vVERSION` tag, and enters the protected `npm-release` GitHub environment
 before receiving `id-token: write`. It never reads an npm token.
 
@@ -20,7 +20,7 @@ Before the first release:
    ratify Apache-2.0 as the deliberate choice before the repository is made public; automation
    selected a defensible default, not a legal decision.
 2. **Done on 2026-09-08.** `packages/connector/package.json` carries `repository` metadata whose
-   `url` names `https://github.com/spyhack225/agent-controller` with `directory`
+   `url` names `https://github.com/spyhack225/next-coder` with `directory`
    `packages/connector`, plus matching `homepage` and `bugs`. The workflow derives the expected URL
    from `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY` and compares; it never rewrites package metadata
    after checkout. If the package is ever published from a different repository, update the manifest
@@ -106,7 +106,7 @@ Dispatch **npm connector release** from the default branch with:
 - `version`: exact `X.Y.Z` from the package manifest;
 - `release_tag`: exact `connector-vX.Y.Z` annotated tag;
 - `target_commit_sha`: exact lowercase 40-character tagged commit;
-- `confirmation`: `publish:@agent-controller/connector@X.Y.Z:TAG:COMMIT`.
+- `confirmation`: `publish:@next-coder/connector@X.Y.Z:TAG:COMMIT`.
 
 The credential-free verification job checks the default-branch ancestry, tag object and target,
 authorization, repository secret gate, package tests, clean install, contents, and npm dry-run, then

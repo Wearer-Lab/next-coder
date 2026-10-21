@@ -26,7 +26,7 @@ describe("control-plane Worker boundary", () => {
       headers: {
         authorization: "Bearer platform-token",
         connection: "keep-alive",
-        "x-agent-controller-internal-capability": "spoofed",
+        "x-next-coder-internal-capability": "spoofed",
       },
       body: "streamed-enrollment-body",
     });
@@ -40,7 +40,7 @@ describe("control-plane Worker boundary", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]?.headers.get("authorization")).toBe("Bearer platform-token");
     expect(seen[0]?.headers.get("connection")).toBeNull();
-    expect(seen[0]?.headers.get("x-agent-controller-internal-capability")).toBeNull();
+    expect(seen[0]?.headers.get("x-next-coder-internal-capability")).toBeNull();
     expect(seen[0]?.headers.get("cf-container-target-port")).toBeNull();
   });
 
@@ -62,7 +62,7 @@ describe("control-plane Worker boundary", () => {
 
     expect(response.status).toBe(200);
     expect(seen?.headers.get("cf-container-target-port")).toBe("3998");
-    expect(seen?.headers.get("x-agent-controller-internal-capability")).toBe("1");
+    expect(seen?.headers.get("x-next-coder-internal-capability")).toBe("1");
     expect(seen?.url).not.toContain(ticket);
     expect(await seen?.text()).toContain(ticket);
 
@@ -81,7 +81,7 @@ describe("control-plane Worker boundary", () => {
     );
     expect(background.status).toBe(200);
     expect(backgroundRequest?.headers.get("cf-container-target-port")).toBe("3998");
-    expect(backgroundRequest?.headers.get("x-agent-controller-internal-capability")).toBe("1");
+    expect(backgroundRequest?.headers.get("x-next-coder-internal-capability")).toBe("1");
 
     let selected = false;
     const rejected = await handle(
@@ -276,7 +276,7 @@ describe("control-plane Worker boundary", () => {
     expect(response.status).toBe(504);
     expect(points).toHaveLength(1);
     expect(points[0]?.blobs).toEqual(expect.arrayContaining([
-      "agent-controller.cloud-telemetry.v1", "control_plane", "container_request",
+      "next-coder.cloud-telemetry.v1", "control_plane", "container_request",
       "public_api", "failure", "5xx", "container_header_timeout",
     ]));
     expect(points[0]?.doubles[0]).toBeGreaterThanOrEqual(0);
@@ -330,8 +330,8 @@ function productionBindings(): RuntimeBindings {
     CLERK_PUBLISHABLE_KEY: "pk_live_example",
     T3_TOKEN_ENCRYPTION_KEY: "encryption-secret",
     S3_ENDPOINT: "https://account.r2.cloudflarestorage.com",
-    S3_BUCKET: "agent-controller-media",
-    FIRMWARE_S3_BUCKET: "agent-controller-firmware",
+    S3_BUCKET: "next-coder-media",
+    FIRMWARE_S3_BUCKET: "next-coder-firmware",
     S3_ACCESS_KEY_ID: "r2-access-id",
     S3_SECRET_ACCESS_KEY: "r2-secret",
     GATEWAY_TLS_ROOT_CA_PEM: "-----BEGIN CERTIFICATE-----\ncurrent\n-----END CERTIFICATE-----",

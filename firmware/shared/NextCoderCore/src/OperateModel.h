@@ -101,7 +101,7 @@ struct DisplayCounts {
 };
 
 struct DisplayModel {
-  String title = "Agent Controller";
+  String title = "Next Coder";
   String state = "boot";
   String line1 = "Starting";
   String line2 = "";

@@ -703,7 +703,7 @@ class ConvexHttpGatewayClient {
   async call(endpoint, name, args) {
     const headers = {
       "content-type": "application/json",
-      "convex-client": "agent-controller-gateway",
+      "convex-client": "next-coder-gateway",
     };
     if (this.adminAuth) headers.authorization = `Convex ${this.adminAuth}`;
     if (this.authToken) headers.authorization = `Bearer ${this.authToken}`;

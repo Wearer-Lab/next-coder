@@ -46,7 +46,7 @@ test("the console mints a connect code and the T3 host redeems it into an enviro
   // The one-liner is what the user copies; it has to name this gateway and carry the code.
   assert.equal(
     minted.command,
-    `npx @agent-controller/connector connect --server '${baseUrl}' --code '${minted.code}'`,
+    `npx @next-coder/connector connect --server '${baseUrl}' --code '${minted.code}'`,
   );
   assert.equal(minted.command.includes("tailscale"), false, "access mode is not a connector CLI credential");
   assert.equal(minted.command.includes("token"), false, "the copyable command never carries a T3 token");
@@ -299,11 +299,11 @@ test("another user cannot poll someone else's connect session", async (t) => {
 test("the default connect command launches the published connector CLI with shell-safe arguments", () => {
   assert.equal(
     buildConnectCommand({ gatewayUrl: "https://gateway.example/", code: "ABCDE-FGHIJ", accessMode: "local" }),
-    "npx @agent-controller/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'",
+    "npx @next-coder/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'",
   );
   assert.equal(
     buildConnectCommand({ gatewayUrl: "https://gateway.example/path'o/", code: "CODE'VALUE", accessMode: "tailscale" }),
-    `npx @agent-controller/connector connect --server 'https://gateway.example/path'"'"'o' --code 'CODE'"'"'VALUE'`,
+    `npx @next-coder/connector connect --server 'https://gateway.example/path'"'"'o' --code 'CODE'"'"'VALUE'`,
   );
   assert.equal(buildConnectCommand({ gatewayUrl: "https://gateway.example", code: "ABCDE-FGHIJ", accessMode: "online" }).includes("online"), false);
 });
@@ -313,7 +313,7 @@ test("the rotation command is shell-safe and explicitly confirmed", () => {
     gatewayUrl: "https://controller.example/path'with-quote/",
     code: "ABCDE-'FGHIJ",
   });
-  assert.match(command, /^npx @agent-controller\/connector rotate /u);
+  assert.match(command, /^npx @next-coder\/connector rotate /u);
   assert.match(command, /--server 'https:\/\/controller\.example\/path'"'"'with-quote'/u);
   assert.match(command, /--code 'ABCDE-'"'"'FGHIJ'/u);
   assert.match(command, / --yes$/u);

@@ -1108,7 +1108,7 @@ function ConnectHandoff({
           <span>
             {repairing
               ? "It replaces the revoked or stale connector binding and updates this environment in place."
-              : "It enrolls the published connector and opens an outbound connection to Agent Controller."}
+              : "It enrolls the published connector and opens an outbound connection to Next Coder."}
           </span>
         </div>
       </div>
@@ -1133,7 +1133,7 @@ function ConnectHandoff({
       )}
       <small>
         Enrollment code: {mint.code} · Expires {formatRelativeTime(mint.session.expiresAt)}. The code is single use;
-        T3 and provider credentials stay on this computer and are never sent to Agent Controller.
+        T3 and provider credentials stay on this computer and are never sent to Next Coder.
       </small>
     </section>
   );
@@ -1172,7 +1172,7 @@ function ConnectManualFallback({
       {open ? (
         <div className="environment-connect-manual__body">
           <p>
-            Direct mode stores a T3 credential in Agent Controller and requires the gateway to reach the host.
+            Direct mode stores a T3 credential in Next Coder and requires the gateway to reach the host.
             This compatibility path is available only for local development and deliberate self-hosting.
           </p>
           <EnvironmentAccessSelector value={accessMode} onChange={onAccessModeChange} />
@@ -1345,7 +1345,7 @@ function EnvironmentAccessGuidance({ mode, controller: c }: { mode: EnvironmentA
         <Wifi className="size-4" />
         <div>
           <strong>Direct network access</strong>
-          <span>Best when Agent Controller can already reach the T3 host.</span>
+          <span>Best when Next Coder can already reach the T3 host.</span>
         </div>
       </div>
       <p>Use loopback when both services share a computer, or the host's private IP on a trusted LAN.</p>
@@ -1418,7 +1418,7 @@ function EnvironmentIntro() {
       <div className="device-flow__hero-icon"><Server className="size-6" /></div>
       <StatusBadge tone="info" label="Outbound connector" />
       <h3>Connect the machine where T3 Code runs</h3>
-      <p>Run one short-lived command on that computer. The connector dials out to Agent Controller and keeps local T3 and provider credentials on the host.</p>
+      <p>Run one short-lived command on that computer. The connector dials out to Next Coder and keeps local T3 and provider credentials on the host.</p>
       <ul>
         <li><CheckCircle2 className="size-4" /> No inbound port or public T3 URL</li>
         <li><CheckCircle2 className="size-4" /> Single-use enrollment code with a visible expiry</li>

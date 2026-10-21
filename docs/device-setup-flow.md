@@ -42,7 +42,7 @@ replaced it.
 | # | Break | Where |
 |---|---|---|
 | 1 | Wi-Fi SSID/password are compile-time `#define`s written by the factory station from its own env. The factory cannot know the customer's network, so no shipped unit can connect. | fixed in `buildFlashConfig()` [manufacturing.mjs:33](../src/manufacturing.mjs#L33), which now emits no Wi-Fi macros at all |
-| 2 | `connectWiFi()` loops forever with no timeout and no fallback. A wrong password bricks the unit until reflash. | replaced by the join timeout in [Provisioning.cpp:175](../firmware/shared/AgentControllerCore/src/Provisioning.cpp#L175) |
+| 2 | `connectWiFi()` loops forever with no timeout and no fallback. A wrong password bricks the unit until reflash. | replaced by the join timeout in [Provisioning.cpp:175](../firmware/shared/NextCoderCore/src/Provisioning.cpp#L175) |
 | 3 | The printed claim label is invalidated by powering the device on. `rotateUnclaimedDeviceClaimCode` regenerates unconditionally, and firmware calls it on the first 403 — seconds after boot — then again every 10 minutes, so the code can change while the user is typing it. | replaced by `ensureUnclaimedDeviceClaimCode` [store.mjs:721](../src/store.mjs#L721); the firmware call site is [main.cpp:1198](../firmware/CrowPanel-ESP32-2.13-E-paper/src/main.cpp#L1198) |
 | 4 | The QR code dead-ends. The server falls `/claim` back to `index.html`, but the SPA routes on `location.hash` and never reads `location.search`, so `?device=&code=` is silently discarded. | now read before the hash router: [app.mjs:8233](../src/app.mjs#L8233) serves `/claim`, and [App.tsx:237](../frontend/src/App.tsx#L237) calls `readClaimLink()` |
 | 5 | Rotated secrets can never reach the device. `rotateDeviceSecret` and `resetDeviceForTransfer` mint a new secret; the device's is a `#define`. Revoke-and-recover, resale, and compromise response all require USB reflashing. | `rotateDeviceSecret` [store.mjs:527](../src/store.mjs#L527) and `resetDeviceForTransfer` [store.mjs:568](../src/store.mjs#L568) now hand the new secret to the device through the staging handshake in §4.2 |
@@ -316,7 +316,7 @@ with `DeviceStore` + `Provisioning` + SoftAP portal, NVS identity, boot state ma
 timeouts, long-press reset. Factory flashing station writes identity to NVS instead of baking it
 into the image. Fixes breaks 1, 2, and 10.
 
-Landed as: [`firmware/shared/AgentControllerCore`](../firmware/shared/AgentControllerCore) — a
+Landed as: [`firmware/shared/NextCoderCore`](../firmware/shared/NextCoderCore) — a
 PlatformIO library pulled in via `lib_extra_dirs`, holding `DeviceStore` (NVS namespace `agentctl`)
 and `Provisioning` (state machine + captive portal). `main.cpp` reads its device id, secret, and
 gateway URL from NVS, seeding from `controller_config.h` only when NVS is blank; `connectWiFi()`'s

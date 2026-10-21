@@ -6,7 +6,7 @@ import type { RuntimeBindings } from "../src/env";
 import { CONNECTOR_PROTOCOL_VERSION, type CloudRequestFrame, type CloudWelcomeFrame } from "../src/protocol";
 
 const bindings = env as unknown as RuntimeBindings;
-const origin = "https://agent-controller.test";
+const origin = "https://nextcoder.test";
 
 afterEach(async () => {
   await reset();

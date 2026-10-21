@@ -6,13 +6,15 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { readEnv } from "./environment.mjs";
+
 import {
   REQUIRED_CONTROL_PLANE_SECRETS,
   validateWranglerTopology,
 } from "./staging-release.mjs";
 import { runStagingQualification } from "./qualify-staging.mjs";
 
-export const BOOTSTRAP_EVIDENCE_SCHEMA = "agent-controller.staging-bootstrap.v1";
+export const BOOTSTRAP_EVIDENCE_SCHEMA = "next-coder.staging-bootstrap.v1";
 export const STAGING_QUEUES = Object.freeze([
   "agent-controller-connector-events-staging",
   "agent-controller-background-staging",
@@ -71,9 +73,9 @@ export function normalizeBootstrapInput(environment = process.env) {
     dispatchRef,
     repositoryRoot: resolve(environment.STAGING_BOOTSTRAP_REPOSITORY_ROOT ?? process.cwd()),
     evidencePath: resolve(environment.STAGING_BOOTSTRAP_EVIDENCE_PATH ?? join(process.cwd(), "staging-bootstrap-evidence.json")),
-    stagingUrl: requireHttpsOrigin(environment.AGENT_CONTROLLER_STAGING_URL),
-    mediaBucket: requireStagingName(environment.AGENT_CONTROLLER_STAGING_MEDIA_BUCKET, "media_bucket_invalid"),
-    firmwareBucket: requireStagingName(environment.AGENT_CONTROLLER_STAGING_FIRMWARE_BUCKET, "firmware_bucket_invalid"),
+    stagingUrl: requireHttpsOrigin(readEnv(environment, "NEXT_CODER_STAGING_URL")),
+    mediaBucket: requireStagingName(readEnv(environment, "NEXT_CODER_STAGING_MEDIA_BUCKET"), "media_bucket_invalid"),
+    firmwareBucket: requireStagingName(readEnv(environment, "NEXT_CODER_STAGING_FIRMWARE_BUCKET"), "firmware_bucket_invalid"),
     expectedEdgeVersion: optionalVersion(environment.STAGING_BOOTSTRAP_CURRENT_EDGE_VERSION),
     expectedControlPlaneVersion: optionalVersion(environment.STAGING_BOOTSTRAP_CURRENT_CONTROL_PLANE_VERSION),
   };
@@ -92,6 +94,15 @@ export function validateBootstrapTopology(edge, controlPlane, stub) {
   return true;
 }
 
+// The provisioned staging resources keep their pre-rename names, so a stray bucket or Queue can
+// still appear under either prefix. Both are reported as unexpected when they are not expected, so
+// the rename cannot hide a leftover resource.
+const STAGING_RESOURCE_PREFIXES = ["agent-controller-", "next-coder-"];
+
+function isStagingResource(name) {
+  return STAGING_RESOURCE_PREFIXES.some((prefix) => name.startsWith(prefix)) && name.endsWith("-staging");
+}
+
 export function validateBootstrapState(input, state) {
   const queueSet = new Set(state.queues);
   const bucketSet = new Set(state.buckets);
@@ -102,9 +113,9 @@ export function validateBootstrapState(input, state) {
   for (const name of [input.mediaBucket.replace(/-staging$/u, "-production"), input.firmwareBucket.replace(/-staging$/u, "-production")]) {
     if (bucketSet.has(name)) throw new StagingBootstrapError("production_resource_present");
   }
-  const unexpectedQueues = state.queues.filter((name) => name.startsWith("agent-controller-") && name.endsWith("-staging") && !STAGING_QUEUES.includes(name));
+  const unexpectedQueues = state.queues.filter((name) => isStagingResource(name) && !STAGING_QUEUES.includes(name));
   const expectedBuckets = [input.mediaBucket, input.firmwareBucket];
-  const unexpectedBuckets = state.buckets.filter((name) => name.startsWith("agent-controller-") && name.endsWith("-staging") && !expectedBuckets.includes(name));
+  const unexpectedBuckets = state.buckets.filter((name) => isStagingResource(name) && !expectedBuckets.includes(name));
   if (unexpectedQueues.length || unexpectedBuckets.length) throw new StagingBootstrapError("mismatched_staging_resource_present");
 
   const targetExists = STAGING_QUEUES.some((name) => queueSet.has(name))
@@ -460,7 +471,7 @@ async function verifyAbortState(input, { fetchImpl, environment }) {
 
 function requireExactTargetInventory(actual, expected, kind) {
   for (const name of expected) if (!actual.includes(name)) throw new StagingBootstrapError(`staging_${kind}_missing`);
-  const extras = actual.filter((name) => name.startsWith("agent-controller-") && name.endsWith("-staging") && !expected.includes(name));
+  const extras = actual.filter((name) => isStagingResource(name) && !expected.includes(name));
   if (extras.length) throw new StagingBootstrapError(`mismatched_staging_${kind}_present`);
 }
 
@@ -484,8 +495,8 @@ function wranglerCommand(name, packageDirectory, args, root) {
 }
 
 function action(kind, provider, extra = {}) { return { kind, provider, ...extra }; }
-function bootstrapMessage(stage, input) { return `agent-controller staging bootstrap-${stage} ${input.targetCommit} ${input.bootstrapId}`; }
-function releaseMessage(input) { return `agent-controller staging deploy ${input.targetCommit}`; }
+function bootstrapMessage(stage, input) { return `next-coder staging bootstrap-${stage} ${input.targetCommit} ${input.bootstrapId}`; }
+function releaseMessage(input) { return `next-coder staging deploy ${input.targetCommit}`; }
 function hashRef(value) { return `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`; }
 function parseSecretNames(value) { try { return JSON.parse(value).map((item) => item?.name).filter((name) => typeof name === "string"); } catch { throw new StagingBootstrapError("invalid_secret_inventory"); } }
 function splitLines(value) { return value.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean); }

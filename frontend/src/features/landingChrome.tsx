@@ -111,7 +111,7 @@ export function LandingNav({
   activeHref,
   actions,
   brandHref = "#/",
-  brandLabel = "Agent Controller",
+  brandLabel = "Next Coder",
 }: {
   links: LandingNavLink[];
   activeHref?: string;
@@ -279,7 +279,7 @@ export function LandingBrand({ badge = "NIGHTLY" }: { badge?: string | null }) {
         <TerminalSquare className="size-3.5" />
       </div>
       <div className="brand-copy">
-        <p className="brand-copy__name">Agent Controller</p>
+        <p className="brand-copy__name">Next Coder</p>
         {badge ? <p className="brand-copy__meta">{badge}</p> : null}
       </div>
     </div>

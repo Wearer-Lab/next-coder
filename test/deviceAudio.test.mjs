@@ -21,8 +21,8 @@ const PNG_BASE64 =
  * The worker is never started — `mediaJobRunner.runOnce()` is called explicitly, so no assertion
  * here depends on a timer firing.
  */
-async function setupLoop(t, { profile = "agent-controller" } = {}) {
-  const mediaDir = await mkdtemp(join(tmpdir(), "agent-controller-device-audio-"));
+async function setupLoop(t, { profile = "next-coder" } = {}) {
+  const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-device-audio-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
   const originalFetch = globalThis.fetch;
@@ -427,7 +427,7 @@ test("one controller cannot read another controller's capture", async (t) => {
   const sibling = await loop.call("/v1/devices", {
     method: "POST",
     headers: loop.authHeaders,
-    body: { label: "Study controller", profile: "agent-controller" },
+    body: { label: "Study controller", profile: "next-coder" },
   });
 
   await assert.rejects(
