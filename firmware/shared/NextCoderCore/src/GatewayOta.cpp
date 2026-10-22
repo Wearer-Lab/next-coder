@@ -284,7 +284,12 @@ bool GatewayClient::applyFirmwareUpdate(const String& manifestPayload) {
 
   if (written != expectedSize) {
     Update.abort();
-    reportFirmwareStatus("failed", target.c_str(), "download incomplete");
+    // "Incomplete" on its own says nothing: the stream can end early, the socket can drop, or the
+    // partition can refuse the write. Say how much arrived and whether the socket was still up.
+    char detail[72];
+    snprintf(detail, sizeof(detail), "download incomplete (%u of %u bytes, connected=%d)",
+             (unsigned)written, (unsigned)expectedSize, http.connected() ? 1 : 0);
+    reportFirmwareStatus("failed", target.c_str(), detail);
     return false;
   }
   if (!hexDigest(digest, sizeof(digest)).equalsIgnoreCase(expectedSha)) {

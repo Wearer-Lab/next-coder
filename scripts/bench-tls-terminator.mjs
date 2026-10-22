@@ -76,6 +76,12 @@ const server = tls.createServer(
     };
     client.on("error", close);
     upstream.on("error", close);
+    // A half-close, not a destroy. When the upstream has sent its last byte it closes its
+    // side; tearing the whole socket down at that point throws away whatever was still sitting
+    // in the buffers, and a client downloading an artifact sees a short body and reports it as an
+    // incomplete download. end() flushes what is left and then says goodbye.
+    client.on("end", () => upstream.end());
+    upstream.on("end", () => client.end());
     client.on("close", () => upstream.destroy());
     upstream.on("close", () => client.destroy());
   },
