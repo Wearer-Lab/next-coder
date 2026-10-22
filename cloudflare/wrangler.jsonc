@@ -117,6 +117,9 @@
     },
     "production": {
       "name": "agent-controller-cloud-production",
+      "routes": [
+        { "pattern": "coder.next-notes.com", "custom_domain": true }
+      ],
       "durable_objects": {
         "bindings": [
           {

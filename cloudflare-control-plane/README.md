@@ -62,6 +62,13 @@ Optional secrets include `MEDIA_SIGNING_KEY`, `FIRMWARE_DOWNLOAD_SIGNING_KEY`,
 `BILLING_WEBHOOK_SECRET`, `FACTORY_TOKEN`, `OTA_SIGNING_KEY`, `RATE_LIMIT_REDIS_URL`, and `S3_SESSION_TOKEN`.
 These values are copied into the private Container only at startup; rotate the runtime after
 changing a secret so a running process does not retain the previous environment.
+
+The production console and gateway use `https://coder.next-notes.com`. The edge's production
+custom-domain route is declared in `cloudflare/wrangler.jsonc`; set the production
+`PUBLIC_BASE_URL` secret to that same origin so claim links and firmware download URLs agree.
+Include the origin in `CLERK_AUTHORIZED_PARTIES`. Clerk's separate `clerk.next-notes.com`
+Frontend API hostname also needs its instance-provided DNS records: an HTTP 200 from
+`/v1/auth/config` does not prove the browser can resolve and load Clerk JS.
 Manufacturing deployments should also provision `GATEWAY_TLS_ROOT_CA_PEM` and
 `GATEWAY_TLS_NEXT_ROOT_CA_PEM`; both are passed through without logging so generated firmware trust
 anchors stay aligned with the cloud endpoint.
