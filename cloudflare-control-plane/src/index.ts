@@ -1,4 +1,4 @@
-import { getContainer, switchPort } from "@cloudflare/containers";
+import { switchPort } from "@cloudflare/containers";
 
 import type { RuntimeBindings } from "./env";
 import { AgentControllerGatewayContainer } from "./gatewayContainer";
@@ -18,7 +18,7 @@ export default {
     return await handleControlPlaneRequest(
       request,
       env,
-      () => getContainer(env.AGENT_CONTROLLER_GATEWAY, SINGLETON_INSTANCE),
+      () => env.AGENT_CONTROLLER_GATEWAY.getByName(SINGLETON_INSTANCE),
       switchPort,
     );
   },

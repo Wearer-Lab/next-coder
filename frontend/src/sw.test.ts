@@ -87,6 +87,14 @@ describe("service worker caching policy", () => {
     expect(internals.routeFor(get("https://console.example.test/icons/icon-192.png"))).toBe("passive");
   });
 
+  test("revalidates the public files that live in /assets/ but are not content-hashed", () => {
+    // The brand mark is served from a stable URL, so a cache-first rule would keep serving the
+    // previous file after a deploy.
+    expect(internals.routeFor(get("https://console.example.test/assets/logo.webp"))).toBe("passive");
+    // Everything else under /assets/ IS content-hashed, so it stays cache-first.
+    expect(internals.routeFor(get("https://console.example.test/assets/index-abc123.js"))).toBe("asset");
+  });
+
   test("registers the lifecycle and notification handlers the console relies on", () => {
     expect(events).toEqual(
       expect.arrayContaining(["install", "activate", "fetch", "push", "notificationclick"]),

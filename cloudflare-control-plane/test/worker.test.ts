@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBindings } from "../src/env";
 import { handleControlPlaneRequest, type ContainerStubBoundary } from "../src/handler";
@@ -158,7 +158,7 @@ describe("control-plane Worker boundary", () => {
       env,
       fakeContainer(
         async () => Response.json({ supported: true, keyId: "primary", publicKey: "public-vapid-key" }),
-        (options) => { startupEnvironment = options.startOptions.envVars; },
+        (envVars) => { startupEnvironment = envVars; },
       ),
     );
 
@@ -283,16 +283,55 @@ describe("control-plane Worker boundary", () => {
     expect(points[0]?.doubles[5]).toBeGreaterThanOrEqual(0);
     expect(JSON.stringify(points)).not.toContain(privateValue);
   });
+
+  it("reports typed startup timeouts without dispatching the request", async () => {
+    const points: Array<{ blobs: string[]; doubles: number[] }> = [];
+    const fetch = vi.fn();
+    const response = await handle(new Request("https://console.example/health"), {
+      ...localBindings(), TELEMETRY: analytics(points),
+    }, {
+      async startGateway() { throw new DOMException("Container startup timed out", "TimeoutError"); },
+      fetch,
+    });
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({ error: "control_plane_timeout" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(points[0]?.blobs).toContain("container_startup_timeout");
+  });
+
+  it("withholds secrets and user content from every platform error field", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const secret = "private-error-field-value";
+      const error = Object.assign(new Error(secret), { name: secret, code: secret });
+      error.stack = secret;
+      const response = await handle(new Request(`https://console.example/v1/connectors/enroll?ticket=${secret}`),
+        { ...localBindings(), S3_SECRET_ACCESS_KEY: secret }, {
+          async startGateway() { throw error; },
+          fetch: vi.fn(),
+        });
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain(secret);
+      const diagnostic = log.mock.calls.map(([value]) => JSON.parse(value as string))
+        .filter((value) => value.kind === "container_request_failed");
+      expect(diagnostic).toEqual([{
+        kind: "container_request_failed", phase: "startup", envKeyCount: expect.any(Number),
+      }]);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 function fakeContainer(
   fetchImpl: (request: Request) => Promise<Response>,
-  onStart?: (options: Parameters<ContainerStubBoundary["startAndWaitForPorts"]>[0]) => void,
+  onStart?: (envVars: Record<string, string>) => void,
 ): ContainerStubBoundary {
   return {
-    async startAndWaitForPorts(options) {
-      expect(options.ports).toEqual([3996, 3998]);
-      onStart?.(options);
+    async startGateway(envVars, timeoutMs) {
+      expect(timeoutMs).toBeGreaterThanOrEqual(1_000);
+      onStart?.(envVars);
     },
     fetch: fetchImpl,
   };

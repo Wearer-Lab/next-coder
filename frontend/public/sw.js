@@ -7,7 +7,10 @@
  *      here would show an operator the wrong state of real hardware.
  *   3. `/legacy/*` is left to the network so the pre-React dashboard is never shadowed.
  *   4. Navigations are network-first with the cached app shell as the offline fallback.
- *   5. Build assets under `/assets/` are content-hashed, so cache-first is safe.
+ *   5. Build assets under `/assets/` are content-hashed, so cache-first is safe — EXCEPT the
+ *      hand-authored public files that live in the same directory (`/assets/logo.webp`), whose
+ *      URL never changes. Those are stale-while-revalidate, or a redeployed logo would be masked
+ *      by the cache until the cache name changed.
  *   6. Only the explicit public-static allowlist (manifest and icons) is
  *      stale-while-revalidate. Unknown same-origin GETs stay on the network so a future
  *      authenticated route cannot silently become persistent browser-cache content.
@@ -39,6 +42,17 @@ function isPublicStaticPath(pathname) {
   return pathname === "/manifest.webmanifest" || pathname.startsWith("/icons/");
 }
 
+/**
+ * Public files that are served from `/assets/` but are NOT content-hashed: their URL is stable, so
+ * a cache-first rule would keep serving the previous file after a deploy. They are revalidated
+ * instead.
+ */
+const UNVERSIONED_ASSET_PATHS = new Set(["/assets/logo.webp"]);
+
+function isUnversionedAssetPath(pathname) {
+  return UNVERSIONED_ASSET_PATHS.has(pathname);
+}
+
 /** Returns the caching strategy for a request: bypass | navigate | asset | passive. */
 function routeFor(request) {
   if (request.method !== "GET") return "bypass";
@@ -52,6 +66,7 @@ function routeFor(request) {
   if (isApiPath(url.pathname)) return "bypass";
   if (isLegacyPath(url.pathname)) return "bypass";
   if (request.mode === "navigate") return "navigate";
+  if (isUnversionedAssetPath(url.pathname)) return "passive";
   if (url.pathname.startsWith("/assets/")) return "asset";
   if (isPublicStaticPath(url.pathname)) return "passive";
   return "bypass";

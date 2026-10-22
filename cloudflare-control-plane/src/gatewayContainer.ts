@@ -14,10 +14,51 @@ export class AgentControllerGatewayContainer extends Container<RuntimeBindings> 
   requiredPorts = [3996, 3998];
   sleepAfter = "30m";
   enableInternet = true;
-  pingEndpoint = "http://localhost:3996/health";
+  // The SDK prepends "http://"; this must be a host, not a complete URL.
+  pingEndpoint = "containerstarthealthcheck";
 
-  override onError(error: unknown): never {
-    // Never stringify error causes: startup environment values may contain secrets.
-    throw new Error(error instanceof Error ? `Next Coder container ${error.name}` : "Next Coder container failed");
+  /**
+   * Only plain startup values cross RPC. Create cancellation inside the Durable Object and
+   * retain the SDK's outbound interception, concurrent-start coalescing and lifecycle alarms.
+   * enable_abortsignal_rpc also permits the SDK's port probes to forward their signals.
+   */
+  async startGateway(
+    envVars: Record<string, string>,
+    timeoutMs: number,
+  ): Promise<void> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new DOMException("Container startup timed out", "TimeoutError");
+        controller.abort(error);
+        reject(error);
+      }, timeoutMs);
+    });
+    try {
+      await Promise.race([
+        this.startAndWaitForPorts({
+          ports: this.requiredPorts,
+          cancellationOptions: {
+            abort: controller.signal,
+            instanceGetTimeoutMS: timeoutMs,
+            portReadyTimeoutMS: timeoutMs,
+          },
+          startOptions: {
+            envVars,
+            enableInternet: this.enableInternet,
+            labels: { environment: this.env.DEPLOYMENT_ENVIRONMENT, role: "control-plane" },
+          },
+        }),
+        deadline,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  override onError(_error: unknown): never {
+    // Names, messages, stacks and causes can all contain startup secrets.
+    throw new Error("container_runtime_failure");
   }
 }

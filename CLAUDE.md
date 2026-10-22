@@ -798,6 +798,14 @@ unverified live/hardware evidence.
 
 ## Conventions
 
+The private Container's `startGateway()` RPC accepts only the string startup environment and a
+timeout. Create its cancellation signal inside the Durable Object, retain the Containers SDK's
+startup/lifecycle path (including outbound interception and alarms), and keep
+`enable_abortsignal_rpc` in the control-plane config for SDK port probes. A raw
+`this.container.start()` bypasses that lifecycle. Health probe `pingEndpoint` is a host/path, not a
+full URL. Never publish arbitrary platform error fields, including names or stacks: they may echo
+startup secrets. See `cloudflare-control-plane/README.md`.
+
 - Server code is `.mjs` ESM with no build step and only two runtime dependencies: `@clerk/backend`, and
   `web-push`, which `src/webPush.mjs` alone imports. Keep it that way.
 - IDs come from `src/ids.mjs` (`createId("prefix")`); timestamps are ISO strings via `nowIso()`.

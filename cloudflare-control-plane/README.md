@@ -25,10 +25,19 @@ intercepts it before internet egress and invokes the edge runtime's named
 capability. Request bodies, terminal polling, cancellation, and thread subscription leases are
 bounded at both sides of the bridge.
 
-The Worker uses `getContainer(..., "agent-controller-control-plane")`, `max_instances: 1`, and
-`startAndWaitForPorts()` for ports 3996 and 3998. This keeps the existing process-local event broker,
+The Worker uses `AGENT_CONTROLLER_GATEWAY.getByName("agent-controller-control-plane")`, `max_instances: 1`, and
+the `startGateway()` RPC method for ports 3996 and 3998. Only the string startup environment and a
+timeout cross RPC; cancellation is created inside the Durable Object. The method retains the SDK's
+`startAndWaitForPorts()` lifecycle, outbound interception, concurrent-start coalescing, and alarms,
+with one deadline for the complete startup. `enable_abortsignal_rpc` is required for the SDK's
+port probes, and `pingEndpoint` is a host rather than a complete URL. This keeps the process-local event broker,
 auth cache, and in-memory rate limiter coherent while the migration is incomplete. Durable product
 records live in Convex; the container filesystem is not production state.
+
+Startup failures return fixed error codes and emit only fixed diagnostic classifications and an
+environment-key count. Platform error names, messages, codes, stacks, and causes are withheld because
+they may contain startup credentials or request data. Local tests cover timeout bounds and redaction;
+they do not establish hosted Container startup or live connector reachability.
 
 This follows Cloudflare's current [Containers architecture](https://developers.cloudflare.com/containers/),
 [getting-started configuration](https://developers.cloudflare.com/containers/get-started/), and

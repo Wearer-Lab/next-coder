@@ -42,6 +42,24 @@ test("bootstrap topology uses one non-public fail-closed edge stub with the prod
   assert.doesNotMatch(source, /CONTROL_PLANE|ENVIRONMENT_CONNECTOR_HUB|ASSETS/u);
 });
 
+test("the production bootstrap template remains private, fail-closed and separate from promotion", async () => {
+  const [config, source, promotion] = await Promise.all([
+    readJsonc("cloudflare/bootstrap/wrangler.production.jsonc"),
+    readFile("cloudflare/bootstrap/production-edge-stub.ts", "utf8"),
+    readFile(".github/workflows/production-promotion.yml", "utf8"),
+  ]);
+  assert.equal(config.name, PRODUCTION_SERVICES.edge);
+  assert.equal(config.workers_dev, false);
+  assert.equal(config.preview_urls, false);
+  assert.equal(config.routes, undefined);
+  assert.equal(config.services, undefined);
+  assert.match(source, /class ControlPlaneConnectorRouterEntrypoint/u);
+  assert.match(source, /production_bootstrap_incomplete/u);
+  assert.match(source, /status: 503/u);
+  assert.doesNotMatch(source, /CONTROL_PLANE|ENVIRONMENT_CONNECTOR_HUB|ASSETS/u);
+  assert.doesNotMatch(promotion, /wrangler\.production\.jsonc|production-edge-stub/u);
+});
+
 test("fresh bootstrap plan is exact, dependency-safe, and ends with inventory plus public-boundary verification", () => {
   const input = normalized();
   const state = emptyState();

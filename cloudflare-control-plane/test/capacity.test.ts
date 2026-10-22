@@ -15,7 +15,7 @@ describe("CG-08 singleton Container request boundary", () => {
       releaseBarrier = resolve;
     });
     const stub: ContainerStubBoundary = {
-      async startAndWaitForPorts() {
+      async startGateway() {
         starts += 1;
       },
       async fetch(request) {

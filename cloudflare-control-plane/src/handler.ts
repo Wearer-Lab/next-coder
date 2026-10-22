@@ -3,23 +3,13 @@ import { classifyRequest, jsonError, prepareContainerRequest, withResponseHeader
 import { resolveRuntimeConfig, RuntimeConfigurationError } from "./runtimeConfig";
 import { controlPlaneOperation, emitTelemetry, startupBucket } from "./telemetry";
 
-const PUBLIC_PORT = 3996;
 const INTERNAL_PORT = 3998;
 
 export interface ContainerStubBoundary {
-  startAndWaitForPorts(options: {
-    ports: number[];
-    cancellationOptions: {
-      abort: AbortSignal;
-      instanceGetTimeoutMS: number;
-      portReadyTimeoutMS: number;
-    };
-    startOptions: {
-      envVars: Record<string, string>;
-      enableInternet: boolean;
-      labels: Record<string, string>;
-    };
-  }): Promise<void>;
+  startGateway(
+    envVars: Record<string, string>,
+    timeoutMs: number,
+  ): Promise<void>;
   fetch(request: Request): Promise<Response>;
 }
 
@@ -60,19 +50,10 @@ export async function handleControlPlaneRequest(
   let phase: "startup" | "headers" = "startup";
   try {
     const container = getSingleton();
-    await container.startAndWaitForPorts({
-      ports: [PUBLIC_PORT, INTERNAL_PORT],
-      cancellationOptions: {
-        abort: request.signal,
-        instanceGetTimeoutMS: runtime.startupTimeoutMs,
-        portReadyTimeoutMS: runtime.startupTimeoutMs,
-      },
-      startOptions: {
-        envVars: runtime.containerEnv,
-        enableInternet: true,
-        labels: { environment: env.DEPLOYMENT_ENVIRONMENT, role: "control-plane" },
-      },
-    });
+    await container.startGateway(
+      runtime.containerEnv,
+      runtime.startupTimeoutMs,
+    );
     startupMs = performance.now() - startupStartedAt;
     phase = "headers";
 
@@ -94,6 +75,13 @@ export async function handleControlPlaneRequest(
         startupMs,
       });
     }
+    // Platform error fields, including names, codes and stacks, may echo secrets or request data.
+    // Report only fixed classifications and counts; telemetry records the outcome and timing.
+    console.log(JSON.stringify({
+      kind: "container_request_failed",
+      phase,
+      envKeyCount: Object.keys(runtime.containerEnv).length,
+    }));
     return report(jsonError("control_plane_unavailable", 503), {
       errorCode: phase === "startup" ? "container_startup_unavailable" : "container_unavailable",
       startupMs,
@@ -114,7 +102,6 @@ function protectResponse(response: Response, target: ReturnType<typeof classifyR
 function isTimeout(error: unknown): boolean {
   return error instanceof Error && (
     error.name === "TimeoutError"
-    || error.message.includes("timeout")
-    || error.message.includes("timed out")
+    || error.message === "container_response_header_timeout"
   );
 }

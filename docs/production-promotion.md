@@ -160,6 +160,11 @@ data restore, Worker-version yank, or Container image deletion in this workflow.
 Container deploys are not transactional, and Convex functions/data plus Durable Object migrations
 cannot safely be rewound from a generic script.
 
+The fail-closed templates in `cloudflare/bootstrap/production-edge-stub.ts` and
+`cloudflare/bootstrap/wrangler.production.jsonc` are retained for an explicitly reviewed first-install
+plan. They expose no public route, have no credentials, and return only `503` failures. The promotion
+workflow does not deploy them. Never install a bootstrap stub over a working production edge.
+
 The preflight's strict compatibility rule makes the immediately prior release a plausible recovery
 candidate, not an automatically safe one. For rollback, stop the promotion, identify which phases
 actually changed, take a new backup, re-qualify the exact prior commit against the current durable
