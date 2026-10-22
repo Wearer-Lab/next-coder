@@ -29,6 +29,13 @@ project, and is never bound to a LAN interface. `--no-start-t3` disables launch,
 makes the intent explicit. `--t3-port`, `--t3-base-dir`, and `--t3-start-timeout-ms` tune this path.
 Starting through `npx` may require registry access when T3 is not already cached.
 
+The connector supports the legacy T3 orchestration protocol and protocol 2 advertised by T3
+v0.1.1. Protocol 2 uses authenticated WebSocket snapshots and dispatch, translates absolute
+streaming messages into deltas, and resets from an authoritative snapshot after reconnect.
+Provider approvals and user-input requests remain separate. Historical pagination is not yet
+advertised for protocol 2. Live v0.1.1 Codex reply and stream checks were exercised locally;
+production enrollment and physical-device checks are separate verification steps.
+
 On Windows, the connector resolves `npx.cmd` to npm's verified JavaScript entrypoint and launches it
 through the current `node.exe` with an argument array; it does not interpolate a command through
 `cmd.exe`. Process identity comes from a bounded PowerShell/CIM query. The connector records the

@@ -34,6 +34,7 @@ export interface RuntimeBindings {
   FIRMWARE_DOWNLOAD_SIGNING_KEY?: string;
   BILLING_WEBHOOK_SECRET?: string;
   FACTORY_TOKEN?: string;
+  OTA_SIGNING_KEY?: string;
   RATE_LIMIT_REDIS_URL?: string;
   S3_ENDPOINT?: string;
   S3_BUCKET?: string;

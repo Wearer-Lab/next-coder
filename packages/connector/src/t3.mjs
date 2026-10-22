@@ -1,4 +1,5 @@
 const DEFAULT_TIMEOUT_MS = 10_000;
+import { createV2StreamProjection, v2Command, v2Shell, v2Thread } from "./t3v2.mjs";
 
 export const T3_WS_METHODS = Object.freeze({
   serverGetConfig: "server.getConfig",
@@ -15,17 +16,19 @@ export const T3_WS_METHODS = Object.freeze({
 export function createT3Client({
   baseUrl,
   accessToken = null,
+  orchestrationProtocolVersion = 1,
   fetchImpl = globalThis.fetch,
   WebSocketImpl = globalThis.WebSocket,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   if (!baseUrl) throw new Error("A local T3 URL is required.");
-  const environment = { baseUrl, accessToken };
+  if (![1, 2].includes(orchestrationProtocolVersion)) throw taggedError("T3 orchestration protocol is unsupported.", "T3_PROTOCOL_UNSUPPORTED");
+  const environment = { baseUrl, accessToken, orchestrationProtocolVersion };
   return {
     environmentInfo: (options = {}) => fetchEnvironmentInfo(environment, { fetchImpl, timeoutMs, ...options }),
-    snapshot: (options = {}) => fetchSnapshot(environment, { fetchImpl, timeoutMs, ...options }),
-    threadDetail: (threadId, options = {}) => fetchThreadDetail(environment, threadId, { fetchImpl, timeoutMs, ...options }),
-    dispatch: (command, options = {}) => dispatchCommand(environment, command, { fetchImpl, timeoutMs, ...options }),
+    snapshot: (options = {}) => fetchSnapshot(environment, { fetchImpl, WebSocketImpl, timeoutMs, ...options }),
+    threadDetail: (threadId, options = {}) => fetchThreadDetail(environment, threadId, { fetchImpl, WebSocketImpl, timeoutMs, ...options }),
+    dispatch: (command, options = {}) => dispatchCommand(environment, command, { fetchImpl, WebSocketImpl, timeoutMs, ...options }),
     callRpc: (tag, payload = {}, options = {}) => callRpc(environment, tag, payload, { fetchImpl, WebSocketImpl, timeoutMs, ...options }),
     providerCatalogue: async () => {
       const config = await callRpc(environment, T3_WS_METHODS.serverGetConfig, {}, { fetchImpl, WebSocketImpl, timeoutMs });
@@ -38,8 +41,10 @@ export function createT3Client({
 }
 
 export async function probeT3Capabilities(environment, options = {}) {
-  const [metadataResult, snapshotResult, configResult] = await Promise.allSettled([
-    fetchEnvironmentInfo(environment, options),
+  // Metadata selects the wire protocol before either authenticated probe is sent.
+  const metadataResult = await Promise.resolve().then(() => fetchEnvironmentInfo(environment, options))
+    .then((value) => ({ status: "fulfilled", value }), (reason) => ({ status: "rejected", reason }));
+  const [snapshotResult, configResult] = await Promise.allSettled([
     fetchSnapshot(environment, options),
     callRpc(environment, T3_WS_METHODS.serverGetConfig, {}, options),
   ]);
@@ -70,7 +75,7 @@ export async function probeT3Capabilities(environment, options = {}) {
       threadDetail,
     },
     serverCapabilities: {
-      threadSnapshotPagination: config?.threadSnapshotPagination === true,
+      threadSnapshotPagination: environment.orchestrationProtocolVersion !== 2 && config?.threadSnapshotPagination === true,
       threadResumeCompletionMarker: config?.threadResumeCompletionMarker === true,
     },
   };
@@ -92,14 +97,14 @@ export async function discoverT3({ candidates = ["http://127.0.0.1:3773"], fetch
   throw error;
 }
 
-export async function exchangePairingToken({ baseUrl, pairingToken, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+export async function exchangePairingToken({ baseUrl, pairingToken, orchestrationProtocolVersion = 1, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   if (!pairingToken) throw new Error("A T3 pairing token is required.");
   const body = new URLSearchParams({
     grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
     subject_token: pairingToken,
     subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
     requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-    scope: "orchestration:read orchestration:write terminal:operate",
+    scope: `orchestration:read orchestration:${orchestrationProtocolVersion === 2 ? "operate" : "write"} terminal:operate`,
     client_label: "Next Coder Connector",
     client_device_type: "bot",
   });
@@ -123,17 +128,30 @@ export async function exchangePairingToken({ baseUrl, pairingToken, fetchImpl = 
 }
 
 export async function fetchEnvironmentInfo(environment, options = {}) {
-  return await t3Json(environment, "/.well-known/t3/environment", { ...options, authenticated: false });
+  const metadata = await t3Json(environment, "/.well-known/t3/environment", { ...options, authenticated: false });
+  const protocol = metadata?.orchestrationProtocolVersion ?? 1;
+  if (![1, 2].includes(protocol)) throw taggedError("T3 orchestration protocol is unsupported.", "T3_PROTOCOL_UNSUPPORTED");
+  environment.orchestrationProtocolVersion = protocol;
+  return metadata;
 }
 
 export async function fetchSnapshot(environment, options = {}) {
   requireAccessToken(environment);
+  if (environment.orchestrationProtocolVersion === 2) {
+    const item = await callRpc(environment, "orchestration.subscribeShell", {}, { ...options, firstSnapshot: true });
+    return v2Shell(item.snapshot);
+  }
   return await t3Json(environment, "/api/orchestration/snapshot", options);
 }
 
 export async function fetchThreadDetail(environment, threadId, options = {}) {
   requireAccessToken(environment);
   if (typeof threadId !== "string" || !threadId) throw new Error("threadId is required.");
+  if (environment.orchestrationProtocolVersion === 2) {
+    const item = await callRpc(environment, T3_WS_METHODS.orchestrationSubscribeThread,
+      { threadId, acceptBoundedSnapshot: true }, { ...options, firstSnapshot: true });
+    return v2Thread(item.projection);
+  }
   const url = new URL(`/api/orchestration/threads/${encodeURIComponent(threadId)}`, environment.baseUrl);
   if (Number.isInteger(options.turnLimit) && options.turnLimit > 0) url.searchParams.set("turnLimit", String(options.turnLimit));
   const payload = await t3Json(environment, url, options);
@@ -143,6 +161,25 @@ export async function fetchThreadDetail(environment, threadId, options = {}) {
 export async function dispatchCommand(environment, command, options = {}) {
   requireAccessToken(environment);
   if (!command || typeof command !== "object" || Array.isArray(command)) throw new Error("A T3 command object is required.");
+  if (environment.orchestrationProtocolVersion === 2) {
+    if (command.type === "thread.turn.interrupt") {
+      const thread = await fetchThreadDetail(environment, command.threadId, options);
+      command = { ...command, runId: thread.session?.activeTurnId };
+    }
+    if (command.type === "thread.turn.start") {
+      // Protocol 2 stores these on the thread rather than the dispatched message. Keep the
+      // gateway's requested permission mode, with stable identities across connector retries.
+      if (command.runtimeMode) await callRpc(environment, T3_WS_METHODS.orchestrationDispatchCommand, {
+        type: "thread.runtime-mode.set", commandId: command.commandId + ":runtime-mode",
+        threadId: command.threadId, runtimeMode: command.runtimeMode,
+      }, options);
+      if (command.interactionMode) await callRpc(environment, T3_WS_METHODS.orchestrationDispatchCommand, {
+        type: "thread.interaction-mode.set", commandId: command.commandId + ":interaction-mode",
+        threadId: command.threadId, interactionMode: command.interactionMode,
+      }, options);
+    }
+    return await callRpc(environment, T3_WS_METHODS.orchestrationDispatchCommand, v2Command(command), options);
+  }
   return await t3Json(environment, "/api/orchestration/dispatch", { ...options, method: "POST", body: command });
 }
 
@@ -153,17 +190,18 @@ export async function requestT3SocketTicket(environment, options = {}) {
   return payload.ticket;
 }
 
-export function t3SocketUrl(baseUrl, ticket) {
+export function t3SocketUrl(baseUrl, ticket, protocol = 1) {
   const url = new URL("/ws", baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("wsTicket", ticket);
+  if (protocol === 2) url.searchParams.set("orchestrationProtocol", "2");
   return url.toString();
 }
 
 export async function callRpc(environment, tag, payload = {}, options = {}) {
   if (typeof options.WebSocketImpl !== "function") throw new Error("This Node runtime does not provide WebSocket support.");
   const ticket = await requestT3SocketTicket(environment, options);
-  const socket = new options.WebSocketImpl(t3SocketUrl(environment.baseUrl, ticket));
+  const socket = new options.WebSocketImpl(t3SocketUrl(environment.baseUrl, ticket, environment.orchestrationProtocolVersion));
   const requestId = "1";
   return await new Promise((resolve, reject) => {
     const chunks = [];
@@ -185,10 +223,16 @@ export async function callRpc(environment, tag, payload = {}, options = {}) {
       const message = parseJson(event.data);
       if (!message) return;
       if (message._tag === "Chunk" && message.requestId === requestId) {
+        let firstSnapshot;
         try {
           chunks.push(...(Array.isArray(message.values) ? message.values : []));
+          if (options.firstSnapshot) firstSnapshot = chunks.find((value) => value?.kind === "snapshot");
         } finally {
           socket.send(JSON.stringify({ _tag: "Ack", requestId }));
+        }
+        if (firstSnapshot) {
+          socket.send(JSON.stringify({ _tag: "Interrupt", requestId }));
+          finish(null, firstSnapshot);
         }
       } else if (message._tag === "Exit" && message.requestId === requestId) {
         if (message.exit?._tag === "Success") finish(null, chunks.length ? chunks : message.exit.value);
@@ -203,6 +247,23 @@ export async function callRpc(environment, tag, payload = {}, options = {}) {
 }
 
 export function openThreadStream(environment, input = {}, callbacks = {}, options = {}) {
+  if (environment.orchestrationProtocolVersion === 2 && !options.v2Mapped) {
+    const project = createV2StreamProjection();
+    let handle;
+    let resetError = null;
+    handle = openThreadStream(environment, { ...input, afterSequence: undefined }, {
+      ...callbacks,
+      onItem(item) {
+        try { for (const value of project(item)) callbacks.onItem?.(value); }
+        catch (error) {
+          resetError = error;
+          handle?.close();
+        }
+      },
+      onClose(detail) { callbacks.onClose?.(resetError ? { reason: "protocol-reset", error: resetError } : detail); },
+    }, { ...options, v2Mapped: true });
+    return handle;
+  }
   const requestId = "1";
   let socket = null;
   let stopped = false;
@@ -225,10 +286,11 @@ export function openThreadStream(environment, input = {}, callbacks = {}, option
       const ticket = await requestT3SocketTicket(environment, options);
       if (stopped) return finish("closed");
       if (typeof options.WebSocketImpl !== "function") throw taggedError("WebSocket support is unavailable.", "WEBSOCKET_UNAVAILABLE");
-      socket = new options.WebSocketImpl(t3SocketUrl(environment.baseUrl, ticket));
+      socket = new options.WebSocketImpl(t3SocketUrl(environment.baseUrl, ticket, environment.orchestrationProtocolVersion));
       socket.addEventListener("open", () => {
         if (stopped) return finish("closed");
         const payload = { threadId: input.threadId, requestCompletionMarker: input.requestCompletionMarker !== false };
+        if (environment.orchestrationProtocolVersion === 2) payload.acceptBoundedSnapshot = true;
         if (Number.isFinite(input.afterSequence)) payload.afterSequence = input.afterSequence;
         if (Number.isInteger(input.turnLimit) && input.turnLimit > 0) payload.turnLimit = input.turnLimit;
         socket.send(JSON.stringify({ _tag: "Request", id: requestId, tag: T3_WS_METHODS.orchestrationSubscribeThread, payload, headers: [] }));

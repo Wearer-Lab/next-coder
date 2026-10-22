@@ -85,6 +85,7 @@ export function resolveRuntimeConfig(env: RuntimeBindings): ResolvedRuntimeConfi
     "FIRMWARE_DOWNLOAD_SIGNING_KEY",
     "BILLING_WEBHOOK_SECRET",
     "FACTORY_TOKEN",
+    "OTA_SIGNING_KEY",
     "RATE_LIMIT_REDIS_URL",
     "S3_ENDPOINT",
     "S3_BUCKET",

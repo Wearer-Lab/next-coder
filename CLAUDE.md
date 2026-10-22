@@ -154,6 +154,17 @@ now validates before dispatch (422), and `extractSessionFailures()` surfaces `th
 
 ### The T3 WebSocket API
 
+T3 v0.1.1 advertises orchestration protocol 2 in `/.well-known/t3/environment`. Its old
+orchestration HTTP URLs return the web application, not snapshots. The local connector negotiates
+`orchestrationProtocol=2` on the ticket-authenticated socket and projects `subscribeShell` and
+bounded `subscribeThread` snapshots through `packages/connector/src/t3v2.mjs`. Native v2 message
+updates contain absolute text; only their streaming suffix becomes a gateway delta. Run IDs replace
+legacy active-turn IDs. Permission modes are set on the thread before `message.dispatch`, and local
+pairing requests `orchestration:operate` rather than the v1 `orchestration:write` scope. Reconnects
+request authoritative snapshots; native v2 historical pagination is not advertised by this adapter.
+On 2026-10-22 an isolated live v0.1.1 server returned actual Codex replies through both snapshot
+and streaming paths. This proves the local adapter, separately from cloud enrollment and hardware.
+
 The orchestration HTTP API only exposes projects and threads. Everything else — the provider
 catalogue, terminals, settings — is served over an authenticated WebSocket speaking Effect's RPC
 protocol. `src/t3Ws.mjs` implements it (reverse-engineered against T3 Code 0.0.28, verified live):

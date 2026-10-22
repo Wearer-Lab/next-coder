@@ -105,9 +105,12 @@ async function connectCommand(options, dependencies = {}) {
         platform: hostPlatform, nodeExecutable: dependencies.nodeExecutable, resolveLauncher: dependencies.resolveNpxLauncher,
       });
     }
-    if (!t3AccessToken && pairingToken) t3AccessToken = (await exchangePairingToken({ baseUrl, pairingToken, fetchImpl })).access_token;
-    const t3 = createT3Client({ baseUrl, accessToken: t3AccessToken, fetchImpl, WebSocketImpl });
-    const info = runtime.info ?? await t3.environmentInfo();
+    const metadata = runtime.info ?? await createT3Client({ baseUrl, fetchImpl }).environmentInfo();
+    if (!t3AccessToken && pairingToken) t3AccessToken = (await exchangePairingToken({ baseUrl, pairingToken,
+      orchestrationProtocolVersion: metadata?.orchestrationProtocolVersion ?? 1, fetchImpl })).access_token;
+    const t3 = createT3Client({ baseUrl, accessToken: t3AccessToken, fetchImpl, WebSocketImpl,
+      orchestrationProtocolVersion: metadata?.orchestrationProtocolVersion ?? 1 });
+    const info = metadata;
     let state = existing;
     if (!state || options.code) {
       if (!options.server || !options.code) throw usage("First-time connect requires --server and --code.");

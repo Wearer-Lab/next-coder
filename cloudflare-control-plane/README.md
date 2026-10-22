@@ -59,7 +59,9 @@ passed into the container:
   `WEB_PUSH_STORAGE_ENCRYPTION_KEY` for sealing subscription capability URLs and keys at rest.
 
 Optional secrets include `MEDIA_SIGNING_KEY`, `FIRMWARE_DOWNLOAD_SIGNING_KEY`,
-`BILLING_WEBHOOK_SECRET`, `FACTORY_TOKEN`, `RATE_LIMIT_REDIS_URL`, and `S3_SESSION_TOKEN`.
+`BILLING_WEBHOOK_SECRET`, `FACTORY_TOKEN`, `OTA_SIGNING_KEY`, `RATE_LIMIT_REDIS_URL`, and `S3_SESSION_TOKEN`.
+These values are copied into the private Container only at startup; rotate the runtime after
+changing a secret so a running process does not retain the previous environment.
 Manufacturing deployments should also provision `GATEWAY_TLS_ROOT_CA_PEM` and
 `GATEWAY_TLS_NEXT_ROOT_CA_PEM`; both are passed through without logging so generated firmware trust
 anchors stay aligned with the cloud endpoint.

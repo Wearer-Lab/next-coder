@@ -112,10 +112,12 @@ describe("control-plane Worker boundary", () => {
   });
 
   it("passes strict Convex, Clerk, encryption, R2, and disabled-runner settings at startup", async () => {
-    const env = productionBindings();
+    const env = { ...productionBindings(), FACTORY_TOKEN: "private-factory-token", OTA_SIGNING_KEY: "private-ota-key" };
     const resolved = resolveRuntimeConfig(env);
     expect(resolved.containerEnv).toMatchObject({
       DEPLOYMENT_ENVIRONMENT: "production",
+      FACTORY_TOKEN: "private-factory-token",
+      OTA_SIGNING_KEY: "private-ota-key",
       STORAGE_PROVIDER: "convex",
       AUTH_PROVIDER: "clerk",
       MEDIA_STORAGE_PROVIDER: "s3",
