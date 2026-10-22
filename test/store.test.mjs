@@ -1034,3 +1034,18 @@ test("the display payload keeps the exact shape firmware parses", async () => {
   assert.equal(empty.line2, "No commands yet");
   assert.equal(empty.latestAction, null);
 });
+
+test("file persistence retains dispatch start while completion metrics change", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "next-coder-dispatch-metrics-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "store.json");
+  const store = await createFileStore(path);
+  await store.ensureUser({ userId: "fixture_user", email: "fixture@example.test" });
+  const environment = await store.upsertEnvironment({ userId: "fixture_user", label: "Fixture", baseUrl: "https://fixture.invalid", accessToken: "fixture-token" });
+  const dispatchStartedAt = "2026-10-22T12:00:00.000Z";
+  const command = await store.createCommand({ userId: "fixture_user", environmentId: environment.id, threadId: "fixture_thread", intent: { type: "agent_prompt", text: "fixture" }, normalized: {}, status: "dispatched", risk: "low", metrics: { dispatchStartedAt, dispatchDurationMs: 23000, completedAt: "2026-10-22T12:00:23.000Z" } });
+  await store.updateCommand({ userId: "fixture_user", commandId: command.id, status: "completed", metrics: { ...command.metrics, completedAt: "2026-10-22T12:01:00.000Z" } });
+  await store.flush();
+  const restored = await createFileStore(path);
+  assert.equal((await restored.getCommandForUser("fixture_user", command.id)).metrics.dispatchStartedAt, dispatchStartedAt);
+});

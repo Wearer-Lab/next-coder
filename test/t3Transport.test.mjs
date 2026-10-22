@@ -52,4 +52,6 @@ test("connector transport sends runtime-neutral request envelopes", async () => 
     method: "threadDetail",
     payload: { threadId: "thread_1" },
   }, { timeoutMs: 50 }]);
+  await transport.threadDetail(environment, "thread_1", { turnLimit: 8 });
+  assert.deepEqual(calls[2][1].payload, { threadId: "thread_1", turnLimit: 8 });
 });

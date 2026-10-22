@@ -207,7 +207,8 @@ test("saved actions and ordered device controls execute through the normal polic
   assert.ok(persistedCapabilities);
   assert.equal(Object.hasOwn(persistedCapabilities, "capabilities"), false);
   assert.equal(persistedCapabilities.health.capabilities.schema, "next-coder.t3-capabilities.v1");
-  assert.equal(ran.responseAfter, ran.command.createdAt);
+  assert.equal(ran.responseAfter, ran.command.metrics.dispatchStartedAt);
+  assert.ok(Date.parse(ran.responseAfter) <= Date.parse(ran.command.createdAt));
   assert.match(dispatches.at(-1).message.text, /^Continue and run tests\.\n\n<!--AC_DEVICE_FOLLOWUP_REQUEST/u);
   assert.match(dispatches.at(-1).message.text, new RegExp(photo.id, "u"));
   assert.doesNotMatch(dispatches.at(-1).message.text, new RegExp(`\"${prompt.id}\"`, "u"));

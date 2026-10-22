@@ -4351,6 +4351,7 @@ function normalizeCommandMetrics(input = {}) {
   return {
     acknowledgementDurationMs: normalizeOptionalNumber(metrics.acknowledgementDurationMs),
     dispatchDurationMs: normalizeOptionalNumber(metrics.dispatchDurationMs),
+    ...(typeof metrics.dispatchStartedAt === "string" ? { dispatchStartedAt: normalizeNullableString(metrics.dispatchStartedAt) } : {}),
     completedAt: normalizeNullableString(metrics.completedAt),
     failureAt: normalizeNullableString(metrics.failureAt),
   };

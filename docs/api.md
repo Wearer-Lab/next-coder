@@ -1810,10 +1810,14 @@ Command responses include a `metrics` object:
 {
   "acknowledgementDurationMs": 148,
   "dispatchDurationMs": 93,
+  "dispatchStartedAt": "2026-06-16T18:59:59.907Z",
   "completedAt": "2026-06-16T19:00:00.000Z",
   "failureAt": null
 }
 ```
+
+`dispatchStartedAt` is present when dispatch began. It remains stable when completion metrics
+change, and anchors reply freshness even if the agent replies before its acknowledgement arrives.
 
 If T3 dispatch or status snapshot retrieval fails, the gateway stores a command with status `failed`, returns HTTP 502, and includes the failed command in the error details. This gives support and dashboards a durable record of failed dispatches instead of losing them as transient request errors.
 

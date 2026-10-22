@@ -211,9 +211,11 @@ export function reconcileCommandStatus(command, outcome) {
   const recordedAt = Date.parse(command.updatedAt ?? command.createdAt ?? "");
   const acknowledgedAt = Date.parse(command.metrics?.completedAt ?? "");
   const dispatchDuration = command.metrics?.dispatchDurationMs;
+  const explicitDispatchAt = Date.parse(command.metrics?.dispatchStartedAt ?? "");
   // The command is stored after T3 acknowledges dispatch. A real reply can arrive while that
   // acknowledgement is in transit; freshness starts when dispatch began, not when it returned.
-  const dispatchedAt = Number.isFinite(acknowledgedAt) && Number.isFinite(dispatchDuration)
+  const dispatchedAt = Number.isFinite(explicitDispatchAt) ? explicitDispatchAt
+    : Number.isFinite(acknowledgedAt) && Number.isFinite(dispatchDuration)
     && dispatchDuration >= 0 ? acknowledgedAt - dispatchDuration : recordedAt;
 
   if (outcome.failure) {

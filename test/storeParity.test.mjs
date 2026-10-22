@@ -411,3 +411,8 @@ test("the two blocking-request claims are the same check-and-set on both backend
   assert.ok(fields.includes("answersHash"), "the table does not carry the fingerprint.");
   assert.ok(!fields.includes("answers"), "the table carries the answers, which are user content.");
 });
+
+test("command metric normalization, including dispatch start, agrees across durable stores", async () => {
+  const [memory, convex] = await Promise.all([readFile(join(ROOT, "src", "store.mjs"), "utf8"), readFile(join(ROOT, "convex", "gatewayStore.ts"), "utf8")]);
+  assert.equal(normalize(extractFunction(memory, "normalizeCommandMetrics")), normalize(extractFunction(convex, "normalizeCommandMetrics")));
+});

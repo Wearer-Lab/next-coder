@@ -5100,7 +5100,8 @@ function actionRunStatus(output) {
 function actionResponseAfter(output) {
   const commands = output?.macro?.executions?.flatMap((entry) => entry.command ? [entry.command] : []) ?? [];
   const command = output?.command ?? commands.at(-1);
-  return optionalString(command?.createdAt) ?? optionalString(command?.updatedAt) ?? null;
+  return optionalString(command?.metrics?.dispatchStartedAt)
+    ?? optionalString(command?.createdAt) ?? optionalString(command?.updatedAt) ?? null;
 }
 
 function savedActionOutputStatus(output) {
@@ -7341,6 +7342,7 @@ function commandMetrics({
     ...(existing && typeof existing === "object" ? existing : {}),
     acknowledgementDurationMs: elapsedMs(startedAt, now),
     dispatchDurationMs: dispatchStartedAt ? elapsedMs(dispatchStartedAt, now) : null,
+    ...(Number.isFinite(dispatchStartedAt) ? { dispatchStartedAt: new Date(dispatchStartedAt).toISOString() } : {}),
     // Upload -> dispatch, the span Phase 11 budgets at 10s for audio-to-prompt.
     ...(mediaCapturedAt ? { mediaDispatchDurationMs: elapsedMs(mediaCapturedAt, now) } : {}),
     completedAt: completed ? new Date(now).toISOString() : null,

@@ -65,8 +65,11 @@ export class ConnectorT3Transport {
     return this.#request(environment, "snapshot", {}, options);
   }
 
-  threadDetail(environment, threadId, options) {
-    return this.#request(environment, "threadDetail", { threadId }, options);
+  threadDetail(environment, threadId, options = {}) {
+    return this.#request(environment, "threadDetail", {
+      threadId,
+      ...(Number.isSafeInteger(options.turnLimit) ? { turnLimit: options.turnLimit } : {}),
+    }, options);
   }
 
   dispatch(environment, command, options) {

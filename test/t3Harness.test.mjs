@@ -191,3 +191,8 @@ test("completion evidence is timed from dispatch start across a delayed acknowle
   assert.equal(reconcileCommandStatus(command, { ...outcome, lastAssistantAt: "2026-10-22T11:59:59.999Z" }), null);
   assert.equal(reconcileCommandStatus(command, {}), null, "an acknowledgement alone is never completion");
 });
+
+test("explicit dispatch start survives later updates of completion timestamps", () => {
+  const command = { status: "dispatched", createdAt: "2026-10-22T12:00:23.000Z", metrics: { dispatchStartedAt: "2026-10-22T12:00:00.000Z", completedAt: "2026-10-22T12:01:00.000Z", dispatchDurationMs: 23000 } };
+  assert.equal(reconcileCommandStatus(command, { lastAssistantAt: "2026-10-22T12:00:22.800Z", lastAssistantText: "OK" }).status, "completed");
+});
