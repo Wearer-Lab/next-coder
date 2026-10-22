@@ -1002,7 +1002,12 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
     setWorkspaceRecovery(null);
   }, []);
 
+  // The catalogue is for the console's own screens - the device editor, the onboarding wizard -
+  // and nobody who is looking at the signed-out marketing pages needs it. Loading it anyway spent
+  // two requests on every visitor and put a failure in the console for a gateway that is simply
+  // not answering. It loads when there is a session.
   useEffect(() => {
+    if (!authenticated) return;
     let cancelled = false;
     async function loadProfiles() {
       try {
@@ -1023,9 +1028,10 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authenticated]);
 
   useEffect(() => {
+    if (!authenticated) return;
     let cancelled = false;
     async function loadHardwareBoards() {
       try {
@@ -1045,7 +1051,7 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authenticated]);
 
   useEffect(() => {
     if (!clerk?.loaded) return;
