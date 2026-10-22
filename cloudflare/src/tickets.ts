@@ -90,6 +90,10 @@ export function parseBackendTicketConsumption(
   audience: string,
   now = Date.now(),
 ): ConnectorTicketClaims | null {
+  // The private Node service projects Store consumption into flat, bounded claims. Retain the
+  // older Store-shaped response below for compatible adapters, but validate the deployed shape
+  // against its actual audience and expiry rather than consuming a valid ticket and rejecting it.
+  if (isRecord(value) && "ticketId" in value) return parseTicketClaims(value, audience, now);
   if (!isRecord(value) || value.reason !== null || !isRecord(value.connector) || !isRecord(value.ticket)) return null;
   const connector = value.connector;
   const ticket = value.ticket;

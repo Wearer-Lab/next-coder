@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { RuntimeBindings } from "../src/env";
 import { CONNECTOR_PROTOCOL_VERSION, type CloudRequestFrame, type CloudWelcomeFrame } from "../src/protocol";
 import { ServiceBindingTicketVerifier } from "../src/tickets";
+// @ts-expect-error The Node adapter is JavaScript and ships no declarations.
+import { createConnectorInternalService } from "../../src/connectorInternalService.mjs";
 
 const bindings = env as unknown as RuntimeBindings;
 const publicOrigin = "https://console.nextcoder.test";
@@ -36,6 +38,18 @@ describe("same-origin control-plane edge", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://control-plane.internal/v1/internal/connectors/tickets/consume");
     expect(calls[0]?.url).not.toContain(rawTicket);
+  });
+
+  it("rejects flat claims with the wrong audience or an expired ticket", async () => {
+    const now = Date.now();
+    for (const patch of [{ audience: "another-service" }, { expiresAt: now }]) {
+      const verifier = new ServiceBindingTicketVerifier(recordingControlPlane([], async () => Response.json({
+        ticketId: "ticket_fixture", connectorId: "connector_fixture", environmentId: "environment_fixture",
+        audience: "agent-controller-connectors", scopes: ["connector:connect"], expiresAt: now + 60_000,
+        ...patch,
+      })));
+      expect(await verifier.consume("fixture-ticket-value", "agent-controller-connectors", now)).toBeNull();
+    }
   });
 
   it("forwards enrollment and standing-credential ticket requests over one private binding", async () => {
@@ -81,12 +95,14 @@ describe("same-origin control-plane edge", () => {
     expect(calls[1]?.forwardedHost).toBe("console.nextcoder.test");
   });
 
-  it("consumes a backend-shaped ticket and completes the production socket handshake", async () => {
+  it("consumes the real Node internal service response and completes the production socket handshake", async () => {
     const calls: CapturedRequest[] = [];
     const rawTicket = "socket_ticket_for_handshake";
     const controlPlane = recordingControlPlane(calls, async (request) => {
-      const body = JSON.parse(await request.text()) as { now: number };
-      return Response.json(backendConsumption("connector_production", "environment_production", body.now));
+      const service = createConnectorInternalService({
+        store: { consumeConnectorTicket: async ({ now }: { now: number }) => backendConsumption("connector_production", "environment_production", now) },
+      });
+      return await service.fetch(request);
     });
 
     const upgrade = await edgeFetch(
@@ -244,6 +260,7 @@ function backendConsumption(connectorId: string, environmentId: string, now: num
       id: "ticket_backend",
       connectorId,
       environmentId,
+      audience: "agent-controller-connectors",
       expiresAt: new Date(now + 60_000).toISOString(),
     },
     reason: null,

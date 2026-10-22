@@ -107,6 +107,7 @@ test("doctor makes an owned T3 process identity mismatch explicit and unhealthy"
   const output = capture();
   const result = await main(["doctor", "--json", "--state-dir", stateDir], {
     stateDir,
+    home: stateDir,
     stdout: output,
     stderr: output,
     inspectOwnedT3: async () => ({ managed: true, running: true, verified: false, status: "identity_mismatch", pid: 9191 }),

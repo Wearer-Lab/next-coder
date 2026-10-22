@@ -826,6 +826,9 @@ startup secrets. See `cloudflare-control-plane/README.md`.
 Register `outboundByHost` through the inherited SDK setter (a static block assignment), not a
 static class field. A field shadows the registry setter: interception selects the private host,
 but ContainerProxy cannot find its handler and falls through to DNS.
+The private connector ticket-consume service returns flat `ConnectorTicketClaims`, not the raw
+Store `{ connector, ticket, reason }` result. Exercise the real service projection in edge handshake
+tests, including audience and expiry checks; separate fixtures can otherwise hide protocol drift.
 
 - Server code is `.mjs` ESM with no build step and only two runtime dependencies: `@clerk/backend`, and
   `web-push`, which `src/webPush.mjs` alone imports. Keep it that way.
