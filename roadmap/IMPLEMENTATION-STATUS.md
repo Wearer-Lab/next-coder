@@ -19,9 +19,13 @@ September workstream tables remain the baseline for gates not explicitly superse
   jobs, stale-context rejection, durable mutation receipts, touch fault handling, capture destination
   pinning, transcription replay, and bounded signed OTA downloads. Details and explicit product
   limits are in [the firmware workflow audit](../docs/firmware-workflow-audit.md).
-- The current repository gate passes: 383 frontend, 862 server, 95 connector, 16 cloud contract,
-  29 edge, 13 resilience, and 20 private-control-plane tests (**1,418 passing**, three intentional
+- The current repository gate passes: 383 frontend, 866 server, 102 connector, 16 cloud contract,
+  29 edge, 13 resilience, and 20 private-control-plane tests (**1,429 passing**, three intentional
   live-S3 skips), together with the production console build, performance budgets and typechecks.
+- Secure Hosyond 0.2.16 bench evidence now includes real microphone samples, recording UI
+  sample retention, and successful cloud/T3 thread creation with list insertion and binding adoption.
+  The disposable thread was archived and the verification binding restored. All 15 environments
+  built after shared repairs; all seven Hosyond environments were rebuilt after final board changes.
 - Physical Hosyond action-to-T3-to-screen completion remains unverified. Earlier physical attempts
   failed before confirmation and produced no device-origin command. Build evidence must not be
   substituted for the renewed physical workflow pass.

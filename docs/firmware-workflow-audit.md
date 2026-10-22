@@ -66,3 +66,26 @@ After installing the repaired image, the physical workflow pass should cover:
 Other boards receive compile coverage only in this audit. Pin maps, display/audio quality, arbitrary
 router conditions, power-cut OTA rollback, and prolonged hardware soak require separate silicon
 evidence. The operational evidence report records the checks actually run and their measured limits.
+
+## Observed Hosyond bench evidence (2026-10-22)
+
+The secure 0.2.16 bench image exercised the production recording UI entry points with synthetic
+press/release events on the physical board. The microphone boot self-test received 31,408 samples
+over 1,963 ms. A 4,027 ms hold retained 64,768 samples (4,048 ms of 16 kHz mono PCM); the clip was
+discarded locally. This establishes capture and sample retention, not transcription, speech quality
+or a human touch-sensor test.
+
+With the Next Coder folder default set to the existing verification thread's actual
+`codex/gpt-6.1-sol` selection, thread creation returned 201, added exactly one list row and adopted
+the new binding. The empty bench thread was archived and the verification-thread binding restored.
+The earlier 409 without a folder model was a real configuration failure, not a successful create.
+
+All 15 firmware environments built after the shared-core fixes. Following the final Hosyond-only
+Home/bench changes, all seven Hosyond environments were rebuilt. Other-board evidence remains
+compile-only. Production TLS verification and signed OTA checks stayed enabled; USB flashing wrote
+only the confirmed active application slot and preserved provisioning. OTA download fault handling
+has native tests; a physical OTA power-cut/rollback rehearsal was not performed.
+
+Production boot capture is disabled by default; the explicit bench environment opts into the
+two-second microphone self-test. Normal startup therefore avoids recording ambient audio and
+waiting for that diagnostic. The final production image is 0.2.17.

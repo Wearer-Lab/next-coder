@@ -46,6 +46,7 @@ void uiSleepUntilNextFrame();
 // it proves nothing.
 void uiBenchGoToThreads();
 bool uiBenchRunAction(const char* label);
+bool uiBenchCaptureState(bool& audioReady, bool& threadReady, DeviceBlockerKind& blocker);
 const char* uiBenchBoundThreadTitle();
 int uiBenchThreadRowCount();
 const char* uiBenchScreenName();

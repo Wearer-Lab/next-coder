@@ -149,6 +149,8 @@ async function projectConnectorEvent(request, store, notifications) {
 
 function sanitizeProviderCatalogue(value, occurredAt) {
   if (!Array.isArray(value)) return null;
+  const statuses = new Set(["ready", "error", "disabled", "unknown", "starting", "stopped", "unavailable"]);
+  const authStatuses = new Set(["authenticated", "unauthenticated", "unknown", "error"]);
   const providers = value.slice(0, MAX_PROVIDERS).map((provider) => {
     if (!isRecord(provider)) return null;
     const id = boundedText(provider.id ?? provider.instanceId);
@@ -156,6 +158,10 @@ function sanitizeProviderCatalogue(value, occurredAt) {
     return {
       id,
       label: boundedText(provider.label ?? provider.displayName ?? provider.name) ?? id,
+      status: statuses.has(provider.status) ? provider.status : "unknown",
+      enabled: provider.enabled === true,
+      installed: provider.installed === true,
+      auth: { status: authStatuses.has(provider.auth?.status) ? provider.auth.status : "unknown" },
       models: Array.isArray(provider.models)
         ? provider.models.slice(0, MAX_MODELS_PER_PROVIDER).map((model) => {
           if (typeof model === "string") return { id: boundedText(model), name: boundedText(model) };

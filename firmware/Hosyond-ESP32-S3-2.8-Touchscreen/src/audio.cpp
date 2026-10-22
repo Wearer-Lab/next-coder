@@ -26,9 +26,9 @@
 #define AUDIO_SELFTEST_PLAYBACK 0
 #endif
 
-// Record a short clip at boot and report what the microphone actually produced.
+// Boot capture is opt-in bench diagnostics. Product boot must not record room audio or wait on it.
 #ifndef AUDIO_BOOT_SELFTEST_MS
-#define AUDIO_BOOT_SELFTEST_MS 2000
+#define AUDIO_BOOT_SELFTEST_MS 0
 #endif
 
 namespace audio {

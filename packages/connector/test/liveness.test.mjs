@@ -1,3 +1,5 @@
+import "./support/closeEvent.mjs";
+
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -64,7 +66,7 @@ for (const mode of ["welcomed", "awaiting_welcome", "reconnecting", "stop_during
   });
 }
 
-test("stopping while the socket ticket is pending never opens a new connection", async () => {
+test("stopping while the socket ticket is pending never opens a new connection", { timeout: 5000 }, async (t) => {
   let ticket;
   const pending = new Promise((resolve) => { ticket = resolve; });
   let sockets = 0;
@@ -73,6 +75,7 @@ test("stopping while the socket ticket is pending never opens a new connection",
     t3: {}, WebSocketImpl: class { constructor() { ++sockets; } }, fetchImpl: async () => await pending,
     logger: { log() {}, error() {} },
   });
+  t.after(() => connector.stop());
   const running = connector.run();
   connector.stop();
   ticket(Response.json({ ticket: "fixture-ticket" }));
@@ -81,7 +84,7 @@ test("stopping while the socket ticket is pending never opens a new connection",
   assert.equal(connector.socket, null);
 });
 
-test("queued cloud requests cannot start a local effect after intentional stop", async () => {
+test("queued cloud requests cannot start a local effect after intentional stop", { timeout: 5000 }, async (t) => {
   let connector;
   let effects = 0;
   let socket;
@@ -102,6 +105,7 @@ test("queued cloud requests cannot start a local effect after intentional stop",
     t3: { environmentInfo: async () => ({}), providerCatalogue: async () => [], dispatch: async () => { ++effects; return {}; } },
     WebSocketImpl: Socket, fetchImpl: async () => Response.json({ ticket: "fixture-ticket" }), logger: { log() {}, error() {} },
   });
+  t.after(() => connector.stop());
   await connector.connectOnce({ onWelcome() {
     connector.stop();
     socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({

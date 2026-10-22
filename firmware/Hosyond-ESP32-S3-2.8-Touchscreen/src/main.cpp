@@ -234,13 +234,13 @@ void setup() {
 // A bench-only harness, compiled out of every product environment.
 //
 // It exists because the two paths that matter most had only ever been reasoned about: recording
-// with the orb running inside the audio pump, and creating a thread. Both need a finger on the
+// with the recording UI active, and creating a thread. Both need a finger on the
 // glass, and the person driving this board cannot always be at it. So the board drives itself —
 // through the SAME entry points a finger reaches, never a parallel copy, because a harness that
 // calls its own reimplementation proves nothing about the code that ships.
 //
 // The number this exists to produce: a gap-free N ms clip at AUDIO_SAMPLE_RATE_HZ has a known
-// sample count. If drawing the orb inside the pump steals time, the shortfall appears there.
+// sample count. A shortfall reveals capture/pump loss; it does not prove orb performance.
 namespace bench {
 
 enum class Stage : uint8_t { Idle, Settle, TapTalk, PressMic, Holding, Release, Report,
@@ -248,6 +248,7 @@ enum class Stage : uint8_t { Idle, Settle, TapTalk, PressMic, Holding, Release, 
 Stage stage = Stage::Idle;
 uint32_t dueAt = 0;
 uint32_t recordBeganAt = 0;
+uint32_t inspectionDeadline = 0;
 int rowsBefore = -1;
 char boundBefore[48] = {0};
 
@@ -281,11 +282,23 @@ void tick(GatewayClient& gateway) {
       stage = Stage::Settle;
       return;
 
-    case Stage::Settle:
+    case Stage::Settle: {
       if ((int32_t)(now - dueAt) < 0) return;
+      if (inspectionDeadline == 0) inspectionDeadline = now + 30000;
+      bool audioReady = false;
+      bool threadReady = false;
+      DeviceBlockerKind blocker = DeviceBlockerKind::Unknown;
+      const bool inspected = uiBenchCaptureState(audioReady, threadReady, blocker);
+      // Ownership/config arrives before the provider/input inspection finishes. Wait on that
+      // ordinary background evidence, with a deadline; never issue extra HTTP or stall a frame.
+      if ((!inspected || blocker == DeviceBlockerKind::Unknown)
+          && (int32_t)(now - inspectionDeadline) < 0) return;
+      Serial.printf("[bench] capture readiness: inspected=%s audioReady=%s threadReady=%s blocker=%s\n",
+                    inspected ? "yes" : "no", audioReady ? "yes" : "no",
+                    threadReady ? "yes" : "no", deviceBlockerLabel(blocker));
       Serial.printf("[bench] screen before: %s\n", uiBenchScreenName());
       if (!uiBenchRunAction("TALK")) {
-        Serial.println("[bench] CAPTURE: SKIP - TALK is not offered (no microphone, or no thread bound)");
+        Serial.println("[bench] CAPTURE: SKIP - TALK unavailable; see readiness metadata above");
         dueAt = now + 500;
         stage = Stage::GoThreads;
         return;
@@ -293,6 +306,7 @@ void tick(GatewayClient& gateway) {
       dueAt = now + 900;
       stage = Stage::TapTalk;
       return;
+    }
 
     case Stage::TapTalk:
       if ((int32_t)(now - dueAt) < 0) return;
@@ -314,7 +328,7 @@ void tick(GatewayClient& gateway) {
       return;
 
     case Stage::Holding:
-      // Deliberately does nothing: the loop keeps running, so the recording is pumped and the orb
+      // Deliberately does nothing: the loop keeps running, so recording is pumped and the timer
       // is animated by exactly the code that runs when a person is holding the button. That
       // contention is the whole subject of the test.
       if ((int32_t)(now - dueAt) < 0) return;
@@ -333,7 +347,7 @@ void tick(GatewayClient& gateway) {
       const audio::ClipStats st = audio::measureClip();
       const uint32_t expected = (uint32_t)((uint64_t)heldMs * AUDIO_SAMPLE_RATE_HZ / 1000ULL);
       const uint32_t actual = (uint32_t)(bytes / sizeof(int16_t));
-      Serial.println("[bench] ---- capture with the orb running ----");
+      Serial.println("[bench] ---- capture with recording UI active ----");
       Serial.printf("[bench] held %u ms, recorded %u ms, %u bytes\n",
                     (unsigned)heldMs, (unsigned)ms, (unsigned)bytes);
       Serial.printf("[bench] samples expected ~%u, actual %u, shortfall %d (%.2f%%)\n",
@@ -343,8 +357,8 @@ void tick(GatewayClient& gateway) {
       if (actual == 0) Serial.println("[bench] CAPTURE: FAIL - no samples; the press did not start a recording");
       else if (st.peak <= 0) Serial.println("[bench] CAPTURE: FAIL - silence");
       else if (expected && actual * 100ULL < (uint64_t)expected * 97ULL)
-        Serial.println("[bench] CAPTURE: FAIL - more than 3% of samples missing; the orb is stealing pump time");
-      else Serial.println("[bench] CAPTURE: PASS - capture is intact with the orb running");
+        Serial.println("[bench] CAPTURE: FAIL - more than 3% of expected capture samples missing");
+      else Serial.println("[bench] CAPTURE: PASS - expected sample count retained with recording UI active");
       dueAt = now + 1500;
       stage = Stage::GoThreads;
       return;

@@ -2343,6 +2343,9 @@ void buildActions() {
     case Screen::Home: {
       if (gw->hasBlockingRequests()) {
         addAction(Act::Review, "REVIEW", true);
+        // A blocked or unknown turn still needs independent Status/Stop controls. Never trap
+        // the owner behind the console handoff by hiding the assigned Actions menu.
+        if (gw->controlCount() > 0) addAction(Act::SavedActions, "ACTIONS", false);
         return;
       }
       if (!haveThread()) {
@@ -3694,6 +3697,15 @@ void uiHandleTouch(const TouchEvent& event) {
 
 #if BENCH_SELFTEST
 void uiBenchGoToThreads() { goToThreads(); }
+
+bool uiBenchCaptureState(bool& audioReady, bool& threadReady, DeviceBlockerKind& blocker) {
+  if (!gw || !gw->tryLockState(0)) return false;
+  audioReady = audio::available();
+  threadReady = haveThread();
+  blocker = gw->blockerKind();
+  gw->unlockState();
+  return true;
+}
 
 bool uiBenchRunAction(const char* label) {
   buildActions();

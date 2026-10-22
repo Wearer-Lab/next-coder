@@ -404,3 +404,107 @@ int main() {
   const checked = spawnSync(executable, [], { encoding: 'utf8' });
   assert.equal(checked.status, 0, checked.stderr);
 });
+
+test('actual Home actions preserve Status and Stop access while blocked or awaiting inspection', async (t) => {
+  const compiler = process.env.CXX || 'c++';
+  if (spawnSync(compiler, ['--version']).error?.code === 'ENOENT') return t.skip('Native C++ compiler unavailable');
+  const directory = await mkdtemp(join(tmpdir(), 'next-coder-home-recovery-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ui = await readFile('firmware/Hosyond-ESP32-S3-2.8-Touchscreen/src/ui.cpp', 'utf8');
+  const actionsStart = ui.indexOf('void buildActions()');
+  const homeStart = ui.indexOf('    case Screen::Home:', actionsStart);
+  const home = ui.slice(homeStart, ui.indexOf('    case Screen::Threads:', homeStart));
+  const routeStart = ui.indexOf('    case Act::SavedActions:', ui.indexOf('void runAction(Act id)'));
+  const route = ui.slice(routeStart, ui.indexOf('    case Act::NewThread:', routeStart));
+  const model = await readFile('firmware/shared/NextCoderCore/src/OperateModel.h', 'utf8');
+  const projection = model.slice(model.indexOf('constexpr size_t kMaxRemoteBlockerCount'), model.indexOf('// The two-line status surface'));
+  const operate = await readFile('firmware/shared/NextCoderCore/src/GatewayOperate.cpp', 'utf8');
+  const systemStart = operate.indexOf('DispatchResult GatewayClient::runAction(');
+  const system = operate.slice(systemStart, operate.indexOf('  if (actionId.length() == 0)', systemStart));
+  const main = await readFile('firmware/Hosyond-ESP32-S3-2.8-Touchscreen/src/main.cpp', 'utf8');
+  const settleStart = main.indexOf('    case Stage::Settle:');
+  const settle = main.slice(settleStart, main.indexOf('    case Stage::TapTalk:', settleStart));
+  await writeFile(join(directory, 'check.cpp'), `
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+#include <algorithm>
+using String=std::string;
+${projection}
+enum class Act { None,Review,PickThread,Retry,SavedActions,Talk };
+enum class Screen { Home,Actions };
+Screen screen=Screen::Home;
+struct Action { Act id; };
+std::vector<Action> actions;
+void addAction(Act id,const char*,bool,bool=true) { actions.push_back({id}); }
+bool haveThread() { return true; }
+namespace audio { bool available() { return true; } }
+struct Gateway {
+ DeviceBlockerKind kind=DeviceBlockerKind::None;
+ size_t controls=3;
+ bool hasBlockingRequests() { return kind!=DeviceBlockerKind::None; }
+ size_t controlCount() { return controls; }
+ bool responseOpen() { return false; }
+ struct Response { String state="complete"; } value;
+ const Response& response(){return value;}
+} gateway;
+Gateway* gw=&gateway;
+void buildHome() { actions.clear(); switch(Screen::Home) {
+${home}
+default:return;
+} }
+void goTo(Screen next) { screen=next; }
+void activate(Act id) { switch(id) {
+${route}
+default:return;
+} }
+struct DispatchResult { int route=0; };
+struct GatewayClient {
+ DispatchResult sendStatus(){return {1};}
+ DispatchResult sendStop(){return {2};}
+ DispatchResult runAction(const String&,const String&);
+};
+struct StateLock { explicit StateLock(GatewayClient*){} };
+${system}
+return {};
+}
+enum class Stage { Settle, GoThreads, TapTalk };
+Stage stage=Stage::Settle;
+uint32_t dueAt=0,inspectionDeadline=0;
+int talkAttempts=0;
+bool uiBenchCaptureState(bool& microphone,bool& thread,DeviceBlockerKind& blocker) {
+ microphone=thread=true; blocker=DeviceBlockerKind::Unknown; return true;
+}
+bool uiBenchRunAction(const char*) { ++talkAttempts; return false; }
+const char* uiBenchScreenName() { return "Home"; }
+struct { template<class... T> void printf(const char*,T...) {} void println(const char*) {} } Serial;
+void benchTick(uint32_t now) { switch(stage) {
+${settle}
+default:return;
+} }
+int main() {
+ for(auto kind:{DeviceBlockerKind::Unknown,DeviceBlockerKind::GatewayApproval,DeviceBlockerKind::ProviderApproval,DeviceBlockerKind::UserInput}) {
+  gateway.kind=kind; buildHome();
+  assert(actions.size()==2 && actions[0].id==Act::Review && actions[1].id==Act::SavedActions);
+  activate(actions[1].id); assert(screen==Screen::Actions);
+ }
+ gateway.kind=DeviceBlockerKind::None; buildHome();
+ assert(actions.size()==2 && actions[0].id==Act::Talk && actions[1].id==Act::SavedActions);
+ gateway.kind=DeviceBlockerKind::Unknown; gateway.controls=0; buildHome();
+ assert(actions.size()==1 && actions[0].id==Act::Review);
+ GatewayClient client;
+ assert(client.runAction("system_status","").route==1);
+ assert(client.runAction("system_stop","").route==2);
+ benchTick(1); assert(talkAttempts==0 && inspectionDeadline==30001);
+ benchTick(30000); assert(talkAttempts==0);
+ benchTick(30001); assert(talkAttempts==1 && stage==Stage::GoThreads);
+}
+`);
+  const executable = join(directory, 'check');
+  const compiled = spawnSync(compiler, ['-std=c++17', join(directory, 'check.cpp'), '-o', executable], { encoding: 'utf8' });
+  assert.equal(compiled.status, 0, compiled.stderr);
+  const checked = spawnSync(executable, [], { encoding: 'utf8' });
+  assert.equal(checked.status, 0, checked.stderr);
+});

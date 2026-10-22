@@ -4,6 +4,8 @@ import test from "node:test";
 import { createApp } from "../src/app.mjs";
 import { createConnectorInternalService } from "../src/connectorInternalService.mjs";
 import { createMemoryStore } from "../src/store.mjs";
+import { ConnectorClient } from "../packages/connector/src/connector.mjs";
+import { extractHarnesses, resolveLatestModelSelection } from "../src/t3Harness.mjs";
 
 const AUDIENCE = "agent-controller-connectors";
 
@@ -145,6 +147,60 @@ test("service binding projects bounded hello, catalogue, heartbeat, and disconne
   assert.equal(state.connectors[0].status, "offline");
   assert.equal(state.connectors[0].lastDisconnectReason, "heartbeat_timeout");
   assert.equal(JSON.stringify(state).includes(secretMarker), false);
+});
+
+test("T3 provider readiness survives connector hello and cloud projection without disclosing authentication data", async () => {
+  const { store, environment, enrolled } = await fixture();
+  const privateMarker = "private-provider-diagnostic-or-credential";
+  const providers = [
+    { instanceId: "codex", displayName: "Codex", status: "ready", enabled: true, installed: true,
+      auth: { status: "authenticated", email: privateMarker, token: privateMarker, label: privateMarker },
+      models: [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", credential: privateMarker }],
+      message: privateMarker, accessToken: privateMarker },
+    { instanceId: "disabled", status: "ready", enabled: false, installed: true,
+      auth: { status: "authenticated" }, models: [{ slug: "disabled-model" }] },
+    { instanceId: "unauthenticated", status: "ready", enabled: true, installed: true,
+      auth: { status: "unauthenticated", message: privateMarker }, models: [{ slug: "login-required-model" }] },
+    { instanceId: "unknown", enabled: true, installed: true, models: [{ slug: "unknown-model" }] },
+    { instanceId: "malformed", status: privateMarker, enabled: "true", installed: "true",
+      auth: { status: privateMarker }, models: [{ slug: "malformed-model" }] },
+  ];
+  const connector = new ConnectorClient({
+    state: { connectorId: enrolled.connector.id, environmentId: environment.id, t3AccessToken: "test-local-token" },
+    t3: { environmentInfo: async () => ({ serverVersion: "0.1.1" }), providerCatalogue: async () => providers },
+    WebSocketImpl: class {}, logger: { log() {}, error() {} },
+  });
+  const hello = await connector.buildHello("catalogue_connection");
+  assert.equal(hello.body.providerCatalogue[0].status, "ready");
+  assert.equal(hello.body.providerCatalogue[0].auth.status, "authenticated");
+  assert.equal(hello.body.providerCatalogue[0].label, "Codex");
+  assert.equal(JSON.stringify(hello.body.providerCatalogue).includes(privateMarker), false,
+    "the local connector must discard raw login details and diagnostic messages");
+  // Independently test the cloud boundary against a connector sending additional private fields.
+  hello.body.providerCatalogue[0].auth.token = privateMarker;
+  hello.body.providerCatalogue[0].auth.email = privateMarker;
+  hello.body.providerCatalogue[0].message = privateMarker;
+  const service = createConnectorInternalService({ store, ticketAudience: AUDIENCE });
+  const response = await service.fetch(request("/v1/internal/connector-events", {
+    eventVersion: 1, environmentId: environment.id, connectorId: enrolled.connector.id,
+    connectionId: "catalogue_connection", occurredAt: Date.now(), kind: "connector.hello", body: hello.body,
+  }));
+  assert.equal(response.status, 202);
+  const catalogue = store.exportState().environments[0].providerCatalogue;
+  const harnesses = extractHarnesses({ projects: [], threads: [] }, { catalogue });
+  const codex = harnesses.find((entry) => entry.instanceId === "codex");
+  assert.equal(codex.available, true);
+  assert.equal(codex.status, "ready");
+  assert.equal(codex.models[0].slug, "gpt-6.1-sol");
+  assert.deepEqual(resolveLatestModelSelection({ harnesses }), {
+    instanceId: "codex", model: "gpt-6.1-sol", options: [],
+  });
+  for (const instanceId of ["disabled", "unauthenticated", "unknown", "malformed"]) {
+    assert.equal(harnesses.find((entry) => entry.instanceId === instanceId).available, false);
+  }
+  assert.equal(harnesses.find((entry) => entry.instanceId === "unknown").status, "unknown");
+  assert.equal(harnesses.find((entry) => entry.instanceId === "unknown").auth.status, "unknown");
+  assert.equal(JSON.stringify(catalogue).includes(privateMarker), false);
 });
 
 test("service event sink enforces connector-to-environment binding", async () => {

@@ -117,6 +117,12 @@ promoted atomically to ownership metadata; an interruption before fingerprinting
 must never trigger a guessed kill or duplicate launch. Reused user-managed T3 processes are not
 owned or stopped.
 
+Provider model slugs do not establish provider availability. The connector hello and internal
+catalogue sanitizer must preserve explicit bounded readiness, enabled/installed flags and auth
+status while dropping credentials and private diagnostics. Missing or malformed health stays
+unknown; a healthy local T3 provider must not become unavailable merely because its metadata was
+stripped in transit. Keep a hello-to-owner-projection regression across both boundaries.
+
 Managed connector welcome and heartbeat timers own process liveness until the connection settles.
 A pending promise is not a keep-alive handle. Stop must prevent late ticket/welcome/message callbacks
 from opening sockets, recreating timers, or dispatching local work; subprocess tests exercise the

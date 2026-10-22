@@ -455,14 +455,24 @@ function connectorCapabilities(probe, authenticated, probeAvailable, metadataAva
 }
 
 function sanitizeProviders(providers) {
+  if (!Array.isArray(providers)) return [];
+  const statuses = new Set(["ready", "error", "disabled", "unknown", "starting", "stopped", "unavailable"]);
+  const authStatuses = new Set(["authenticated", "unauthenticated", "unknown", "error"]);
+  const text = (value) => typeof value === "string" ? value.slice(0, 120) : "";
   return providers.slice(0, 50).map((provider) => ({
-    id: String(provider?.id ?? provider?.instanceId ?? "").slice(0, 120),
-    label: String(provider?.label ?? provider?.name ?? "").slice(0, 120),
+    id: text(provider?.id ?? provider?.instanceId),
+    label: text(provider?.displayName ?? provider?.label ?? provider?.name),
+    // Readiness is independent from the existence of model slugs. Preserve only explicit
+    // structured evidence; never send provider error messages, login labels, or credentials.
+    status: statuses.has(provider?.status) ? provider.status : "unknown",
+    enabled: provider?.enabled === true,
+    installed: provider?.installed === true,
+    auth: { status: authStatuses.has(provider?.auth?.status) ? provider.auth.status : "unknown" },
     models: Array.isArray(provider?.models) ? provider.models.slice(0, 50).map((model) => ({
-      id: String(model?.id ?? model?.slug ?? model ?? "").slice(0, 120),
-      label: String(model?.label ?? model?.name ?? model?.id ?? model ?? "").slice(0, 120),
-    })) : [],
-  }));
+      id: text(typeof model === "string" ? model : model?.id ?? model?.slug),
+      label: text(typeof model === "string" ? model : model?.label ?? model?.name ?? model?.id ?? model?.slug),
+    })).filter((model) => model.id) : [],
+  })).filter((provider) => provider.id);
 }
 
 function parseDeadline(value) {
