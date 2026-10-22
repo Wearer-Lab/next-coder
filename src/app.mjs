@@ -3773,9 +3773,15 @@ export function createApp({
         // device stops polling.
         threadStreams.watch({ userId: device.userId, environmentId: environment.id, threadId });
         const snapshot = await fetchDeviceSnapshot(store, environment);
-        const thread = (Array.isArray(snapshot?.threads) ? snapshot.threads : [])
+        let thread = (Array.isArray(snapshot?.threads) ? snapshot.threads : [])
           .find((candidate) => optionalString(candidate?.id) === threadId);
         if (!thread) throw new HttpError(404, "Selected thread was not found in the bound environment.");
+        // T3 protocol 2 shell snapshots omit message bodies. Hydrate only the selected thread
+        // when its response screen is requested; list/device menus remain compact.
+        if (!Array.isArray(thread.messages) || thread.messages.length === 0) {
+          const detail = await fetchT3ThreadDetail(environment, threadId, { turnLimit: 8 });
+          thread = detail?.thread ?? detail ?? thread;
+        }
         const stored = await store.getDeviceControls({ userId: device.userId, deviceId: device.id });
         const controls = stored?.explicit
           ? await resolveDeviceControls({ store, device, stored, config, forFirmware: true })

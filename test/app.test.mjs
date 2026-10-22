@@ -3134,10 +3134,15 @@ function includesCompletedEvent(output, pattern) {
 // owner bound. The owner keeps the boundary that matters; the hardware gets the
 // autonomy that is actually useful at a five-key bezel.
 
-async function threadSelectionFixture(t, { threads, snapshotError = null } = {}) {
+async function threadSelectionFixture(t, { threads, snapshotError = null, detailThread = null } = {}) {
   const originalFetch = globalThis.fetch;
+  const detailReads = [];
   globalThis.fetch = async (url) => {
     const parsed = new URL(String(url));
+    if (detailThread && parsed.pathname === `/api/orchestration/threads/${detailThread.id}`) {
+      detailReads.push(parsed);
+      return jsonResponse({ snapshotSequence: 1, thread: detailThread }, 200);
+    }
     if (parsed.pathname === "/api/orchestration/snapshot") {
       if (snapshotError) throw snapshotError;
       return jsonResponse({
@@ -3181,8 +3186,25 @@ async function threadSelectionFixture(t, { threads, snapshotError = null } = {})
     body: { label: "Bound T3", baseUrl: "https://bound-t3.example", accessToken: "tok" },
   });
 
-  return { originalFetch, baseUrl, authHeaders, created, deviceHeaders, environment };
+  return { originalFetch, baseUrl, authHeaders, created, deviceHeaders, environment, detailReads };
 }
+
+test("a device hydrates only its selected protocol-2 thread when reading the response", async (t) => {
+  const shellThread = { id: "thread_v2_output", title: "Protocol 2 reply", session: { status: "ready" } };
+  const f = await threadSelectionFixture(t, { threads: [shellThread], detailThread: {
+    ...shellThread, messages: [{ id: "reply_v2", role: "assistant", text: "Device reply OK", createdAt: new Date().toISOString() }],
+  } });
+  await requestJson(f.originalFetch, f.baseUrl, `/v1/devices/${f.created.device.id}/config`, {
+    method: "PUT", headers: f.authHeaders, body: { environmentId: f.environment.environment.id, threadId: shellThread.id },
+  });
+  await requestJson(f.originalFetch, f.baseUrl, "/v1/device/threads", { headers: f.deviceHeaders });
+  assert.equal(f.detailReads.length, 0, "thread lists must not hydrate messages");
+  const output = await requestJson(f.originalFetch, f.baseUrl, "/v1/device/thread-output", { headers: f.deviceHeaders });
+  assert.equal(output.response.state, "complete");
+  assert.match(output.response.lines.join(" "), /Device reply OK/u);
+  assert.equal(f.detailReads.length, 1);
+  assert.equal(f.detailReads[0].searchParams.get("turnLimit"), "8");
+});
 
 test("a device lists titled thread status and the current selection from its bound environment", async (t) => {
   const f = await threadSelectionFixture(t);

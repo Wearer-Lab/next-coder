@@ -1278,6 +1278,10 @@ harness derived from the environment's snapshot. A bezel has no business picking
 
 ### Selected-thread response pages
 
+T3 protocol 2 shell snapshots omit message bodies. This endpoint reads up to eight turns from the
+selected thread's detail when its cached shell row has no messages. Thread menus remain compact
+and never hydrate message bodies for every listed thread.
+
 ```http
 GET /v1/device/thread-output?page=0&after=2026-08-08T20%3A00%3A00.000Z
 x-device-id: dev_...
