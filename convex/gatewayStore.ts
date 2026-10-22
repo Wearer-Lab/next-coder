@@ -2461,7 +2461,9 @@ export const createMediaUploadSession = gatewayMutation({
       const conflict = existing.kind !== args.kind
         || existing.contentType !== args.contentType
         || existing.expectedSizeBytes !== args.expectedSizeBytes
-        || existing.expectedSha256 !== args.expectedSha256;
+        || existing.expectedSha256 !== args.expectedSha256
+        || (existing.environmentId ?? null) !== (args.environmentId ?? null)
+        || (existing.threadId ?? null) !== (args.threadId ?? null);
       return { created: false, conflict, session: publicMediaUploadSession(existing) };
     }
     const usage = await ensureMediaOwnerUsage(ctx, args.userId);
@@ -2986,14 +2988,16 @@ export const createMediaJob = gatewayMutation({
     const kind = args.kind ?? "transcription";
 
     // Enqueue is idempotent. Two clicks on "Transcribe" must not produce two workers racing to
-    // write the same transcript.
+    // write the same transcript. A device capture also reuses its terminal job so a replayed
+    // finalize cannot auto-send the same recording again.
     const existing = await ctx.db
       .query("mediaJobs")
       .withIndex("byMediaId", (q: any) => q.eq("mediaId", args.mediaId))
       .collect();
     const active = existing.find((job: any) => job.userExternalId === args.userId
       && job.kind === kind
-      && !mediaJobTerminalStages.has(job.stage));
+      && (!mediaJobTerminalStages.has(job.stage)
+        || (args.deviceId && job.deviceId === args.deviceId)));
     if (active) return mediaJobForGateway(active);
 
     const id = await ctx.db.insert("mediaJobs", {

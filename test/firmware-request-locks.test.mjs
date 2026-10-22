@@ -11,7 +11,7 @@ test("actual firmware request releases state across TLS waits and transport dest
   const directory = await mkdtemp(join(tmpdir(), "next-coder-locks-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const source = await readFile("firmware/shared/NextCoderCore/src/GatewayClient.cpp", "utf8");
-  const request = source.slice(source.indexOf("int GatewayClient::request("), source.indexOf("\nvoid GatewayClient::sendHeartbeat()"));
+  const request = source.slice(source.indexOf("int GatewayClient::request("), source.indexOf("\nvoid GatewayClient::observeTransportResult("));
   await writeFile(join(directory, "check.cpp"), `
 #include <cassert>
 #include <cstdint>
@@ -49,11 +49,12 @@ struct HTTPClient {
  Header header(const char*) { return {}; }
  void end() { assert(!stateHeld && tlsHeld); }
 };
-struct Store { String gatewayUrl() { return "https://gateway"; } String deviceId() { return "device"; } String deviceSecret() { return "secret"; } };
+struct Store { struct Snapshot {String gatewayUrl="https://gateway",deviceId="device",deviceSecret="secret";}; Snapshot transportSnapshot(){return {};} };
 struct GatewayClient {
  Store storage; Store* store_ = &storage; unsigned backoffUntil_ = 0; bool revoked_ = false;
  uint32_t releaseStateForBlockingCall() { assert(stateHeld); stateHeld = false; return 3; }
  void reacquireStateAfterBlockingCall(uint32_t depth) { assert(depth == 3 && !tlsHeld && !stateHeld); stateHeld = true; ++resumed; }
+ void observeTransportResult(int) {}
  int request(const char*, const char*, const String&, String&, const String* = nullptr, bool = true);
 };
 ${request}

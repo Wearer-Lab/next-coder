@@ -7,6 +7,7 @@
 #include <WiFiClientSecure.h>
 
 #include <GatewayTls.h>
+#include <GatewayHttp.h>
 
 #if __has_include("controller_config.h")
 #include "controller_config.h"
@@ -42,8 +43,8 @@ GatewayStatus probeOnce(const String& base) {
   // thread. The device was rebooting roughly twice a minute.
   //
   // Clients first, HTTPClient last: it dies first, while what it points at is still alive.
-  WiFiClientSecure secure;
-  WiFiClient plain;
+  gateway_http::YieldingClient<WiFiClientSecure> secure;
+  gateway_http::YieldingClient<WiFiClient> plain;
   HTTPClient http;
 
   http.setTimeout(kTimeoutMs);
@@ -51,14 +52,7 @@ GatewayStatus probeOnce(const String& base) {
   // A gateway that redirects is a gateway that is up; following the redirect only slows the answer.
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
 
-  bool began = false;
-  if (url.startsWith("https://")) {
-    if (!gateway_tls::configure(secure, "probe")) return GatewayStatus::Unreachable;
-    began = http.begin(secure, url);
-  } else {
-    began = http.begin(plain, url);
-  }
-  if (!began) return GatewayStatus::Unreachable;
+  if (!gateway_tls::beginHttp(http, plain, secure, url, "probe")) return GatewayStatus::Unreachable;
 
   const int code = http.GET();
   http.end();
@@ -94,7 +88,8 @@ void probeTask(void*) {
       if (WiFi.status() != WL_CONNECTED) {
         status = GatewayStatus::Unknown;
       } else {
-        GatewayStatus s = probeOnceLocked(deviceStore().gatewayUrl());
+        const String configuredUrl = deviceStore().transportSnapshot().gatewayUrl;
+        GatewayStatus s = probeOnceLocked(configuredUrl);
 
         // If the configured gateway does not answer, look for one. An address that cannot be
         // reached is worth nothing, so replacing it with one that can is never a downgrade — and
@@ -103,22 +98,27 @@ void probeTask(void*) {
         //
         // Only on failure, never on success: a working gateway is not second-guessed because some
         // other machine on the network also answered.
-        if (s != GatewayStatus::Reachable) {
+#if INSECURE_SKIP_TLS_VERIFY
+        // LAN discovery is an explicit bench convenience only. A transient cloud failure must
+        // never redirect a provisioned identity to an unauthenticated UDP advertiser.
+        if (s != GatewayStatus::Reachable
+            && gateway_tls::isBenchLanHttpUrl(configuredUrl)) {
           const GatewayCandidate found = discoverGateway();
-          if (found.found && found.baseUrl != deviceStore().gatewayUrl()) {
+          if (found.found && found.baseUrl != configuredUrl) {
             const GatewayStatus probed = probeOnceLocked(found.baseUrl);
             if (probed == GatewayStatus::Reachable) {
               Serial.printf("[gateway] adopting discovered %s (%s); previous %s was %s\n",
                             found.baseUrl.c_str(), found.name.c_str(),
-                            deviceStore().gatewayUrl().c_str(), gatewayStatusText(s));
+                            configuredUrl.c_str(), gatewayStatusText(s));
               deviceStore().setGatewayUrl(found.baseUrl);
               s = probed;
             }
           }
         }
+#endif
 
         if (s != status) {
-          Serial.printf("[gateway] %s -> %s\n", deviceStore().gatewayUrl().c_str(),
+          Serial.printf("[gateway] %s -> %s\n", configuredUrl.c_str(),
                         gatewayStatusText(s));
         }
         status = s;

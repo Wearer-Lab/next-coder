@@ -144,6 +144,12 @@ export async function stageFirmwareSources(entries) {
       join(source, "include", "controller_config.example.h"),
       join(destination, "include", "controller_config.h"),
     );
+    // Explicit placeholder environments include this filename directly. Both copies originate
+    // from the checked-in example; neither may read the ignored live controller configuration.
+    await copyFile(
+      join(source, "include", "controller_config.example.h"),
+      join(destination, "include", "controller_config.example.h"),
+    );
   }
   return temporaryRoot;
 }

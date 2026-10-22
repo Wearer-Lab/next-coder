@@ -70,6 +70,7 @@ export class ConnectorClient {
 
   async connectOnce({ once = false, onWelcome = null } = {}) {
     const { ticket } = await requestSocketTicket(this.state, { fetchImpl: this.fetchImpl });
+    if (this.stopped) return { shutdownReason: "stopped" };
     const socket = new this.WebSocketImpl(cloudSocketUrl(this.state.server, ticket));
     this.socket = socket;
     const sessionId = randomUUID();
@@ -80,7 +81,8 @@ export class ConnectorClient {
       let settled = false;
       let shutdownReason = null;
       const welcomeTimer = setTimeout(() => settle(Object.assign(new Error("Cloud websocket welcome timed out."), { code: "CLOUD_WELCOME_TIMEOUT" })), 15_000);
-      welcomeTimer.unref?.();
+      // This is a managed service lifecycle deadline, not optional housekeeping. Keep the
+      // process alive even if the transport has temporarily released its native handles.
       const settle = (error) => {
         if (settled) return;
         settled = true;
@@ -95,14 +97,19 @@ export class ConnectorClient {
         if (error) reject(error); else resolve({ shutdownReason });
       };
       socket.addEventListener("open", () => {
+        if (settled || this.stopped) return;
         void this.buildHello(sessionId).then((hello) => this.send(socket, hello)).catch((error) => {
           try { socket.close(1011, "hello failed"); } catch {}
           settle(error);
         });
       });
       socket.addEventListener("message", (event) => {
+        if (settled || this.stopped) return;
         void this.onMessage(socket, event.data).then((result) => {
           if (result?.shutdown) shutdownReason = result.shutdown;
+          // stop/close may win while frame handling awaited local work. A late welcome must
+          // never recreate a referenced heartbeat timer after settle has already cleaned up.
+          if (settled || this.stopped) return;
           if (result?.welcome && !welcomed) {
             welcomed = true;
             clearTimeout(welcomeTimer);
@@ -110,9 +117,9 @@ export class ConnectorClient {
             this.state.lastConnectedAt = new Date().toISOString();
             this.state.lastConnectionError = null;
             const interval = clampInteger(result.frame.body.heartbeatIntervalMs, 1_000, 60_000, 20_000);
-            heartbeatTimer = setInterval(() => void this.sendHeartbeat(socket), interval);
-            heartbeatTimer.unref?.();
-            void this.sendHeartbeat(socket);
+            const heartbeat = () => { void this.sendHeartbeat(socket).catch(settle); };
+            heartbeatTimer = setInterval(heartbeat, interval);
+            heartbeat();
             if (this.state.credentialRotation?.id && !this.state.credentialRotation.acknowledgedAt) {
               const rotatedAt = new Date().toISOString();
               this.send(socket, {

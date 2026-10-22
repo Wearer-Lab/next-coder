@@ -19,6 +19,9 @@
 #include "GatewayTls.h"
 
 #include "MediaUpload.h"
+#include "GatewayDeviceRequest.h"
+
+using gateway_request::beginDurableDeviceRequest;
 
 namespace {
 
@@ -44,35 +47,6 @@ String encodePathSegment(const String& value) {
 }
 
 bool ok(int code) { return code >= 200 && code < 300; }
-
-String requestFingerprint(const String& value) {
-  uint64_t hash = 1469598103934665603ULL;
-  for (size_t index = 0; index < value.length(); index += 1) {
-    hash ^= static_cast<uint8_t>(value[index]);
-    hash *= 1099511628211ULL;
-  }
-  char output[17];
-  snprintf(output, sizeof(output), "%08lx%08lx",
-    static_cast<unsigned long>(hash >> 32), static_cast<unsigned long>(hash & 0xffffffffULL));
-  return String(output);
-}
-
-String newDeviceRequestId() {
-  char output[41];
-  snprintf(output, sizeof(output), "dev:%08lx-%08lx-%08lx-%08lx",
-    static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()),
-    static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
-  return String(output);
-}
-
-String beginDurableDeviceRequest(DeviceStore* store, const String& signature) {
-  const String hash = requestFingerprint(signature);
-  String requestId;
-  if (store && store->pendingRequestHash() == hash) requestId = store->pendingRequestId();
-  if (requestId.length() == 0) requestId = newDeviceRequestId();
-  if (store) store->setPendingRequest(requestId, hash);
-  return requestId;
-}
 
 // Turns a gateway status into something the person holding the device can act on. The full
 // diagnostic stays in the console; this is the one line that tells them what fixes it.
@@ -138,8 +112,30 @@ bool GatewayClient::applyConfigJson(const String& payload) {
   // Empty values are meaningful and are applied verbatim. Clearing the selected thread in the
   // console has to disable every requiresThread control immediately; retaining a stale id would
   // leave the device offering actions the gateway will refuse.
-  context_.environmentId = config["environmentId"] | "";
-  context_.threadId = config["threadId"] | "";
+  const String nextEnvironment = String(config["environmentId"] | "");
+  const String nextThread = String(config["threadId"] | "");
+  const String nextProject = String(config["projectId"] | "");
+  const bool changedEnvironment = nextEnvironment != context_.environmentId;
+  if (changedEnvironment || nextThread != context_.threadId || nextProject != context_.projectId) {
+    contextGeneration_ += 1;
+    remoteBlockers_ = RemoteBlockers();
+    remoteBlockers_.providerUnknown = remoteBlockers_.inputUnknown = true;
+    nextApprovalsAt_ = millis();
+    closeResponse();
+  }
+  context_.environmentId = nextEnvironment;
+  context_.threadId = nextThread;
+  context_.projectId = nextProject;
+  if (changedEnvironment) {
+    threadCount_ = 0;
+    nextThreadsAt_ = millis();
+    nextControlsAt_ = millis();
+  }
+  selectedThreadIndex_ = -1;
+  for (size_t i = 0; i < threadCount_; ++i) {
+    threads_[i].selected = threads_[i].id == nextThread;
+    if (threads_[i].selected) selectedThreadIndex_ = (int)i;
+  }
 
   // Prompt and shell text are different: an empty string there means "not configured", not
   // "cleared", so a blank never overwrites a usable default.
@@ -374,6 +370,10 @@ String GatewayClient::selectedThreadLabel() const {
 void GatewayClient::adoptThreadBinding(const String& threadId) {
   StateLock guard(this);
   if (threadId.length() == 0 || context_.threadId == threadId) return;
+  contextGeneration_ += 1;
+  remoteBlockers_ = RemoteBlockers();
+  remoteBlockers_.providerUnknown = remoteBlockers_.inputUnknown = true;
+  nextApprovalsAt_ = millis();
   context_.threadId = threadId;
   // The response model belongs to the thread that was open a moment ago, so it is not an answer
   // about this one. Closed rather than left to be reinterpreted against a different conversation.
@@ -389,10 +389,29 @@ void GatewayClient::adoptThreadBinding(const String& threadId) {
   Serial.printf("[gateway] now pointing at thread %s\n", threadId.c_str());
 }
 
+void GatewayClient::clearContextBinding(const String& environmentId, const String& projectId) {
+  StateLock guard(this);
+  contextGeneration_ += 1;
+  remoteBlockers_ = RemoteBlockers();
+  remoteBlockers_.providerUnknown = remoteBlockers_.inputUnknown = true;
+  nextApprovalsAt_ = millis();
+  context_.environmentId = environmentId;
+  context_.projectId = projectId;
+  context_.threadId = "";
+  threadCount_ = 0;
+  selectedThreadIndex_ = -1;
+  closeResponse();
+  nextConfigAt_ = millis();
+  nextControlsAt_ = millis();
+  touch();
+}
+
 bool GatewayClient::refreshThreads() {
   StateLock guard(this);
+  const uint32_t generation = contextGeneration_;
   String response;
   const int code = request("GET", "/v1/device/threads", "", response);
+  if (generation != contextGeneration_) { nextThreadsAt_ = millis(); return false; }
   if (!ok(code)) {
     threadsDetail_ = remedyFor(code);
     touch();
@@ -481,8 +500,10 @@ bool GatewayClient::selectThread(size_t index) {
     return true;
   }
 
+  const String targetId = target.id;
+  const String environmentId = context_.environmentId;
   JsonDocument doc;
-  doc["threadId"] = target.id;
+  doc["threadId"] = targetId;
   String body;
   serializeJson(doc, body);
 
@@ -496,10 +517,20 @@ bool GatewayClient::selectThread(size_t index) {
     return false;
   }
 
-  context_.threadId = target.id;
-  for (size_t i = 0; i < threadCount_; i += 1) threads_[i].selected = false;
-  target.selected = true;
-  selectedThreadIndex_ = (int)index;
+  if (context_.environmentId != environmentId) {
+    threadsDetail_ = "Context changed; reload threads";
+    return false;
+  }
+  contextGeneration_ += 1;
+  remoteBlockers_ = RemoteBlockers();
+  remoteBlockers_.providerUnknown = remoteBlockers_.inputUnknown = true;
+  nextApprovalsAt_ = millis();
+  context_.threadId = targetId;
+  selectedThreadIndex_ = -1;
+  for (size_t i = 0; i < threadCount_; i += 1) {
+    threads_[i].selected = threads_[i].id == targetId;
+    if (threads_[i].selected) selectedThreadIndex_ = (int)i;
+  }
   threadsDetail_ = "";
   // Availability — Stop especially, and every capture action — belongs to the newly opened thread's
   // state. Without this the previous thread's controls stay on screen until the 30 s poll.
@@ -536,7 +567,12 @@ DispatchResult GatewayClient::readDispatch(int code, const String& response, con
     // A dispatch that resolved synchronously — status, mostly — hands back a rendered screen
     // instead of a turn to wait for.
     JsonObject screen = doc["screen"].as<JsonObject>();
-    if (screen.isNull()) screen = doc["command"]["result"].as<JsonObject>();
+    if (screen.isNull()) {
+      JsonObject legacyScreen = doc["command"]["result"].as<JsonObject>();
+      // Agent acknowledgements and failure evidence are also result objects. Only an explicit
+      // display projection is a screen; treating any result as one hides every real reply.
+      if (!legacyScreen["line1"].isNull() || !legacyScreen["line2"].isNull()) screen = legacyScreen;
+    }
     if (!screen.isNull()) {
       result.hasScreen = true;
       result.screen.title = screen["title"] | "T3 Code";
@@ -546,11 +582,18 @@ DispatchResult GatewayClient::readDispatch(int code, const String& response, con
     }
   }
 
+  if (!parsed || result.status == "blocked" || result.status == "failed") result.accepted = false;
   result.requiresApproval = result.status == "approval_required";
   if (result.requiresApproval) {
     result.detail = "Approval needed";
     // The queue just gained an entry; showing it on the next pass beats waiting out the timer.
     nextApprovalsAt_ = millis();
+  } else if (result.status == "blocked") {
+    result.detail = "Action blocked";
+  } else if (result.status == "failed") {
+    result.detail = "Command failed";
+  } else if (!parsed && ok(code)) {
+    result.detail = "Invalid gateway reply";
   } else if (result.status == "completed") {
     result.detail = "Complete";
   } else if (result.status == "dispatched") {
@@ -561,8 +604,11 @@ DispatchResult GatewayClient::readDispatch(int code, const String& response, con
     result.detail = "Action blocked";
   } else if (code == 404) {
     result.detail = "Action unavailable";
+  } else if (code == 409 && String(doc["error"]["details"]["code"] | "") == "device_context_changed") {
+    result.detail = "Context changed; refresh threads";
+    nextConfigAt_ = millis();
   } else if (code == 409) {
-    result.detail = "Re-pair T3 in dashboard";
+    result.detail = "Check console; previous request";
   } else {
     result.detail = remedyFor(code);
   }
@@ -577,9 +623,19 @@ DispatchResult GatewayClient::postIntent(const String& intentJson, const String&
   if (context_.environmentId.length() > 0) doc["environmentId"] = context_.environmentId;
   if (context_.threadId.length() > 0) doc["threadId"] = context_.threadId;
 
-  const String clientRequestId = beginDurableDeviceRequest(
-    store_, context_.environmentId + "\n" + context_.threadId + "\n" + intentJson
-  );
+  const bool recoveryControl = label == "status" || label == "stop";
+  String requestFailure;
+  const String clientRequestId = recoveryControl ? gateway_request::newDeviceRequestId()
+    : beginDurableDeviceRequest(
+      store_, context_.environmentId + "\n" + context_.threadId + "\n" + intentJson,
+      [this](const String& id) { return gateway_request::resolveDurableDeviceReceipt(id,
+        [this](const char* path, String& result) { return request("GET", path, "", result); }); }, requestFailure
+    );
+  if (clientRequestId.length() == 0) {
+    DispatchResult bad;
+    bad.detail = requestFailure;
+    return bad;
+  }
   doc["clientRequestId"] = clientRequestId;
 
   JsonDocument intent;
@@ -594,9 +650,9 @@ DispatchResult GatewayClient::postIntent(const String& intentJson, const String&
   serializeJson(doc, body);
   String response;
   const int code = request("POST", "/v1/device/intents", body, response);
-  // A positive HTTP status proves the gateway answered. If the socket outcome is uncertain, keep
-  // the id/fingerprint in NVS so a reboot or second tap replays the same durable receipt.
-  if (code > 0 && store_) store_->clearPendingRequest();
+  // Only a matching, definitive receipt settles this local write. Lost/malformed replies and
+  // transient gateway failures retain the id so retry cannot dispatch the same intent twice.
+  gateway_request::settleDurableDeviceRequest(store_, clientRequestId, code, response);
   return readDispatch(code, response, label);
 }
 
@@ -656,6 +712,8 @@ DispatchResult GatewayClient::sendStop() {
 
 DispatchResult GatewayClient::runAction(const String& actionId, const String& mediaUploadId) {
   StateLock guard(this);
+  if (actionId == "system_status") return sendStatus();
+  if (actionId == "system_stop") return sendStop();
   if (actionId.length() == 0) {
     DispatchResult bad;
     bad.detail = "Action missing id";
@@ -663,10 +721,24 @@ DispatchResult GatewayClient::runAction(const String& actionId, const String& me
   }
   JsonDocument doc;
   if (mediaUploadId.length() > 0) doc["mediaUploadId"] = mediaUploadId;
+  if (context_.environmentId.length()) doc["expectedEnvironmentId"] = context_.environmentId;
+  else doc["expectedEnvironmentId"] = nullptr;
+  if (context_.projectId.length()) doc["expectedProjectId"] = context_.projectId;
+  else doc["expectedProjectId"] = nullptr;
+  if (context_.threadId.length()) doc["expectedThreadId"] = context_.threadId;
+  else doc["expectedThreadId"] = nullptr;
+  String requestFailure;
   const String clientRequestId = beginDurableDeviceRequest(
     store_, String("action\n") + actionId + "\n" + context_.environmentId + "\n"
-      + context_.threadId + "\n" + mediaUploadId
+      + context_.projectId + "\n" + context_.threadId + "\n" + mediaUploadId,
+    [this](const String& id) { return gateway_request::resolveDurableDeviceReceipt(id,
+      [this](const char* path, String& result) { return request("GET", path, "", result); }); }, requestFailure
   );
+  if (clientRequestId.length() == 0) {
+    DispatchResult bad;
+    bad.detail = requestFailure;
+    return bad;
+  }
   doc["clientRequestId"] = clientRequestId;
   String body;
   serializeJson(doc, body);
@@ -674,7 +746,7 @@ DispatchResult GatewayClient::runAction(const String& actionId, const String& me
   const String path = String("/v1/device/actions/") + encodePathSegment(actionId) + "/run";
   String response;
   const int code = request("POST", path.c_str(), body, response);
-  if (code > 0 && store_) store_->clearPendingRequest();
+  gateway_request::settleDurableDeviceRequest(store_, clientRequestId, code, response);
   return readDispatch(code, response, actionId);
 }
 
@@ -750,16 +822,24 @@ DispatchResult GatewayClient::runMacro(const String& macroId) {
     return bad;
   }
   const String path = String("/v1/device/macros/") + encodePathSegment(macroId) + "/run";
+  String requestFailure;
   const String clientRequestId = beginDurableDeviceRequest(
-    store_, String("macro\n") + macroId + "\n" + context_.environmentId + "\n" + context_.threadId
+    store_, String("macro\n") + macroId + "\n" + context_.environmentId + "\n" + context_.threadId,
+    [this](const String& id) { return gateway_request::resolveDurableDeviceReceipt(id,
+      [this](const char* path, String& result) { return request("GET", path, "", result); }); }, requestFailure
   );
   JsonDocument doc;
+  if (clientRequestId.length() == 0) {
+    DispatchResult bad;
+    bad.detail = requestFailure;
+    return bad;
+  }
   doc["clientRequestId"] = clientRequestId;
   String body;
   serializeJson(doc, body);
   String response;
   const int code = request("POST", path.c_str(), body, response);
-  if (code > 0 && store_) store_->clearPendingRequest();
+  gateway_request::settleDurableDeviceRequest(store_, clientRequestId, code, response);
   return readDispatch(code, response, macroId);
 }
 
@@ -768,10 +848,12 @@ DispatchResult GatewayClient::runMacro(const String& macroId) {
 // ---------------------------------------------------------------------------------------------
 
 bool GatewayClient::responseInFlight() const {
-  return response_.state == "waiting" || response_.state == "streaming";
+  return response_.state == "waiting" || response_.state == "streaming" || response_.retryPending;
 }
 
 void GatewayClient::openResponse(const String& after) {
+  StateLock guard(this);
+  responseGeneration_ += 1;
   responseOpen_ = true;
   responseAfter_ = after;
   response_ = ThreadResponse();
@@ -786,6 +868,8 @@ void GatewayClient::openResponse(const String& after) {
 }
 
 void GatewayClient::closeResponse() {
+  StateLock guard(this);
+  responseGeneration_ += 1;
   responseOpen_ = false;
   responseAfter_ = "";
   response_ = ThreadResponse();
@@ -797,11 +881,22 @@ bool GatewayClient::fetchResponsePage(int page) {
   String path = String("/v1/device/thread-output?page=") + (page < 0 ? 0 : page);
   if (responseAfter_.length() > 0) path += String("&after=") + encodePathSegment(responseAfter_);
 
+  const uint32_t requestedGeneration = responseGeneration_;
+  const String requestedEnvironment = context_.environmentId;
+  const String requestedThread = context_.threadId;
+  const String requestedAfter = responseAfter_;
   String response;
   const int code = request("GET", path.c_str(), "", response);
+  // The socket releases the state lock. A console/device selection or a newer dispatch can
+  // change the response while it is away; the old result has no authority over that model.
+  if (!responseOpen_ || requestedGeneration != responseGeneration_
+      || requestedEnvironment != context_.environmentId
+      || requestedThread != context_.threadId || requestedAfter != responseAfter_) return false;
   if (!ok(code)) {
     response_.state = "error";
-    response_.page = 0;
+    response_.retryPending = code <= 0 || code == 429 || code >= 500;
+    if (response_.retryPending) nextDisplayAt_ = millis() + 3000;
+    response_.page = page < 0 ? 0 : page;
     response_.pageCount = 1;
     response_.lineCount = 2;
     response_.lines[0] = "Response fetch failed";
@@ -815,6 +910,8 @@ bool GatewayClient::fetchResponsePage(int page) {
   if (deserializeJson(doc, response)) {
     response_.state = "error";
     response_.lineCount = 2;
+    response_.retryPending = true;
+    nextDisplayAt_ = millis() + 5000;
     response_.lines[0] = "Bad response JSON";
     response_.lines[1] = "Try again";
     response_.followUpCount = 0;
@@ -823,6 +920,18 @@ bool GatewayClient::fetchResponsePage(int page) {
   }
 
   JsonObject output = doc["response"];
+  if (output.isNull()) {
+    response_.state = "error";
+    response_.lineCount = 2;
+    response_.retryPending = true;
+    nextDisplayAt_ = millis() + 5000;
+    response_.lines[0] = "Invalid response";
+    response_.lines[1] = "Try again";
+    response_.followUpCount = 0;
+    touch();
+    return false;
+  }
+  response_.retryPending = false;
   response_.state = String(output["state"] | "empty");
   response_.messageId = String(output["messageId"] | "");
   response_.page = output["page"] | 0;
@@ -866,15 +975,34 @@ bool GatewayClient::fetchResponsePage(int page) {
 
 bool GatewayClient::refreshApprovals() {
   StateLock guard(this);
+  const uint32_t generation = contextGeneration_;
   String response;
   const int code = request("GET", "/v1/device/approvals", "", response);
+  if (generation != contextGeneration_) { nextApprovalsAt_ = millis(); return false; }
   if (!ok(code)) {
+    remoteBlockers_.providerUnknown = true;
+    remoteBlockers_.inputUnknown = true;
     if (code == 403) nextConfigAt_ = millis();
+    touch();
     return false;
   }
 
   JsonDocument doc;
-  if (deserializeJson(doc, response)) return false;
+  if (deserializeJson(doc, response)) {
+    remoteBlockers_.providerUnknown = true;
+    remoteBlockers_.inputUnknown = true;
+    touch();
+    return false;
+  }
+
+  // The provider's approvals and questions are not gateway holds. Keep only bounded counts;
+  // answers remain a console handoff until this board supports each distinct response schema.
+  JsonArray provider = doc["providerApprovals"].as<JsonArray>();
+  JsonArray input = doc["userInputRequests"].as<JsonArray>();
+  remoteBlockers_.providerUnknown = !doc["providerApprovalsError"].isNull() || provider.isNull();
+  remoteBlockers_.inputUnknown = !doc["userInputError"].isNull() || input.isNull();
+  if (!remoteBlockers_.providerUnknown) remoteBlockers_.providerApprovals = boundedRemoteBlockerCount(provider.size());
+  if (!remoteBlockers_.inputUnknown) remoteBlockers_.userInputs = boundedRemoteBlockerCount(input.size());
 
   const size_t before = approvalCount_;
   approvalCount_ = 0;
@@ -902,7 +1030,10 @@ bool GatewayClient::refreshApprovals() {
     if (row.summary.length() == 0) row.summary = String(command["result"]["reason"] | "");
     if (row.summary.length() == 0) row.summary = row.intentType;
   }
-  if (approvalCount_ != before) touch();
+  // Equal queue lengths do not imply equal approvals: a different command or summary must
+  // repaint as well. The bounded queue is cheap to invalidate after each successful refresh.
+  (void)before;
+  touch();
   return approvalCount_ > 0;
 }
 

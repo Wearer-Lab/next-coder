@@ -18,6 +18,30 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+test("memory and Convex device capture enqueue predicates preserve terminal idempotency", async () => {
+  const sources = await Promise.all(["src/store.mjs", "convex/gatewayStore.ts"].map((path) => readFile(join(ROOT, path), "utf8")));
+  const predicates = sources.map((source) => {
+    const start = source.indexOf(source.includes("export const createMediaJob") ? "export const createMediaJob" : "function createMediaJob(");
+    const match = source.slice(start).match(/\.find\(\(job(?:: any)?\) => ([\s\S]*?)\);\n/u);
+    assert.ok(match, "actual enqueue predicate must be located");
+    const expression = match[1].replaceAll("args.", "input.").replaceAll("userExternalId", "userId")
+      .replaceAll("mediaJobTerminalStages", "MEDIA_JOB_TERMINAL_STAGES");
+    return new Function("job", "input", "kind", "MEDIA_JOB_TERMINAL_STAGES", `return Boolean(${expression});`);
+  });
+  for (const stage of ["queued", "review_required", "dispatched", "failed"]) {
+    for (const deviceId of [null, "device_a", "device_b"]) {
+      const job = { userId: "owner", kind: "transcription", stage, deviceId: "device_a" };
+      const input = { userId: "owner", deviceId };
+      const terminal = new Set(["dispatched", "failed"]);
+      const expected = !terminal.has(stage) || deviceId === "device_a";
+      for (const predicate of predicates) {
+        assert.equal(predicate(job, input, "transcription", terminal), expected);
+        assert.equal(predicate(job, { ...input, userId: "other" }, "transcription", terminal), false);
+      }
+    }
+  }
+});
+
 /** Extracts a top-level `function name(...) { ... }` body by brace matching. */
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}(`);

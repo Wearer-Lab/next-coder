@@ -524,6 +524,14 @@ Browsers and devices upload short audio clips or still images through a bounded 
 The byte transfer is a private authenticated HTTP request; media bytes are never sent over the
 gateway WebSocket/SSE channels and do not become attachable until finalization succeeds.
 
+Device audio sessions require a selected environment and thread. Optional `environmentId` and
+`threadId` in the creation body assert the capture destination; mismatches return 409
+`capture_target_changed`. That destination is frozen before the byte transfer, and a reused
+`clientRequestId` cannot be rebound to another target. Finalize replays reuse the original device
+capture job, including a terminal job, preventing duplicate auto-send. A new recording uses a new
+request ID even when its bytes match an older clip.
+
+
 Create an owner session with `POST /v1/media/uploads` and a device session with
 `POST /v1/device/media/uploads`. Use the matching platform or device authentication realm:
 

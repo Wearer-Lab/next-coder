@@ -6,6 +6,8 @@
 #include <WiFiClientSecure.h>
 
 #include "GatewayTls.h"
+#include "GatewayHttp.h"
+#include "GatewayDeviceRequest.h"
 #include "OperateModel.h"
 
 namespace {
@@ -29,57 +31,59 @@ String remedyFor(int code) {
   }
 }
 
-// Longer than GatewayClient's 1200 ms, and the difference is deliberate. That budget bounds a
-// worst-case render stall for calls that happen on a timer; these happen when somebody has just
-// pressed something and is waiting to find out what is in the list. Both project routes also go
-// all the way to the T3 host for a live snapshot, which a heartbeat never does.
-//
-// The response body is bounded by kMaxResponseBodyBytes from OperateModel.h, checked before the
-// body is read into a String — which is the only point at which refusing it still saves the heap.
-constexpr uint16_t kTimeoutMs = 2000;
+// Browsing runs off the render task and gets the ordinary cloud read budget. The decoded
+// response is bounded before allocation for known and chunked lengths alike.
+constexpr uint16_t kTimeoutMs = 6000;
 
 }  // namespace
 
-void GatewayBrowse::begin(DeviceStore& store) { store_ = &store; }
+void GatewayBrowse::begin(DeviceStore& store) {
+  store_ = &store;
+  JsonDocument cached;
+  if (!deserializeJson(cached, store.configCache())) {
+    boundEnvironmentId_ = String(cached["config"]["environmentId"] | "");
+    boundProjectId_ = String(cached["config"]["projectId"] | "");
+  }
+}
 
 int GatewayBrowse::request(const char* method, const char* path, const String& body,
                            String& response) {
   if (!store_) return -1;
   if (WiFi.status() != WL_CONNECTED) return -1;
-  const String base = store_->gatewayUrl();
+  const auto settings = store_->transportSnapshot();
+  const String base = settings.gatewayUrl;
   if (base.length() == 0) return -1;
 
   const String url = base + path;
 
-  // Declaration order is load-bearing, exactly as in GatewayClient::request(): C++ destroys locals
-  // in reverse order, HTTPClient holds a reference to the client it was handed, and an HTTPClient
-  // declared first is destroyed last — calling stop() through a dead vtable. Clients first.
-  WiFiClientSecure secure;
-  WiFiClient plain;
+  // All board routes share one bounded TLS allocation gate and yielding chunk reader.
+  // The gate outlives HTTP/socket destruction on every return path.
+  if (!gateway_tls::lockTls()) return -1;
+  struct TlsGuard { ~TlsGuard() { gateway_tls::unlockTls(); } } tlsGuard;
+  gateway_http::YieldingClient<WiFiClientSecure> secure;
+  gateway_http::YieldingClient<WiFiClient> plain;
   HTTPClient http;
-
   http.setTimeout(kTimeoutMs);
   http.setConnectTimeout(kTimeoutMs);
-
   if (!gateway_tls::beginHttp(http, plain, secure, url, "browse")) return -1;
-
   http.addHeader("content-type", "application/json");
-  http.addHeader("x-device-id", store_->deviceId());
-  http.addHeader("x-device-secret", store_->deviceSecret());
-
-  const int code = String(method) == "POST" ? http.POST(body) : http.GET();
+  http.addHeader("x-device-id", settings.deviceId);
+  http.addHeader("x-device-secret", settings.deviceSecret);
+  int code = String(method) == "POST" ? http.POST(body) : http.GET();
   if (code > 0) {
     const int length = http.getSize();
     if (length > (int)kMaxResponseBodyBytes) {
-      Serial.printf("[browse] %s oversized response %d bytes\n", path, length);
       response = "response too large";
+      code = HTTPC_ERROR_STREAM_WRITE;
     } else {
-      response = http.getString();
+      gateway_http::BoundedBody sink(response, kMaxResponseBodyBytes);
+      const int read = http.writeToStream(&sink);
+      if (read < 0 || sink.failed()) {
+        response = "gateway response incomplete";
+        code = read < 0 ? read : HTTPC_ERROR_STREAM_WRITE;
+      }
     }
-  } else {
-    Serial.printf("[browse] %s failed code=%d\n", path, code);
   }
-
   http.end();
   return code;
 }
@@ -386,6 +390,8 @@ static String createRemedy(int code, const String& body) {
     case 404:
       return "Folder is gone; pick another";
     case 409:
+      if (detailCode == "device_context_changed") return "Context changed; reload folders";
+      if (detailCode == "idempotency_conflict") return "Check console; previous request";
       if (detailCode == "no_model_selection") return "No model configured for this folder";
       return "Pick a folder first";
     case 502:
@@ -402,22 +408,34 @@ bool GatewayBrowse::createThread(const String& title) {
   createDetail_ = "";
   createStatus_ = 0;
 
-  // An empty body is a complete request. The device names neither the project nor the environment:
-  // the thread is always created in the config the owner bound, and every id in the answer is one
-  // the gateway chose.
-  String body = "{}";
-  if (title.length() > 0) {
-    JsonDocument doc;
-    doc["title"] = title;
-    body = "";
-    serializeJson(doc, body);
+  JsonDocument bodyDoc;
+  if (boundEnvironmentId_.length()) bodyDoc["expectedEnvironmentId"] = boundEnvironmentId_;
+  else bodyDoc["expectedEnvironmentId"] = nullptr;
+  if (boundProjectId_.length()) bodyDoc["expectedProjectId"] = boundProjectId_;
+  else bodyDoc["expectedProjectId"] = nullptr;
+  if (title.length() > 0) bodyDoc["title"] = title;
+  String requestFailure;
+  const String requestId = gateway_request::beginDurableDeviceRequest(
+    store_, String("thread-create\n") + boundEnvironmentId_ + "\n" + boundProjectId_ + "\n" + title,
+    [this](const String& id) { return gateway_request::resolveDurableDeviceReceipt(id,
+      [this](const char* path, String& result) { return request("GET", path, "", result); }); }, requestFailure
+  );
+  if (requestId.length() == 0) {
+    createDetail_ = requestFailure;
+    createStatus_ = 507;
+    touch();
+    return false;
   }
+  bodyDoc["clientRequestId"] = requestId;
+  String body;
+  serializeJson(bodyDoc, body);
 
   String response;
   const int code = request("POST", "/v1/device/threads", body, response);
   createStatus_ = code;
   if (!ok(code)) {
-    createDetail_ = createRemedy(code, response);
+    gateway_request::settleDurableDeviceRequest(store_, requestId, code, response);
+    createDetail_ = code <= 0 ? String("Not confirmed; retry New thread") : createRemedy(code, response);
     touch();
     return false;
   }
@@ -436,6 +454,7 @@ bool GatewayBrowse::createThread(const String& title) {
     touch();
     return false;
   }
+  gateway_request::settleDurableDeviceRequest(store_, requestId, code, response);
   created_.title = String(thread["title"] | "New thread");
   created_.status = String(thread["status"] | "idle");
   created_.selected = true;

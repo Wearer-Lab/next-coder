@@ -117,6 +117,11 @@ promoted atomically to ownership metadata; an interruption before fingerprinting
 must never trigger a guessed kill or duplicate launch. Reused user-managed T3 processes are not
 owned or stopped.
 
+Managed connector welcome and heartbeat timers own process liveness until the connection settles.
+A pending promise is not a keep-alive handle. Stop must prevent late ticket/welcome/message callbacks
+from opening sockets, recreating timers, or dispatching local work; subprocess tests exercise the
+actual Node event loop without a parent IPC handle masking early exit.
+
 Connector Tailscale integration is diagnostic-only. `status` and `doctor` may execute only the
 bounded, read-only `tailscale status --json` command (with the standard macOS app CLI fallback) and
 must project a redacted state that excludes peers, users, Tailnet names, hostnames, and addresses.
@@ -946,6 +951,10 @@ uses BOOT hold, while a short BOOT tap reopens its configuration portal. See
 `firmware/shared/README.md` and the board READMEs.
 
 Convex authentication bookkeeping (`ensureUser`, `authenticate*`, connector ticket issue/consume) must not broadcast full console invalidations. Every authenticated read runs that bookkeeping, so broadcasting it creates a read → auth → invalidation → read loop. Older deployed adapters are filtered at the console during rollout; real product mutations still invalidate their owner.
+
+Device gesture work is one bounded job drained by the existing gateway network task; the render task alone applies its completion. Do not add a permanent network task/stack per feature or call HTTP from touch handlers. Capture and reply results carry a target/generation so a late socket cannot overwrite a newer selection. DeviceStore transport and receipt snapshots are copied under its settings mutex; no transport may retain an unprotected reference across a yield. A pending request cannot cross a gateway/device realm change or be overwritten by a different uncertain intent.
+
+Device audio raw-upload sessions freeze their environment/thread before bytes transfer. Each logical recording has a random request ID reused for retries; SHA alone is not an intent identity. A finalized device capture reuses its original transcription job even when terminal, and firmware follows that job rather than issuing a second audio command. Read-only polling stops for review/ready and resumes transient transport failures with bounded backoff. A missing transcription provider must be explicit. Provider approvals and user-input requests remain separate from gateway holds; unsupported on-device answering must direct the owner to the console rather than display a lying Working state.
 
 Gateway HTTP state and TLS gates must never be held while waiting for each other. Release all recursive state-lock depth before waiting for the TLS gate, and destroy HTTP/socket objects plus release TLS before reacquiring state. A touch reply read otherwise holds state while waiting on a background heartbeat that is waiting to publish its result, producing a 10-second TLS-gate timeout. `test/firmware-request-locks.test.mjs` compiles the actual request body against lock-checking transport doubles and covers every transport exit. A reply-read failure must also leave Hosyond's Actions menu reachable.
 

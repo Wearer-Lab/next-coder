@@ -25,7 +25,7 @@ test("the shared firmware transport performs create, exact raw PUT, and finalize
   const voice = await readFile(join(SHARED, "GatewayVoice.cpp"), "utf8");
   assert.match(implementation, /"\/v1\/device\/media\/uploads"/u);
   assert.match(implementation, /http\.sendRequest\("PUT", &stream, stream\.contentLength\(\)\)/u);
-  assert.match(implementation, /base, finalizePath, "\{\}"/u);
+  assert.match(implementation, /base, finalizePath, finalizeBody/u);
   assert.match(implementation, /const String sha256 = sha256Hex/u);
   assert.match(media, /class SegmentedBodyStream : public Stream/u);
   assert.doesNotMatch(implementation, /dataBase64/u);

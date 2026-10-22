@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createFileStore } from "../src/fileStore.mjs";
 
 import { createMediaJobRunner, effectiveTranscript } from "../src/mediaJobs.mjs";
 import { createMemoryStore } from "../src/store.mjs";
@@ -10,6 +14,36 @@ import {
 } from "../src/transcription.mjs";
 
 const USER_ID = "user_dev";
+
+test("device capture enqueue reuses both terminal outcomes while an explicit owner transcription may create a new job", () => {
+  for (const stage of ["dispatched", "failed"]) {
+    const store = createMemoryStore();
+    const media = seedAudio(store);
+    const input = { userId: USER_ID, mediaId: media.id, deviceId: "device_capture" };
+    const job = store.createMediaJob(input);
+    store.updateMediaJob({ jobId: job.id, stage });
+    const replay = store.createMediaJob(input);
+    assert.equal(replay.id, job.id);
+    assert.equal(replay.stage, stage);
+    assert.equal(store.listMediaJobs({ userId: USER_ID, mediaId: media.id }).length, 1);
+    assert.notEqual(store.createMediaJob({ userId: USER_ID, mediaId: media.id }).id, job.id);
+  }
+});
+
+test("completed capture idempotency survives a file-store restart", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "next-coder-capture-replay-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, "store.json");
+  const first = await createFileStore(path);
+  const media = seedAudio(first);
+  const input = { userId: USER_ID, mediaId: media.id, deviceId: "device_capture" };
+  const job = first.createMediaJob(input);
+  first.updateMediaJob({ jobId: job.id, stage: "dispatched" });
+  await first.flush();
+  const reloaded = await createFileStore(path);
+  assert.equal(reloaded.createMediaJob(input).id, job.id);
+  assert.equal(reloaded.listMediaJobs({ userId: USER_ID, mediaId: media.id }).length, 1);
+});
 
 function seedAudio(store, { userId = USER_ID, originalName = "clip.webm" } = {}) {
   store.ensureUser({ userId });

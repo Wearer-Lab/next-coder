@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -132,6 +133,96 @@ test("device audio is queued for transcription without anyone asking", async (t)
   assert.equal(owned.job.stage, "queued");
   assert.equal(owned.job.environmentId, loop.environment.id);
   assert.equal(owned.job.threadId, "thread_voice");
+});
+
+test("replaying device finalize after auto-send returns the original job and never dispatches the capture twice", async (t) => {
+  const loop = await setupLoop(t);
+  await loop.heartbeat(["display", "buttons", "microphone"]);
+  const bytes = Buffer.from(AUDIO, "base64");
+  const created = await loop.call("/v1/device/media/uploads", {
+    method: "POST", headers: loop.deviceHeaders,
+    body: { clientRequestId: "device:voice-finalize-replay", kind: "audio", contentType: "audio/webm",
+      sizeBytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") },
+  });
+  const put = await loop.rawFetch(new URL(created.session.upload.url, loop.baseUrl), {
+    method: "PUT", headers: { ...loop.deviceHeaders, "content-type": "audio/webm" }, body: bytes,
+  });
+  assert.equal(put.status, 200);
+  const finalize = () => loop.call(created.session.finalizeUrl, { method: "POST", headers: loop.deviceHeaders, body: {} });
+  const first = await finalize();
+  await loop.mediaJobRunner.runOnce();
+  const completed = await loop.call(`/v1/device/media/jobs/${first.job.jobId}`, { headers: loop.deviceHeaders });
+  assert.equal(completed.job.milestone, "sent");
+  assert.equal(loop.dispatches.length, 1);
+  const replay = await finalize();
+  assert.equal(replay.job.jobId, first.job.jobId);
+  assert.equal(replay.job.commandId, completed.job.commandId);
+  assert.equal(replay.job.milestone, "sent");
+  assert.equal(replay.media.processing.transcriptionStatus, "ready");
+  await loop.mediaJobRunner.runOnce();
+  assert.equal(loop.dispatches.length, 1);
+  const owned = await loop.call(`/v1/commands/${completed.job.commandId}/events`, { headers: loop.authHeaders });
+  assert.equal(completed.job.responseAfter, owned.command.metrics.dispatchStartedAt);
+});
+
+test("raw voice upload freezes its target before bytes arrive and refuses stale capture context", async (t) => {
+  const loop = await setupLoop(t);
+  const bytes = Buffer.from(AUDIO, "base64");
+  const descriptor = { clientRequestId: "device:pinned-voice-target", kind: "audio", contentType: "audio/webm",
+    environmentId: loop.environment.id, threadId: "thread_voice", sizeBytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex") };
+  const created = await loop.call("/v1/device/media/uploads", { method: "POST", headers: loop.deviceHeaders, body: descriptor });
+  await loop.call(`/v1/devices/${loop.device.id}/config`, {
+    method: "PUT", headers: loop.authHeaders, body: { environmentId: loop.environment.id, threadId: "thread_changed" },
+  });
+  const stale = await loop.rawFetch(new URL("/v1/device/media/uploads", loop.baseUrl), {
+    method: "POST", headers: { ...loop.deviceHeaders, "content-type": "application/json" }, body: JSON.stringify(descriptor),
+  });
+  assert.equal(stale.status, 409);
+  const put = await loop.rawFetch(new URL(created.session.upload.url, loop.baseUrl), {
+    method: "PUT", headers: { ...loop.deviceHeaders, "content-type": "audio/webm" }, body: bytes,
+  });
+  assert.equal(put.status, 200);
+  const finalized = await loop.call(created.session.finalizeUrl, {
+    method: "POST", headers: loop.deviceHeaders,
+    body: { environmentId: loop.environment.id, threadId: "thread_voice" },
+  });
+  const job = await loop.call(`/v1/media/jobs/${finalized.job.jobId}`, { headers: loop.authHeaders });
+  assert.equal(job.job.threadId, "thread_voice");
+  assert.equal(job.job.environmentId, loop.environment.id);
+  const conflict = await loop.rawFetch(new URL("/v1/device/media/uploads", loop.baseUrl), {
+    method: "POST", headers: { ...loop.deviceHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ ...descriptor, threadId: "thread_changed" }),
+  });
+  assert.equal(conflict.status, 409, "one receipt cannot be rebound to a different thread");
+  const distinct = await loop.call("/v1/device/media/uploads", {
+    method: "POST", headers: loop.deviceHeaders,
+    body: { ...descriptor, clientRequestId: "device:new-voice-capture", threadId: "thread_changed" },
+  });
+  assert.notEqual(distinct.session.id, created.session.id, "identical bytes in a new recording remain a new intent");
+});
+
+test("an unbound recording cannot inherit a later device target", async (t) => {
+  const loop = await setupLoop(t);
+  const unbound = await loop.call("/v1/devices", { method: "POST", headers: loop.authHeaders,
+    body: { label: "Unbound microphone", profile: "next-coder" } });
+  const headers = { "x-device-id": unbound.device.id, "x-device-secret": unbound.secret };
+  await loop.call("/v1/device/heartbeat", { method: "POST", headers, body: { status: { features: ["microphone"] } } });
+  const bytes = Buffer.from(AUDIO, "base64");
+  const refused = await loop.rawFetch(new URL("/v1/device/media/uploads", loop.baseUrl), {
+    method: "POST", headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ clientRequestId: "device:unbound-capture", kind: "audio", contentType: "audio/webm",
+      sizeBytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }),
+  });
+  assert.equal(refused.status, 409);
+  const legacy = await loop.call("/v1/device/media", { method: "POST", headers,
+    body: { kind: "audio", contentType: "audio/webm", dataBase64: AUDIO } });
+  await loop.call(`/v1/devices/${unbound.device.id}/config`, { method: "PUT", headers: loop.authHeaders,
+    body: { environmentId: loop.environment.id, threadId: "later_thread" } });
+  await loop.mediaJobRunner.runOnce();
+  assert.equal(loop.dispatches.length, 0);
+  const result = await loop.call(`/v1/device/media/jobs/${legacy.job.jobId}`, { headers });
+  assert.equal(result.job.milestone, "failed");
 });
 
 test("an image from a device is stored without inventing a transcription job", async (t) => {

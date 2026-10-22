@@ -37,6 +37,9 @@ constexpr const char* kKeyOtaBootTarget = "ota_bver";
 }  // namespace
 
 bool DeviceStore::begin() {
+  if (!settingsMutex_) settingsMutex_ = xSemaphoreCreateRecursiveMutex();
+  if (!settingsMutex_) { Serial.println("[store] settings mutex unavailable"); return false; }
+  SettingsGuard settingsGuard(*this);
   if (opened_) return true;
   if (!prefs_.begin(kNamespace, /*readOnly=*/false)) {
     Serial.println("[store] NVS namespace unavailable; check the partition table");
@@ -122,18 +125,30 @@ bool DeviceStore::begin() {
 // Preferences::getString() logs an ESP_LOGE for every absent key. A factory-fresh unit is missing
 // five of them by definition, so a perfectly healthy first boot printed five red error lines and
 // read as a fault. Checking first keeps the log honest about what is actually wrong.
+DeviceTransportSnapshot DeviceStore::transportSnapshot() const {
+  SettingsGuard settingsGuard(*this);
+  return {gatewayUrl_, deviceId_, deviceSecret_, wifiSsid_, wifiPassword_, credentialVersion_};
+}
+
 String DeviceStore::readString(const char* key) {
+  SettingsGuard settingsGuard(*this);
   if (!prefs_.isKey(key)) return String();
   return prefs_.getString(key, "");
 }
 
 bool DeviceStore::putString(const char* key, const String& value) {
+  SettingsGuard settingsGuard(*this);
   if (!opened_) return false;
-  if (value.length() == 0) return prefs_.remove(key) || true;
+  if (value.length() == 0) {
+    // An absent key is already cleared; a present key must really be deleted before its RAM
+    // journal can be forgotten or a controller may carry an old receipt across a realm switch.
+    return !prefs_.isKey(key) || prefs_.remove(key);
+  }
   return prefs_.putString(key, value) > 0;
 }
 
 bool DeviceStore::setPendingRequest(const String& requestId, const String& requestHash) {
+  SettingsGuard settingsGuard(*this);
   if (requestId.length() == 0 || requestHash.length() == 0) return false;
   if (!putString(kKeyPendingRequestHash, requestHash)) return false;
   if (!putString(kKeyPendingRequestId, requestId)) return false;
@@ -143,6 +158,7 @@ bool DeviceStore::setPendingRequest(const String& requestId, const String& reque
 }
 
 bool DeviceStore::clearPendingRequest() {
+  SettingsGuard settingsGuard(*this);
   const bool idCleared = putString(kKeyPendingRequestId, "");
   const bool hashCleared = putString(kKeyPendingRequestHash, "");
   if (idCleared) pendingRequestId_ = "";
@@ -150,7 +166,31 @@ bool DeviceStore::clearPendingRequest() {
   return idCleared && hashCleared;
 }
 
+DeviceRequestSnapshot DeviceStore::pendingRequestSnapshot() const {
+  SettingsGuard settingsGuard(*this);
+  return {pendingRequestId_, pendingRequestHash_, gatewayUrl_, deviceId_};
+}
+
+bool DeviceStore::replacePendingRequest(const DeviceRequestSnapshot& expected,
+                                       const String& requestId, const String& requestHash) {
+  SettingsGuard settingsGuard(*this);
+  if (expected.id != pendingRequestId_ || expected.hash != pendingRequestHash_
+      || expected.gatewayUrl != gatewayUrl_ || expected.deviceId != deviceId_) return false;
+  return setPendingRequest(requestId, requestHash);
+}
+
+bool DeviceStore::clearPendingRequestIfCurrent(const String& expectedId) {
+  SettingsGuard settingsGuard(*this);
+  if (expectedId != pendingRequestId_) return false;
+  return clearPendingRequest();
+}
+
 bool DeviceStore::setIdentity(const String& id, const String& secret) {
+  SettingsGuard settingsGuard(*this);
+  if (id != deviceId_ && pendingRequestId_.length() > 0) {
+    Serial.println("[store] Resolve the previous request before changing device identity");
+    return false;
+  }
   if (!putString(kKeyDeviceId, id)) return false;
   if (!putString(kKeyDeviceSecret, secret)) return false;
   if (prefs_.putUInt(kKeyCredentialVersion, 1) == 0) return false;
@@ -167,6 +207,7 @@ bool DeviceStore::stagePendingDeviceSecret(
   uint32_t credentialVersion,
   const String& purpose
 ) {
+  SettingsGuard settingsGuard(*this);
   if (!opened_ || secret.length() < 32 || rotationId.length() == 0
       || credentialVersion <= credentialVersion_
       || (purpose != "rotate" && purpose != "transfer")) return false;
@@ -188,6 +229,7 @@ bool DeviceStore::stagePendingDeviceSecret(
 }
 
 bool DeviceStore::promotePendingDeviceSecret(const String& rotationId, uint32_t credentialVersion) {
+  SettingsGuard settingsGuard(*this);
   if (!hasPendingDeviceSecret() || rotationId != pendingCredentialRotationId_
       || credentialVersion != pendingCredentialVersion_) return false;
 
@@ -201,6 +243,7 @@ bool DeviceStore::promotePendingDeviceSecret(const String& rotationId, uint32_t 
 }
 
 bool DeviceStore::rollbackPendingDeviceSecret() {
+  SettingsGuard settingsGuard(*this);
   if (!opened_) return false;
   const bool secretCleared = putString(kKeyPendingDeviceSecret, "");
   const bool idCleared = putString(kKeyPendingRotationId, "");
@@ -214,6 +257,7 @@ bool DeviceStore::rollbackPendingDeviceSecret() {
 }
 
 bool DeviceStore::seedIdentityIfEmpty(const char* id, const char* secret, const char* gatewayUrl) {
+  SettingsGuard settingsGuard(*this);
   bool wrote = false;
   // Placeholder values from controller_config.example.h are treated as absent; writing
   // "dev_replace_me" to NVS would look provisioned and fail authentication forever.
@@ -232,6 +276,7 @@ bool DeviceStore::seedIdentityIfEmpty(const char* id, const char* secret, const 
 }
 
 bool DeviceStore::setGatewayUrl(const String& url) {
+  SettingsGuard settingsGuard(*this);
   String trimmed = url;
   trimmed.trim();
   while (trimmed.endsWith("/")) trimmed.remove(trimmed.length() - 1);
@@ -240,6 +285,10 @@ bool DeviceStore::setGatewayUrl(const String& url) {
     return false;
   }
   if (gatewayUrl_ == trimmed) return true;
+  if (pendingRequestId_.length() > 0) {
+    Serial.println("[store] Resolve the previous request before changing gateway");
+    return false;
+  }
   if (!putString(kKeyGatewayUrl, trimmed)) return false;
   gatewayUrl_ = trimmed;
   return true;
@@ -262,6 +311,7 @@ bool DeviceStore::replaceGatewayProfiles(
   uint32_t revision,
   const String& activeProfileId
 ) {
+  SettingsGuard settingsGuard(*this);
   if (!opened_ || profiles == nullptr || count == 0 || count > kMaxGatewayProfiles) return false;
   for (size_t index = 0; index < count; index += 1) {
     if (profiles[index].id.length() == 0 || !gateway_tls::gatewayUrlAllowed(profiles[index].url)) {
@@ -298,7 +348,15 @@ bool DeviceStore::replaceGatewayProfiles(
 }
 
 bool DeviceStore::stageGatewaySwitch(const GatewayProfile& profile, uint32_t revision) {
+  SettingsGuard settingsGuard(*this);
   if (!opened_ || profile.id.length() == 0 || !gateway_tls::gatewayUrlAllowed(profile.url)) return false;
+  String targetUrl = profile.url;
+  targetUrl.trim();
+  while (targetUrl.endsWith("/")) targetUrl.remove(targetUrl.length() - 1);
+  if (pendingRequestId_.length() > 0 && targetUrl != gatewayUrl_) {
+    Serial.println("[store] Resolve the previous request before changing gateway");
+    return false;
+  }
   const String previous = gatewayUrl_;
   if (!putString(kKeyGatewayPrevious, previous)) return false;
   if (!putString(kKeyGatewayPending, profile.id)) return false;
@@ -316,6 +374,16 @@ bool DeviceStore::stageGatewaySwitch(const GatewayProfile& profile, uint32_t rev
 }
 
 bool DeviceStore::completeGatewaySwitch(const GatewayProfile& profile, uint32_t revision) {
+  SettingsGuard settingsGuard(*this);
+  if (!opened_ || profile.id.length() == 0 || !gateway_tls::gatewayUrlAllowed(profile.url)) return false;
+  String targetUrl = profile.url;
+  targetUrl.trim();
+  while (targetUrl.endsWith("/")) targetUrl.remove(targetUrl.length() - 1);
+  if (pendingRequestId_.length() > 0 && targetUrl != gatewayUrl_) {
+    Serial.println("[store] Resolve the previous request before changing gateway");
+    return false;
+  }
+
   // gw_url is deliberately written last in the happy-path journal. Until this succeeds, a reboot
   // continues to use the previous known-good endpoint and resumes the pending selection.
   if (!putString(kKeyGatewayActive, profile.id)) return false;
@@ -337,6 +405,7 @@ bool DeviceStore::completeGatewaySwitch(const GatewayProfile& profile, uint32_t 
 }
 
 bool DeviceStore::failGatewaySwitch(const String& detail, uint32_t revision) {
+  SettingsGuard settingsGuard(*this);
   // completeGatewaySwitch writes the active URL only after the remote apply ACK, but restore the
   // journaled URL defensively so this also recovers images that rebooted between older steps.
   if (previousGatewayUrl_.length() > 0 && gatewayUrl_ != previousGatewayUrl_) {
@@ -358,6 +427,7 @@ bool DeviceStore::failGatewaySwitch(const String& detail, uint32_t revision) {
 }
 
 bool DeviceStore::clearGatewaySwitchFailure() {
+  SettingsGuard settingsGuard(*this);
   if (gatewaySwitchState_ != "failed") return true;
   if (!putString(kKeyGatewayState, "stable")) return false;
   if (!putString(kKeyGatewayError, "")) return false;
@@ -367,6 +437,7 @@ bool DeviceStore::clearGatewaySwitchFailure() {
 }
 
 bool DeviceStore::ensureLegacyGatewayProfile() {
+  SettingsGuard settingsGuard(*this);
   if (gatewayProfileCount_ > 0 || gatewayUrl_.length() == 0) return true;
   GatewayProfile legacy;
   legacy.id = "legacy";
@@ -377,6 +448,7 @@ bool DeviceStore::ensureLegacyGatewayProfile() {
 }
 
 bool DeviceStore::setWifiCredentials(const String& ssid, const String& password) {
+  SettingsGuard settingsGuard(*this);
   if (!putString(kKeyWifiSsid, ssid)) return false;
   if (!putString(kKeyWifiPass, password)) return false;
   wifiSsid_ = ssid;
@@ -385,6 +457,7 @@ bool DeviceStore::setWifiCredentials(const String& ssid, const String& password)
 }
 
 bool DeviceStore::setClaimCode(const String& code, const String& expiresAt) {
+  SettingsGuard settingsGuard(*this);
   // Same reason as setConfigCache(): an unclaimed device is told its code on every poll, and
   // rewriting an unchanged code burns flash for no gain.
   if (claimCode_ == code && claimCodeExpiresAt_ == expiresAt) return true;
@@ -396,10 +469,12 @@ bool DeviceStore::setClaimCode(const String& code, const String& expiresAt) {
 }
 
 bool DeviceStore::clearClaimCode() {
+  SettingsGuard settingsGuard(*this);
   return setClaimCode("", "");
 }
 
 bool DeviceStore::setConfigCache(const String& json) {
+  SettingsGuard settingsGuard(*this);
   // fetchConfig() calls this on every successful poll, and the payload is usually byte-identical to
   // the one already stored. Without this guard that is a full NVS write of the whole config blob
   // every config interval: flash wear for nothing, and — because an NVS write disables the CPU
@@ -412,6 +487,7 @@ bool DeviceStore::setConfigCache(const String& json) {
 }
 
 bool DeviceStore::setOtaAttempt(const String& sourceVersion, const String& targetVersion) {
+  SettingsGuard settingsGuard(*this);
   if (!putString(kKeyOtaSource, sourceVersion)) return false;
   if (!putString(kKeyOtaTarget, targetVersion)) return false;
   otaSourceVersion_ = sourceVersion;
@@ -420,6 +496,7 @@ bool DeviceStore::setOtaAttempt(const String& sourceVersion, const String& targe
 }
 
 uint32_t DeviceStore::registerOtaBootAttempt(const String& runningVersion) {
+  SettingsGuard settingsGuard(*this);
   if (!opened_ || otaTargetVersion_.length() == 0 || otaTargetVersion_ != runningVersion) return 0;
   // The source image may predate the boot counter and therefore cannot reset it
   // in setOtaAttempt(). Key the count to the running target so an upgrade from
@@ -433,6 +510,7 @@ uint32_t DeviceStore::registerOtaBootAttempt(const String& runningVersion) {
 }
 
 bool DeviceStore::clearOtaAttempt() {
+  SettingsGuard settingsGuard(*this);
   const bool sourceCleared = putString(kKeyOtaSource, "");
   const bool targetCleared = putString(kKeyOtaTarget, "");
   const bool bootsCleared = prefs_.remove(kKeyOtaBoots) || !prefs_.isKey(kKeyOtaBoots);
@@ -443,17 +521,22 @@ bool DeviceStore::clearOtaAttempt() {
 }
 
 bool DeviceStore::resetForProvisioning() {
+  SettingsGuard settingsGuard(*this);
+  // This explicit reset is the escape hatch for an uncertain receipt. Clear its durable commit
+  // marker first; if NVS refuses, preserve the remaining settings instead of switching realms.
+  if (!clearPendingRequest()) return false;
   Serial.println("[store] reset: clearing Wi-Fi, config cache, and claim code; identity kept");
   const bool wifiCleared = setWifiCredentials("", "");
   const bool cacheCleared = setConfigCache("");
   const bool codeCleared = clearClaimCode();
-  const bool requestCleared = clearPendingRequest();
-  return wifiCleared && cacheCleared && codeCleared && requestCleared;
+  return wifiCleared && cacheCleared && codeCleared;
 }
 
 bool DeviceStore::wipeToFactoryState() {
+  SettingsGuard settingsGuard(*this);
   Serial.println("[store] full wipe: Wi-Fi, config cache, claim code, gateway URL; identity kept");
   const bool reset = resetForProvisioning();
+  if (!reset) return false;
   // Cleared rather than rewritten: seedIdentityIfEmpty() puts the build-time default back on the
   // next boot, so a unit whose owner pointed it at a private gateway returns to the factory one.
   const bool gatewayCleared = setGatewayUrl("");

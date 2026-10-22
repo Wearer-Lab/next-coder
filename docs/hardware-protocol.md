@@ -1454,8 +1454,11 @@ Prompt intent:
 
 Every mutating agent call carries a fresh `clientRequestId`, except a retry whose HTTP outcome was
 unknown: that retry must reuse the same id and exact body. Shared firmware writes one pending id and
-a short non-content fingerprint to NVS before opening the socket, clears both after any positive HTTP
-status, and reuses them after a timeout or reboot. Prompt, transcript, shell, media, and path content
+a short non-content fingerprint to NVS before opening the socket, clears them only after a conclusive matching receipt or response, and reuses them after a timeout
+or reboot. Transport failures, processing receipts, and uncertain context/conflict responses retain
+the journal. A different mutation first resolves that receipt through at most two authenticated reads;
+an unknown or processing result blocks replacement and points to the console. Status and Stop stay
+available without overwriting the unresolved mutation. Prompt, transcript, shell, media, and path content
 must never be copied into that journal. Saved-action/macro runs and device thread creation follow the
 same rule. The gateway answers an in-flight duplicate with `202`/`recovery: "processing"`, a settled
 duplicate with the original command, and conflicting reuse with `409`; none is permission to invent a
@@ -1704,3 +1707,34 @@ Before shipping customer hardware:
 - Direct terminal write now exists at the gateway as the `terminal_input` intent, gated on a custom
   profile, an environment paired with `terminal:operate`, and an always-required approval. It is
   still not offered on this five-key device and has not been exercised against a live T3 terminal.
+
+## Firmware recovery and capture context
+
+Gesture-triggered HTTP runs as one bounded job on the existing gateway network task. The render
+task publishes its completion; repeated confirmation taps cannot enqueue a second mutation. Late
+results cannot replace a reopened response or another selected environment/thread. Reply GET retries
+resume after transient failures without replaying a command. A reply-read failure leaves Actions
+reachable. Request acceptance, gateway approval, provider approval, and final reply remain distinct.
+
+`POST /v1/device/actions/:id/run` and `POST /v1/device/threads` accept optional
+`expectedEnvironmentId`, `expectedProjectId`, and `expectedThreadId` preconditions. Explicit null
+asserts that dimension is unbound. A changed binding returns HTTP 409 with
+`error.details.code = "device_context_changed"` before dispatch. Thread creation should assert
+environment and project only, because successful creation changes the selected thread itself.
+
+For raw audio upload creation, select an environment and thread first. Firmware supplies those
+IDs with a random per-recording `clientRequestId`; retries reuse that ID, while a new recording
+gets a new ID even if its bytes are identical. The gateway freezes the target in the upload session.
+A supplied target that no longer matches the controller returns 409 `capture_target_changed`.
+A missing target returns 409 `capture_target_required`. Finalize cannot redirect a recording to
+a newly selected thread, and retrying finalize returns the original capture job even after that
+job reached a terminal state. It never starts a second auto-send of the same capture.
+
+`GET /v1/device/media/jobs/:id` includes `job.responseAfter` when an owned command exists. It
+uses the immutable dispatch-start cursor, so an acknowledgement arriving after the reply cannot
+hide that reply. The firmware follows the server-owned job rather than submitting a second audio
+command after upload. Review and ready states stop polling and explicitly hand off to the console
+when on-device transcript editing or manual transcript sending is unavailable. Missing ASR
+configuration is reported as unavailable; it must not become an empty audio dispatch.
+
+See [the firmware workflow audit](firmware-workflow-audit.md) for scope and verification limits.

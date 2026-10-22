@@ -76,6 +76,18 @@ inline void unlockTls() {
   if (handle != nullptr) xSemaphoreGiveRecursive(handle);
 }
 
+// Declare before HTTP/socket objects so they are destroyed before releasing the allocation gate.
+class ScopedLock {
+ public:
+  explicit ScopedLock(unsigned int timeoutMs = 10000) : held_(lockTls(timeoutMs)) {}
+  ~ScopedLock() { if (held_) unlockTls(); }
+  bool held() const { return held_; }
+  ScopedLock(const ScopedLock&) = delete;
+  ScopedLock& operator=(const ScopedLock&) = delete;
+ private:
+  bool held_;
+};
+
 inline bool isPrivateIpv4Host(const String& host) {
   if (host == "localhost") return true;
   int octets[4] = {0, 0, 0, 0};

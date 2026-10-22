@@ -7,12 +7,38 @@
 #include <WiFiClientSecure.h>
 
 #include "GatewayTls.h"
+#include "GatewayHttp.h"
+#include "OtaDownloadSink.h"
 #include <esp_ota_ops.h>
 #include <mbedtls/md.h>
 #include <mbedtls/sha256.h>
 
 namespace {
-constexpr size_t kOtaBufferSize = 4096;
+
+// An idle timeout alone can be reset forever by a drip-fed response. Stop the underlying socket
+// at an absolute deadline, including while HTTPClient is reading headers or chunk metadata.
+template <typename Client>
+class OtaDeadlineClient : public gateway_http::YieldingClient<Client> {
+ public:
+  explicit OtaDeadlineClient(uint32_t deadline) : deadline_(deadline) {}
+  using gateway_http::YieldingClient<Client>::read;
+  int available() override { return expired() ? 0 : Client::available(); }
+  int read() override {
+    if (expired()) { delay(1); return -1; }
+    return gateway_http::YieldingClient<Client>::read();
+  }
+  int read(uint8_t* buffer, size_t size) override {
+    if (expired()) { if (size) delay(1); return -1; }
+    return gateway_http::YieldingClient<Client>::read(buffer, size);
+  }
+ private:
+  bool expired() {
+    if ((int32_t)(millis() - deadline_) < 0) return false;
+    Client::stop();
+    return true;
+  }
+  uint32_t deadline_;
+};
 
 String hexDigest(const uint8_t* data, size_t length) {
   static const char* digits = "0123456789abcdef";
@@ -177,135 +203,91 @@ bool GatewayClient::applyFirmwareUpdate(const String& manifestPayload) {
     reportFirmwareStatus("failed", target.c_str(), "manifest signature invalid");
     return false;
   }
+  if (String(manifest["hardwareModel"] | "") != hardwareModel_) {
+    reportFirmwareStatus("failed", target.c_str(), "firmware hardware model mismatch");
+    return false;
+  }
   if (urlValue.length() == 0 || expectedSha.length() != 64 || target.length() == 0
       || expectedSize == 0) {
     reportFirmwareStatus("failed", target.c_str(), "manifest incomplete");
     return false;
   }
 
+  const auto settings = store_->transportSnapshot();
   String downloadUrl = urlValue;
-  if (downloadUrl.startsWith("/")) downloadUrl = store_->gatewayUrl() + downloadUrl;
+  if (downloadUrl.startsWith("/")) downloadUrl = settings.gatewayUrl + downloadUrl;
   reportFirmwareStatus("downloading", target.c_str(), "download started", 0);
 
-  WiFiClient plain;
-  WiFiClientSecure secure;
-  HTTPClient http;
-  http.setConnectTimeout(5000);
-  http.setTimeout(15000);
-  if (!gateway_tls::beginHttp(http, plain, secure, downloadUrl, "ota")) {
-    reportFirmwareStatus("failed", target.c_str(), "download connection failed (tls refused)");
-    return false;
-  }
-  if (originOf(downloadUrl) == originOf(store_->gatewayUrl())) {
-    http.addHeader("x-device-id", store_->deviceId());
-    http.addHeader("x-device-secret", store_->deviceSecret());
-  }
-
-  // The download needs a TLS session of its own, and mbedTLS wants one contiguous block for
-  // it. By the time an update is polled, the display buffers and the orb canvas have fragmented
-  // the heap, and the handshake can fail on a request that a moment later would succeed - the
-  // symptom is a socket hang-up on the far side and a bare -1 here. So the attempt is repeated a
-  // few times: the update is idempotent, the cost is a few seconds, and the alternative is a
-  // device that can never update itself while the screen is on.
-  const uint32_t heldDepth = releaseStateForBlockingCall();
-  int code = 0;
-  for (int attempt = 1; attempt <= kDownloadAttempts; attempt += 1) {
-    Serial.printf("[ota] download attempt %d/%d, free heap %u bytes\n", attempt, kDownloadAttempts,
-                  (unsigned)ESP.getFreeHeap());
-    code = http.GET();
-    if (code == HTTP_CODE_OK) break;
-    http.end();
-    if (attempt < kDownloadAttempts) {
-      delay(kDownloadRetryDelayMs);
-      // A new session needs a new handshake, so the client is begun again.
-      if (!gateway_tls::beginHttp(http, plain, secure, downloadUrl, "ota")) break;
-      if (originOf(downloadUrl) == originOf(store_->gatewayUrl())) {
-        http.addHeader("x-device-id", store_->deviceId());
-        http.addHeader("x-device-secret", store_->deviceSecret());
-      }
-    }
-  }
-  if (code != HTTP_CODE_OK) {
-    http.end();
-    reacquireStateAfterBlockingCall(heldDepth);
-    char detail[48];
-    snprintf(detail, sizeof(detail), "download request failed (code %d)", code);
-    reportFirmwareStatus("failed", target.c_str(), detail);
-    return false;
-  }
-  const int contentLength = http.getSize();
-  if (contentLength > 0 && static_cast<size_t>(contentLength) != expectedSize) {
-    http.end();
-    reacquireStateAfterBlockingCall(heldDepth);
-    reportFirmwareStatus("failed", target.c_str(), "download size mismatch");
-    return false;
-  }
-  if (!Update.begin(expectedSize)) {
-    http.end();
-    reacquireStateAfterBlockingCall(heldDepth);
-    reportFirmwareStatus("failed", target.c_str(), "OTA partition unavailable");
-    return false;
-  }
-
-  mbedtls_sha256_context sha;
-  mbedtls_sha256_init(&sha);
-  mbedtls_sha256_starts(&sha, 0);
-  WiFiClient* stream = http.getStreamPtr();
-  uint8_t buffer[kOtaBufferSize];
-  size_t written = 0;
-  int reportedProgress = 0;
-  uint32_t lastDataAt = millis();
-  while (written < expectedSize && http.connected()) {
-    const size_t available = stream->available();
-    if (available == 0) {
-      if (millis() - lastDataAt > 15000) break;
-      delay(10);
-      continue;
-    }
-    lastDataAt = millis();
-    const int count = stream->readBytes(buffer, min(available, sizeof(buffer)));
-    if (count <= 0) continue;
-    mbedtls_sha256_update(&sha, buffer, count);
-    if (Update.write(buffer, count) != static_cast<size_t>(count)) break;
-    written += count;
-    const int progress = static_cast<int>((written * 100) / expectedSize);
-    if (progress >= reportedProgress + 10) {
-      reportedProgress = progress;
-      // Do not issue another socket request while the artifact stream is open. Progress is logged;
-      // the gateway receives the terminal installing/rebooting state immediately afterwards.
-      Serial.printf("[ota] download %d%%\n", progress);
-    }
-  }
   uint8_t digest[32];
-  mbedtls_sha256_finish(&sha, digest);
-  mbedtls_sha256_free(&sha);
-  http.end();
+  bool updateStarted = false;
+  size_t written = 0;
+  const uint32_t downloadDeadline = millis() + 120000;
+  const uint32_t heldDepth = releaseStateForBlockingCall();
+  const char* failure = [&]() -> const char* {
+    gateway_tls::ScopedLock tls;
+    if (!tls.held()) return "download TLS gate busy";
+    OtaDeadlineClient<WiFiClient> plain(downloadDeadline);
+    OtaDeadlineClient<WiFiClientSecure> secure(downloadDeadline);
+    HTTPClient http;
+    http.setConnectTimeout(5000);
+    http.setTimeout(15000);
+    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    int code = 0;
+    for (int attempt = 1; attempt <= kDownloadAttempts; attempt += 1) {
+      if ((int32_t)(millis() - downloadDeadline) >= 0) return "download deadline exceeded";
+      if (!gateway_tls::beginHttp(http, plain, secure, downloadUrl, "ota")) {
+        return "download connection failed (TLS refused)";
+      }
+      if (originOf(downloadUrl) == originOf(settings.gatewayUrl)) {
+        http.addHeader("x-device-id", settings.deviceId);
+        http.addHeader("x-device-secret", settings.deviceSecret);
+      }
+      code = http.GET();
+      if (code == HTTP_CODE_OK) break;
+      http.end();
+      if (attempt < kDownloadAttempts) delay(kDownloadRetryDelayMs);
+    }
+    if (code != HTTP_CODE_OK) return "download request failed";
+    const int contentLength = http.getSize();
+    if (contentLength >= 0 && static_cast<size_t>(contentLength) != expectedSize) return "download size mismatch";
+    if (!Update.begin(expectedSize)) return "OTA partition unavailable";
+    updateStarted = true;
+    OtaDownloadSink sink(expectedSize);
+    const int read = http.writeToStream(&sink);
+    written = sink.written();
+    if (read < 0 || !sink.finish(digest)) return "download incomplete or oversized";
+    http.end();
+    return nullptr;
+  }();
+  // Socket buffers and the TLS gate are gone before state is reacquired, including every failure.
   reacquireStateAfterBlockingCall(heldDepth);
-
-  if (written != expectedSize) {
-    Update.abort();
-    // "Incomplete" on its own says nothing: the stream can end early, the socket can drop, or the
-    // partition can refuse the write. Say how much arrived and whether the socket was still up.
-    char detail[72];
-    snprintf(detail, sizeof(detail), "download incomplete (%u of %u bytes, connected=%d)",
-             (unsigned)written, (unsigned)expectedSize, http.connected() ? 1 : 0);
-    reportFirmwareStatus("failed", target.c_str(), detail);
+  if (failure) {
+    if (updateStarted) Update.abort();
+    reportFirmwareStatus("failed", target.c_str(), failure);
     return false;
   }
+  const auto current = store_->transportSnapshot();
+  if (current.gatewayUrl != settings.gatewayUrl || current.deviceId != settings.deviceId) {
+    Update.abort();
+    reportFirmwareStatus("failed", target.c_str(), "gateway changed during download");
+    return false;
+  }
+  Serial.printf("[ota] verified download received %u bytes\n", (unsigned)written);
   if (!hexDigest(digest, sizeof(digest)).equalsIgnoreCase(expectedSha)) {
     Update.abort();
     reportFirmwareStatus("failed", target.c_str(), "sha256 mismatch");
     return false;
   }
   reportFirmwareStatus("installing", target.c_str(), "image verified", 100);
-  if (!store_->setOtaAttempt(firmwareVersion_, target)) {
-    Update.abort();
-    reportFirmwareStatus("failed", target.c_str(), "OTA state marker unavailable");
-    return false;
-  }
-  if (!Update.end(true)) {
+  const bool committed = store_->commitWithTransport(settings, [&] {
+    if (!store_->setOtaAttempt(firmwareVersion_, target)) return false;
+    if (Update.end(true)) return true;
     store_->clearOtaAttempt();
-    reportFirmwareStatus("failed", target.c_str(), "OTA finalize failed");
+    return false;
+  });
+  if (!committed) {
+    Update.abort();
+    reportFirmwareStatus("failed", target.c_str(), "OTA commit failed or gateway changed");
     return false;
   }
   reportFirmwareStatus("rebooting", target.c_str(), "booting pending image", 100);

@@ -13,6 +13,8 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 constexpr size_t kMaxGatewayProfiles = 5;
 
@@ -23,11 +25,41 @@ struct GatewayProfile {
   String url;
 };
 
+struct DeviceRequestSnapshot {
+  String id;
+  String hash;
+  String gatewayUrl;
+  String deviceId;
+};
+
+struct DeviceTransportSnapshot {
+  String gatewayUrl;
+  String deviceId;
+  String deviceSecret;
+  String wifiSsid;
+  String wifiPassword;
+  uint32_t credentialVersion = 1;
+};
+
 class DeviceStore {
  public:
   // Opens the namespace and caches every value in RAM. Returns false if NVS is unavailable, which
   // on this hardware means the partition table is wrong — callers should treat it as fatal.
   bool begin();
+
+  // Network tasks must copy origin and credentials atomically. A reference getter can point at a
+  // freed String after a portal save, credential rotation or gateway switch on another task.
+  DeviceTransportSnapshot transportSnapshot() const;
+
+  // Atomically re-check an OTA's realm and commit its bounded local flash metadata. The callback
+  // must never perform network I/O or wait for another task; settings writes remain serialized
+  // until it returns. Credential rotation within the same realm does not invalidate an image.
+  template <typename Commit>
+  bool commitWithTransport(const DeviceTransportSnapshot& expected, Commit&& commit) {
+    SettingsGuard settingsGuard(*this);
+    if (!transportMatches(expected)) return false;
+    return commit();
+  }
 
   // --- Identity. Written once by the factory flashing station, never by the owner. ---
   const String& deviceId() const { return deviceId_; }
@@ -119,6 +151,10 @@ class DeviceStore {
   const String& pendingRequestHash() const { return pendingRequestHash_; }
   bool setPendingRequest(const String& requestId, const String& requestHash);
   bool clearPendingRequest();
+  DeviceRequestSnapshot pendingRequestSnapshot() const;
+  bool replacePendingRequest(const DeviceRequestSnapshot& expected, const String& requestId,
+                             const String& requestHash);
+  bool clearPendingRequestIfCurrent(const String& expectedId);
 
   // --- OTA attempt marker. ---
   // Written only after a new image has been completely verified and committed to the inactive
@@ -148,6 +184,21 @@ class DeviceStore {
   bool wipeToFactoryState();
 
  private:
+  class SettingsGuard {
+   public:
+    explicit SettingsGuard(const DeviceStore& store) : mutex_(store.settingsMutex_) {
+      if (mutex_) xSemaphoreTakeRecursive(mutex_, portMAX_DELAY);
+    }
+    ~SettingsGuard() { if (mutex_) xSemaphoreGiveRecursive(mutex_); }
+    SettingsGuard(const SettingsGuard&) = delete;
+    SettingsGuard& operator=(const SettingsGuard&) = delete;
+   private:
+    SemaphoreHandle_t mutex_;
+  };
+  bool transportMatches(const DeviceTransportSnapshot& expected) const {
+    return gatewayUrl_ == expected.gatewayUrl && deviceId_ == expected.deviceId;
+  }
+  mutable SemaphoreHandle_t settingsMutex_ = nullptr;
   String readString(const char* key);
   bool putString(const char* key, const String& value);
 

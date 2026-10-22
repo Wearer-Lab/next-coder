@@ -190,6 +190,13 @@ test("saved actions and ordered device controls execute through the normal polic
   assert.equal(status.screen.thread.id, "thread_actions");
 
   const deviceActionPath = `/v1/device/actions/${prompt.id}/run`;
+  for (const stale of [{ expectedEnvironmentId: "old_environment" }, { expectedThreadId: "old_thread" }, { expectedThreadId: null }]) {
+    const response = await originalFetch(new URL(deviceActionPath, baseUrl), {
+      method: "POST", headers: { ...deviceAuth, "content-type": "application/json" }, body: JSON.stringify(stale),
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.details.code, "device_context_changed");
+  }
   const deviceActionBody = { clientRequestId: "dev:action-request-0001" };
   const dispatchCountBeforeDeviceAction = dispatches.length;
   const capabilityHealthUpdates = [];
@@ -209,6 +216,22 @@ test("saved actions and ordered device controls execute through the normal polic
   assert.equal(persistedCapabilities.health.capabilities.schema, "next-coder.t3-capabilities.v1");
   assert.equal(ran.responseAfter, ran.command.metrics.dispatchStartedAt);
   assert.ok(Date.parse(ran.responseAfter) <= Date.parse(ran.command.createdAt));
+  const rejectedFresh = await originalFetch(new URL(deviceActionPath, baseUrl), {
+    method: "POST", headers: { ...deviceAuth, "content-type": "application/json" },
+    body: JSON.stringify({ clientRequestId: "dev:stale-action-0001", expectedThreadId: "old_thread" }),
+  });
+  assert.equal(rejectedFresh.status, 409);
+  const freshReceipt = (await rejectedFresh.json()).error.details.request;
+  assert.equal(freshReceipt.clientRequestId, "dev:stale-action-0001");
+  assert.equal(freshReceipt.status, "failed", "pre-execution refusal must release its local retry journal conclusively");
+  const rejectedReplay = await originalFetch(new URL(deviceActionPath, baseUrl), {
+    method: "POST", headers: { ...deviceAuth, "content-type": "application/json" },
+    body: JSON.stringify({ ...deviceActionBody, expectedThreadId: "old_thread" }),
+  });
+  assert.equal(rejectedReplay.status, 409);
+  const originalReceipt = (await rejectedReplay.json()).error.details.request;
+  assert.equal(originalReceipt.commandId, ran.command.id, "a later context error cannot erase a previously executed request");
+  assert.equal(originalReceipt.status, "dispatched");
   assert.match(dispatches.at(-1).message.text, /^Continue and run tests\.\n\n<!--AC_DEVICE_FOLLOWUP_REQUEST/u);
   assert.match(dispatches.at(-1).message.text, new RegExp(photo.id, "u"));
   assert.doesNotMatch(dispatches.at(-1).message.text, new RegExp(`\"${prompt.id}\"`, "u"));

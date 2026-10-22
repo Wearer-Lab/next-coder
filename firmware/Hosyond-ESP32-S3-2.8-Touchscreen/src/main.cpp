@@ -270,6 +270,8 @@ void send(TouchGesture gesture, int16_t x, int16_t y) {
 }
 
 void tick(GatewayClient& gateway) {
+  // Production gestures are asynchronous; inspect their result only after UI completion applies it.
+  if (uiBenchNetworkBusy()) return;
   const uint32_t now = millis();
   switch (stage) {
     case Stage::Idle:
@@ -460,7 +462,7 @@ void loop() {
   // parsing on either side of a fetch, so this almost never waits. When it genuinely cannot get
   // the lock in time, the frame is skipped rather than painted from state that is being rewritten
   // underneath it — one dropped frame at 30 fps is invisible, and a torn String is not.
-  if (gateway.tryLockState(50)) {
+  if (gateway.tryLockState(0)) {
     const TouchEvent touch = touchPoll();
     if (touch.gesture != TouchGesture::None) uiHandleTouch(touch);
     uiTick();

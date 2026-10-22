@@ -24,9 +24,17 @@ void buildWavHeader(uint8_t header[kWavHeaderBytes], uint32_t dataBytes, uint32_
 String sha256Hex(const uint8_t* headerBytes, size_t headerLength,
                  const uint8_t* bodyBytes, size_t bodyLength);
 
+struct UploadSessionContext {
+  String environmentId;
+  String threadId;
+  // One logical capture; retries reuse it even when a finalize response was lost.
+  String clientRequestId;
+};
+
 struct UploadSessionResult {
   String mediaId;
   String jobId;
+  bool transcriptionUnavailable = false;
   int httpStatus = -1;
 };
 
@@ -44,7 +52,8 @@ UploadSessionResult uploadSession(
   const uint8_t* bodyBytes,
   size_t bodyLength,
   uint32_t maxRawBytes,
-  uint32_t* backoffUntil = nullptr
+  uint32_t* backoffUntil = nullptr,
+  const UploadSessionContext* context = nullptr
 );
 
 class SegmentedBodyStream : public Stream {

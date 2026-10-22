@@ -34,6 +34,8 @@ bool pumpRecording();
 // caller has to be able to say so or the codec stays flagged as live forever.
 void stopRecording();
 bool recording();
+// Distinguishes a hardware read failure from a normal duration/buffer limit.
+bool captureFailed();
 
 // Valid after the last pump. `bytes` counts 16-bit mono PCM, without a WAV header.
 uint32_t recordedMs();

@@ -34,6 +34,8 @@ The current product includes:
   Hosyond has the richest touch/voice workflow and the strongest recorded on-device validation.
 
 The same action may cross the console, gateway, T3 transport, storage, and controller firmware.
+The [firmware workflow audit](docs/firmware-workflow-audit.md) records recovery and interaction
+repairs, their test coverage, and the physical checks still required.
 Contributors should read [AGENTS.md](AGENTS.md) for the complete-change checklist and
 [CLAUDE.md](CLAUDE.md) for detailed architecture and protocol invariants.
 

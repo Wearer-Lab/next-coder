@@ -13,6 +13,8 @@
 
 #include "GatewayTls.h"
 #include "GatewayHttp.h"
+#include "GatewayEventFrame.h"
+#include "GatewayClaimCode.h"
 
 namespace {
 // The reference firmware's cadences. A heartbeat is cheap and proves liveness; config changes
@@ -111,7 +113,8 @@ int GatewayClient::request(const char* method, const char* path, const String& b
                            String& response, const String* credentialOverride,
                            bool trackAuthState) {
   if (!store_) return -1;
-  String base = store_->gatewayUrl();
+  const auto settings = store_->transportSnapshot();
+  const String base = settings.gatewayUrl;
   if (base.length() == 0) return -1;
 
   // One global gate, checked here rather than in runCycle() alone, because the operate surface is
@@ -124,8 +127,8 @@ int GatewayClient::request(const char* method, const char* path, const String& b
 
   const String url = base + path;
 
-  const String deviceId = store_->deviceId();
-  const String credential = credentialOverride ? *credentialOverride : store_->deviceSecret();
+  const String deviceId = settings.deviceId;
+  const String credential = credentialOverride ? *credentialOverride : settings.deviceSecret;
   long retryAfter = 1;
   // Never wait for TLS while owning state, or reacquire state while owning TLS. Otherwise a
   // touch read and a background heartbeat can wait on each other until the 10 s TLS timeout.
@@ -206,12 +209,33 @@ int GatewayClient::request(const char* method, const char* path, const String& b
   }();
   reacquireStateAfterBlockingCall(heldDepth);
 
-  if (trackAuthState) {
+  observeTransportResult(code);
+  const auto currentSettings = store_->transportSnapshot();
+  if (trackAuthState && currentSettings.deviceSecret == credential && currentSettings.gatewayUrl == base) {
     if (code == 401) revoked_ = true;
     else if (code >= 200 && code < 300) revoked_ = false;
   }
   if (code == 429) backoffUntil_ = millis() + (uint32_t)retryAfter * 1000UL;
   return code;
+}
+
+void GatewayClient::observeTransportResult(int code) {
+  const uint32_t now = millis();
+  if (code <= 0 || code >= 500) {
+    // Retry observations, never replay an intent or approval. Failed background reads used to
+    // wait the full 60-second config cadence; credential recovery instead spun every 100 ms.
+    transportFailures_ = min(static_cast<unsigned>(transportFailures_) + 1U, 5U);
+    const uint32_t retryMs = min(1000UL << (transportFailures_ - 1), 15000UL);
+    transportRetryAt_ = now + retryMs;
+    nextConfigAt_ = transportRetryAt_;
+    return;
+  }
+  if (code >= 200 && code < 300 && transportFailures_) {
+    transportFailures_ = 0;
+    transportRetryAt_ = 0;
+    // A successful heartbeat must restore authoritative ownership/context promptly too.
+    nextConfigAt_ = now;
+  }
 }
 
 void GatewayClient::sendHeartbeat() {
@@ -368,10 +392,22 @@ bool GatewayClient::processPendingDeviceCredential() {
 // this, which matters because a revoked device must keep heartbeating so its owner can see it is
 // still alive.
 void GatewayClient::fetchConfig() {
+  const uint32_t contextGeneration = contextGeneration_;
+  const String gatewayOrigin = store_->transportSnapshot().gatewayUrl;
   String response;
   const int code = request("GET", "/v1/device/config", "", response);
+  if (contextGeneration != contextGeneration_ || gatewayOrigin != store_->transportSnapshot().gatewayUrl) {
+    nextConfigAt_ = millis();
+    return;
+  }
 
   if (code >= 200 && code < 300) {
+    if (!applyConfigJson(response)) {
+      link_ = GatewayLink::Unreachable;
+      detail_ = "Invalid gateway config";
+      nextConfigAt_ = millis() + 5000;
+      return;
+    }
     if (link_ != GatewayLink::Claimed) {
       justClaimed_ = true;
       Serial.println("[gateway] claimed — this controller now has an owner");
@@ -384,7 +420,7 @@ void GatewayClient::fetchConfig() {
     detail_ = "";
     // Cached only once it has parsed. A body that failed the size guard still arrives with a 200,
     // and writing that to NVS would make the next boot render garbage before the first poll.
-    if (applyConfigJson(response)) store_->setConfigCache(response);
+    store_->setConfigCache(response);
     // The code is spent. Keeping it would show a stale claim screen after a transfer reset.
     if (claimCode_.length() > 0) {
       claimCode_ = "";
@@ -413,8 +449,14 @@ void GatewayClient::fetchConfig() {
 void GatewayClient::fetchSetupCode(bool rotate) {
   // A cached code short-circuits: the gateway answers "the existing code is still valid" and
   // returns nothing, so re-asking would only cost a request.
-  if (!rotate && claimCode_.length() > 0) return;
-  if (millis() < nextSetupCodeAt_) return;
+  if (!rotate && claimCode_.length() > 0) {
+    if (!gateway_claim::expired(store_->claimCodeExpiresAt(), time(nullptr))) return;
+    claimCode_ = "";
+    store_->clearClaimCode();
+    nextSetupCodeAt_ = 0;
+    Serial.println("[gateway] cached claim code expired; requesting a replacement");
+  }
+  if (nextSetupCodeAt_ != 0 && (int32_t)(millis() - nextSetupCodeAt_) < 0) return;
   nextSetupCodeAt_ = millis() + kSetupCodeIntervalMs;
 
   // No cached code and the device is unowned: ROTATE to obtain one.
@@ -430,6 +472,7 @@ void GatewayClient::fetchSetupCode(bool rotate) {
   const int code = request("POST", "/v1/device/setup-code", body, response);
   if (code < 200 || code >= 300) {
     Serial.printf("[gateway] setup-code failed: %d\n", code);
+    nextSetupCodeAt_ = millis() + 5000;
     return;
   }
 
@@ -451,7 +494,7 @@ void GatewayClient::fetchSetupCode(bool rotate) {
   if (strlen(issued) > 0) {
     claimCode_ = issued;
     store_->setClaimCode(claimCode_, String(expires));
-    Serial.printf("[gateway] claim code %s (expires %s)\n", issued, expires);
+    Serial.println("[gateway] claim code issued and cached");
   }
 }
 
@@ -541,9 +584,10 @@ void gatewayEventTask(void* arg) {
 
 void GatewayClient::networkTick() {
   if (networkPaused_) return;
-  const bool justConnected = justConnectedPending_;
-  justConnectedPending_ = false;
+  if (const auto handler = interactionHandler_.load()) handler();
+  if (networkPaused_) return;
   if (!tryLockState(5000)) return;
+  const bool justConnected = justConnectedPending_.exchange(false);
   runCycle(justConnected);
   unlockState();
 }
@@ -558,27 +602,47 @@ void GatewayClient::startNetworkTask() {
   // Core 0. The Arduino loop, and therefore the renderer, runs on core 1.
   // OTA adds a 4 KB streaming buffer on top of HTTP/TLS and ArduinoJson frames. The former 8 KB
   // stack hit its canary on real hardware as soon as a mandatory manifest began downloading.
-  xTaskCreatePinnedToCore(gatewayNetworkTask, "gwnet", 16384, this, 1, nullptr, 0);
-  xTaskCreatePinnedToCore(gatewayEventTask, "gwevents", 6144, this, 1, nullptr, 0);
-  Serial.println("[gateway] network and event tasks started; the render loop never waits on HTTP");
+  gateway_tls::tlsLock();  // initialize once before either networking task can race its first use
+  if (xTaskCreatePinnedToCore(gatewayNetworkTask, "gwnet", 16384, this, 1, nullptr, 0) != pdPASS) {
+    vSemaphoreDelete((SemaphoreHandle_t)stateMutex_);
+    stateMutex_ = nullptr;
+    Serial.println("[gateway] network task creation failed; gateway service unavailable");
+    return;
+  }
+  networkTaskRunning_.store(true);
+  if (xTaskCreatePinnedToCore(gatewayEventTask, "gwevents", 6144, this, 1, nullptr, 0) != pdPASS) {
+    Serial.println("[gateway] event task unavailable; bounded polling remains active");
+  }
+  Serial.println("[gateway] background network task started");
 }
 
 void GatewayClient::eventTaskLoop() {
   for (;;) {
-    if (!store_ || WiFi.status() != WL_CONNECTED || link_ != GatewayLink::Claimed
-        || networkPaused_) {
+    String base, deviceId, deviceSecret;
+    bool eligible = false;
+    if (tryLockState()) {
+      eligible = store_ && WiFi.status() == WL_CONNECTED && link_ == GatewayLink::Claimed
+          && !networkPaused_;
+      if (eligible) {
+        const auto settings = store_->transportSnapshot();
+        base = settings.gatewayUrl;
+        deviceId = settings.deviceId;
+        deviceSecret = settings.deviceSecret;
+      }
+      unlockState();
+    }
+    if (!eligible) {
       vTaskDelay(pdMS_TO_TICKS(500));
       continue;
     }
 
-    String base = store_->gatewayUrl();
     if (base.length() == 0) {
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
 
-    WiFiClientSecure secure;
-    WiFiClient plain;
+    gateway_http::YieldingClient<WiFiClientSecure> secure;
+    gateway_http::YieldingClient<WiFiClient> plain;
     HTTPClient http;
     http.useHTTP10(true);  // close-delimited body: no chunk frames mixed into the SSE lines
     http.setConnectTimeout(kTimeoutMs);
@@ -588,8 +652,8 @@ void GatewayClient::eventTaskLoop() {
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
-    http.addHeader("x-device-id", store_->deviceId());
-    http.addHeader("x-device-secret", store_->deviceSecret());
+    http.addHeader("x-device-id", deviceId);
+    http.addHeader("x-device-secret", deviceSecret);
 
     // The event stream keeps its established session, but its handshake must share the same
     // allocation gate as request/probe/OTA handshakes on this constrained board.
@@ -606,40 +670,44 @@ void GatewayClient::eventTaskLoop() {
       continue;
     }
 
+    // SSE has no durable replay cursor on the device route. Reconnect explicitly refreshes the
+    // authoritative compact models rather than pretending that missed events were delivered.
+    lockState();
+    markOperateDue(millis());
+    nextConfigAt_ = millis();
+    unlockState();
     WiFiClient* stream = http.getStreamPtr();
-    String line;
-    String event;
-    String data;
-    line.reserve(160);
-    data.reserve(384);
+    gateway_http::EventFrame frame;
+    uint32_t lastByteAt = millis();
+    uint32_t nextIdentityCheckAt = millis() + 1000;
     while (WiFi.status() == WL_CONNECTED && !networkPaused_
            && (stream->connected() || stream->available())) {
+      const uint32_t now = millis();
+      // The gateway emits a heartbeat every 25 s. A half-open TLS socket can otherwise remain
+      // connected forever after a router/gateway change and silently miss all refresh events.
+      if (now - lastByteAt > 90000) break;
+      if ((int32_t)(now - nextIdentityCheckAt) >= 0) {
+        nextIdentityCheckAt = now + 1000;
+        if (tryLockState()) {
+          const auto settings = store_->transportSnapshot();
+          const bool changed = settings.gatewayUrl != base
+              || settings.deviceSecret != deviceSecret || link_ != GatewayLink::Claimed;
+          unlockState();
+          if (changed) break;
+        }
+      }
       if (!stream->available()) {
         vTaskDelay(pdMS_TO_TICKS(20));
         continue;
       }
-      const char c = static_cast<char>(stream->read());
-      if (c != '\n') {
-        if (c != '\r' && line.length() < 768) line += c;
-        continue;
+      const int value = stream->read();
+      if (value < 0) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
+      lastByteAt = millis();
+      if (frame.feed(static_cast<char>(value))) {
+        if (frame.event() == "threads.changed") applyThreadChangedEvent(frame.data());
+        else applyRefreshEvent(frame.event(), frame.data());
+        frame.reset();
       }
-      if (line.startsWith("event:")) {
-        event = line.substring(6);
-        event.trim();
-      } else if (line.startsWith("data:")) {
-        if (data.length() > 0) data += '\n';
-        String part = line.substring(5);
-        part.trim();
-        data += part;
-      } else if (line.length() == 0) {
-        if (data.length() > 0) {
-          if (event == "threads.changed") applyThreadChangedEvent(data);
-          else applyRefreshEvent(event, data);
-        }
-        event = "";
-        data = "";
-      }
-      line = "";
     }
     http.end();
     vTaskDelay(pdMS_TO_TICKS(2000));
@@ -734,7 +802,13 @@ void GatewayClient::applyThreadChangedEvent(const String& payload) {
     }
     threadCount_ = write;
     if (context_.threadId == threadId) {
+      contextGeneration_ += 1;
       context_.threadId = "";
+      remoteBlockers_ = RemoteBlockers();
+      remoteBlockers_.providerUnknown = remoteBlockers_.inputUnknown = true;
+      approvalCount_ = 0;
+      approvalOverflow_ = false;
+      nextApprovalsAt_ = millis();
       closeResponse();
       nextConfigAt_ = millis();
       nextControlsAt_ = millis();
@@ -770,25 +844,21 @@ void GatewayClient::runCycle(bool justConnected) {
     return;
   }
   const uint32_t now = millis();
+  if (justConnected) {
+    transportRetryAt_ = 0;
+    transportFailures_ = 0;
+    nextHeartbeatAt_ = now;
+    nextConfigAt_ = now;
+    nextFirmwareAt_ = now + 1500;
+    if (link_ == GatewayLink::Idle) link_ = GatewayLink::Connecting;
+    markOperateDue(now);
+  }
   if (backoffUntil_ != 0 && (int32_t)(now - backoffUntil_) < 0) return;
+  if (transportFailures_ && (int32_t)(now - transportRetryAt_) < 0) return;
 
   // Credential recovery precedes ordinary traffic. It performs at most one HTTP request per pass,
   // and the active slot is not replaced until the gateway has authenticated the candidate.
   if (processPendingDeviceCredential()) return;
-
-  if (justConnected) {
-    if (link_ == GatewayLink::Idle) link_ = GatewayLink::Connecting;
-    nextHeartbeatAt_ = now + kHeartbeatIntervalMs;
-    nextConfigAt_ = now + kConfigIntervalMs;
-    nextFirmwareAt_ = now + 1500;
-    sendHeartbeat();
-    fetchConfig();
-    // Deliberately not fetched here. The reference firmware ran the whole sequence in one burst on
-    // the just-connected edge; marking them due instead spreads the same work across the next few
-    // passes and keeps the one-request-per-call rule true on every path, including this one.
-    markOperateDue(now);
-    return;
-  }
 
   // One request per call, heartbeat first: it is the cheaper of the two and the one that proves the
   // device is alive even when it is revoked and nothing else will answer.
@@ -863,7 +933,5 @@ void GatewayClient::markOperateDue(uint32_t now) {
 }
 
 bool GatewayClient::consumeJustClaimed() {
-  const bool value = justClaimed_;
-  justClaimed_ = false;
-  return value;
+  return justClaimed_.exchange(false);
 }

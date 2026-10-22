@@ -11,14 +11,8 @@
 // returns the six-milestone projection in src/deviceAudio.mjs. Stages, leases, attempt counts,
 // provider names and timings are worker bookkeeping that stays on the owner-facing route.
 //
-// This class exists because `GatewayClient::uploadMedia()` throws away the one identifier the poll
-// needs. `POST /v1/device/media` answers `{ media, job }`; that method parses `media.id` and drops
-// `job.jobId`, and it may not be edited. So the upload is re-expressed here — reusing
-// media::Base64JsonBodyStream verbatim, which is the part that is delicate — and both ids are kept.
-//
-// Threading: one caller. On the Hosyond board both entry points are reached from inside main.cpp's
-// `gateway.tryLockState(50)` frame, so they are serialised against the gateway's own task exactly
-// as every other call the UI makes is.
+// The upload-session transport retains the media id and job id. Network calls run on the board's
+// bounded worker; render state is published on the UI task after a worker-owned copy completes.
 
 #include <Arduino.h>
 
@@ -43,9 +37,11 @@ const char* voiceStageName(VoiceStage stage);
 class GatewayVoice {
  public:
   void begin(DeviceStore& store);
+  // Pin the destination and a fresh capture identity before microphone bytes are collected.
+  void beginCapture(const String& environmentId, const String& threadId);
 
   // POST /v1/device/media. Returns the MEDIA id — what an audio_prompt intent needs — and keeps the
-  // JOB id for poll(). Blocks for up to 30 s: a megabyte of base64 over a domestic uplink.
+  // JOB id for poll(). Blocks only on the caller's network worker, never on the render task.
   //
   // `maxRawBytes` is the gateway's declared ceiling; exceeding it is answered locally with 413
   // rather than by spending the upload first. Pass 0 to skip the check.
@@ -75,6 +71,8 @@ class GatewayVoice {
   // One line a person can read: the milestone, or the transcript once there is one, or the error.
   const String& detail() const { return detail_; }
   const String& transcript() const { return transcript_; }
+  const String& mediaId() const { return mediaId_; }
+  const String& responseAfter() const { return responseAfter_; }
   bool ok() const { return ok_; }
 
   // Bumped whenever anything above changes, so a renderer repaints on a comparison rather than a
@@ -85,14 +83,22 @@ class GatewayVoice {
   void publish(VoiceStage stage, const String& detail);
 
   DeviceStore* store_ = nullptr;
+  String captureEnvironmentId_;
+  String captureThreadId_;
+  String captureRequestId_;
   String jobId_;
+  String mediaId_;
   String transcript_;
+  String responseAfter_;
   String detail_;
   VoiceStage stage_ = VoiceStage::Idle;
   bool ok_ = true;
   uint32_t revision_ = 1;
 
+  uint32_t uploadBackoffUntil_ = 0;
   uint32_t nextPollAt_ = 0;
   uint32_t giveUpAt_ = 0;
   uint8_t failures_ = 0;
+  bool done_ = false;
+  bool pollFailure(uint32_t now, int code);
 };

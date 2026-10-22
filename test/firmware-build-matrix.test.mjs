@@ -94,6 +94,8 @@ test("the isolated build staging step copies placeholders instead of live board 
       "utf8",
     );
     assert.equal(stagedConfig, sourceExample);
+    assert.equal(await readFile(join(stagedRoot, release.directory, "include", "controller_config.example.h"), "utf8"), sourceExample,
+      "placeholder environments must retain the directly included example header");
     await assert.rejects(
       access(join(stagedRoot, release.directory, "include", "controller_config.old.h")),
       { code: "ENOENT" },

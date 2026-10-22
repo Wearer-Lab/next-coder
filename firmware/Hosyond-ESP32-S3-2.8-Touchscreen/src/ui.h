@@ -28,8 +28,8 @@
 // not be allocated, in which case the UI still runs — it simply has no animation.
 bool uiBegin(GatewayClient& gateway, Provisioning& provisioning, DeviceStore& store);
 
-// One touch event, from touchPoll(). Every gateway call this triggers blocks for up to the client's
-// timeout, so each one paints its pending state before making it.
+// One touch event from touchPoll(). Gateway operations enter a single bounded worker;
+// duplicate gestures cannot enqueue mutations while that operation is in flight.
 void uiHandleTouch(const TouchEvent& event);
 
 // Call every loop pass. Owns the frame budget: it paces itself internally and returns immediately
@@ -50,6 +50,7 @@ const char* uiBenchBoundThreadTitle();
 int uiBenchThreadRowCount();
 const char* uiBenchScreenName();
 bool uiBenchRecording();
+bool uiBenchNetworkBusy();
 void uiBenchMicRect(int16_t* x, int16_t* y, int16_t* w, int16_t* h);
 void uiBenchHoldGlass(bool held);
 int uiBenchCreateStatus();

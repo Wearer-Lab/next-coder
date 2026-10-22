@@ -4065,6 +4065,14 @@ test("invalid credentials and unclaimed devices cannot browse environments or pr
 test("a device creates a thread in its bound project and is left pointing at it", async (t) => {
   const f = await environmentSelectionFixture(t);
   await f.bind({ environmentId: f.bound.id, projectId: "proj_empty" });
+  const stale = await f.originalFetch(new URL("/v1/device/threads", f.baseUrl), {
+    method: "POST", headers: { ...f.deviceHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ clientRequestId: "dev:stale-create-0001", expectedEnvironmentId: f.bound.id, expectedProjectId: "old_project" }),
+  });
+  assert.equal(stale.status, 409);
+  const staleDetails = (await stale.json()).error.details;
+  assert.equal(staleDetails.code, "device_context_changed");
+  assert.equal(staleDetails.request.status, "failed");
 
   const response = await f.originalFetch(new URL("/v1/device/threads", f.baseUrl), {
     method: "POST",

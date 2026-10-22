@@ -19,6 +19,7 @@
 // could not be used by any other board.
 
 #include <Arduino.h>
+#include <atomic>
 
 #include "DeviceStore.h"
 #include "OperateModel.h"
@@ -104,9 +105,15 @@ class GatewayClient {
   // no-op and the class behaves exactly as it did single-threaded — which is what the boards that
   // still drive runCycle() from their loop rely on.
   void startNetworkTask();
+  bool networkRunning() const { return networkTaskRunning_.load(); }
 
   // One iteration of the network task, taking the lock itself. Public only because the task calls it.
   void networkTick();
+
+  // A board may drain one bounded foreground interaction on this existing worker. Register once;
+  // never block waiting for jobs. The callback runs outside the state lock and must serialize its
+  // own model changes, preserving the network/render separation without another TLS-sized stack.
+  void setInteractionHandler(void (*handler)()) { interactionHandler_.store(handler); }
 
   // Set while the microphone is open. The I2S ring holds only tens of milliseconds, and although
   // the cycle no longer runs on the render loop, an upload competing for the radio mid-capture can
@@ -157,14 +164,10 @@ class GatewayClient {
   // their own timers, one request per call. A UI never asks for these; it renders whatever the
   // accessors hold and repaints when revision() changes.
   //
-  // GESTURE — refreshThreads(), selectThread(), the send* / run* calls, fetchResponsePage(), and
-  // answerApproval() are driven by a person touching the screen. Each performs exactly one HTTP
-  // request and BLOCKS for up to the 5 s timeout while it does: HTTPClient has no async mode, and
-  // introducing a worker task here would make every accessor need a lock. The contract inherited
-  // from the reference firmware is therefore: paint a pending frame FIRST, then call. On a board
-  // running a continuous renderer, expect the animation to stall for the duration.
-  //
-  // This class is not thread-safe. One caller.
+  // GESTURE calls block on HTTP. Continuous-render boards must execute them on a bounded worker
+  // and paint pending/completion states from their render task. Callers serialize model access
+  // with the state guard; request() releases that guard while waiting on network/TLS and restores
+  // it before publishing the parsed result. Never hold pointers into mutable models across a call.
   // ---------------------------------------------------------------------------------------------
 
   // Bumped on every change to any model below, so a renderer can skip a frame's worth of diffing
@@ -203,6 +206,7 @@ class GatewayClient {
   // contain the new thread, and re-fetching to make it valid means guessing how long T3's
   // projection takes to catch up. The caller already holds the authoritative answer.
   void adoptThreadBinding(const String& threadId);
+  void clearContextBinding(const String& environmentId = String(), const String& projectId = String());
   const String& threadsDetail() const { return threadsDetail_; }
 
   // Sending. All three shapes go through POST /v1/device/intents with the device envelope; a saved
@@ -254,6 +258,9 @@ class GatewayClient {
   // Approvals. Refreshed by runCycle() on its own timer, because a command parked awaiting approval
   // stalls the turn silently and nothing else in the protocol announces it.
   size_t approvalCount() const { return approvalCount_; }
+  const RemoteBlockers& remoteBlockers() const { return remoteBlockers_; }
+  DeviceBlockerKind blockerKind() const { return deviceBlockerKind(approvalCount_, remoteBlockers_); }
+  bool hasBlockingRequests() const { return blockerKind() != DeviceBlockerKind::None; }
   const PendingApproval* approval(size_t index) const;
   bool approvalOverflow() const { return approvalOverflow_; }
   bool refreshApprovals();
@@ -263,6 +270,7 @@ class GatewayClient {
   int request(const char* method, const char* path, const String& body, String& response,
               const String* credentialOverride = nullptr, bool trackAuthState = true);
   void sendHeartbeat();
+  void observeTransportResult(int code);
   void observeCredentialRotation(const String& heartbeatPayload);
   bool processPendingDeviceCredential();
   void fetchConfig();
@@ -291,10 +299,10 @@ class GatewayClient {
   String hardwareModel_;
   String firmwareVersion_;
 
-  GatewayLink link_ = GatewayLink::Idle;
+  std::atomic<GatewayLink> link_{GatewayLink::Idle};
   String claimCode_;
   String detail_;
-  bool justClaimed_ = false;
+  std::atomic<bool> justClaimed_{false};
 
   // Separate cadences, following the reference firmware: a heartbeat is cheap and proves liveness,
   // config changes rarely, and a claim code must not be re-requested on a timer at all.
@@ -303,6 +311,8 @@ class GatewayClient {
   uint32_t nextSetupCodeAt_ = 0;
   uint32_t backoffUntil_ = 0;   // honours 429 retry-after
   bool revoked_ = false;
+  unsigned transportFailures_ = 0;
+  uint32_t transportRetryAt_ = 0;
   // RAM-only progress. NVS contains the candidate and its server rotation identity, so rebooting
   // safely repeats the idempotent stage call before attempting acknowledgement.
   String stagedCredentialRotationId_;
@@ -313,8 +323,10 @@ class GatewayClient {
   // the renderer waiting on the remaining depth.
   void* lockOwner_ = nullptr;       // TaskHandle_t
   uint32_t lockDepth_ = 0;
-  volatile bool justConnectedPending_ = false;
-  volatile bool networkPaused_ = false;
+  std::atomic<bool> justConnectedPending_{false};
+  std::atomic<bool> networkPaused_{false};
+  std::atomic<void (*)()> interactionHandler_{nullptr};
+  std::atomic<bool> networkTaskRunning_{false};
 
   uint32_t releaseStateForBlockingCall();
   void reacquireStateAfterBlockingCall(uint32_t depth);
@@ -327,6 +339,7 @@ class GatewayClient {
 
   uint32_t revision_ = 1;
 
+  uint32_t contextGeneration_ = 0;
   RuntimeContext context_;
   DisplayModel display_;
 
@@ -357,10 +370,12 @@ class GatewayClient {
 
   ThreadResponse response_;
   bool responseOpen_ = false;
+  uint32_t responseGeneration_ = 0;
   String responseAfter_;
 
   PendingApproval approvals_[kMaxPendingApprovals];
   size_t approvalCount_ = 0;
+  RemoteBlockers remoteBlockers_;
   bool approvalOverflow_ = false;
 
   uint32_t nextDisplayAt_ = 0;

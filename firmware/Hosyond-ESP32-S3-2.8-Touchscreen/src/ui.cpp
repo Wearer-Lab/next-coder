@@ -1,6 +1,9 @@
 #include "ui.h"
 
 #include <math.h>
+#include <memory>
+#include <atomic>
+#include <functional>
 
 #include <GatewayBrowse.h>
 #include <GatewayVoice.h>
@@ -251,6 +254,7 @@ size_t approvalIndex = 0;
 //   is worse than any amount of visual roughness.
 int pickerIndex = -1;          // into the thread list; -1 means "follow the bound thread"
 uint32_t pickerCommitAt = 0;   // 0 when there is nothing pending
+bool pickerOpenResponse = false;
 bool pickerBinding = false;    // a write is in flight this frame
 constexpr uint32_t kPickerCommitMs = 600;
 
@@ -344,6 +348,8 @@ size_t lastApprovalCount = 0;
 // Push-to-talk state. `recordArmed` is the press that landed on the microphone button; the
 // recording itself runs in uiTick() so the loop keeps polling touch and can see the finger lift.
 bool recordArmed = false;
+String voiceCaptureEnvironment;
+String voiceCaptureThread;
 #if BENCH_SELFTEST
 bool benchGlassHeld = false;
 #endif
@@ -634,7 +640,11 @@ String rowValue(Row row) {
     default: {
       if (!gw) return String("Nothing yet");
       const size_t approvals = gw->approvalCount();
-      if (approvals > 0) return String(approvals) + " awaiting approval";
+      if (approvals > 0) return String(approvals) + " gateway approval";
+      const RemoteBlockers& remote = gw->remoteBlockers();
+      if (remote.userInputs) return String(remote.userInputs) + " input needed; console";
+      if (remote.providerApprovals) return String(remote.providerApprovals) + " provider approval; console";
+      if (gw->hasBlockingRequests()) return "Check requests in console";
       if (gw->responseOpen() && gw->responseInFlight()) return String("Agent is working");
       const String& line = gw->display().line2;
       return line.length() > 0 ? line : String("Nothing yet");
@@ -661,7 +671,7 @@ uint8_t rowTone(Row row) {
       return haveThread() ? kMuted : kBright;
     default:
       if (!gw) return kHair;
-      return gw->approvalCount() > 0 ? kBright : kMuted;
+      return gw->hasBlockingRequests() ? kBright : kMuted;
   }
 }
 
@@ -937,7 +947,7 @@ OrbPresentation presentationForState() {
   // 3. A command parked by policy outranks any amount of agent activity, because it is the only
   //    thing on this device that cannot proceed without a person. The action bar says REVIEW at
   //    the same moment for the same reason.
-  if (gw->approvalCount() > 0) return {OrbMode::Ring, "Needs you", true};
+  if (gw->hasBlockingRequests()) return {OrbMode::Ring, deviceBlockerLabel(gw->blockerKind()), true};
 
   // 4. The voice note, while one is in flight.
   //
@@ -951,14 +961,14 @@ OrbPresentation presentationForState() {
   //    "Working" here would claim an agent was busy on a send that policy had already blocked.
   switch (voice.stage()) {
     case VoiceStage::Uploading:
-      // Bytes moving. The orb cannot animate through this one — uploadMedia blocks the render loop
-      // for the whole transfer — but the screen showing "Sending" is painted before the call and is
-      // therefore true for the entire stall.
+      // Bytes move on the network worker; the render task keeps animating and handling Back.
       return {OrbMode::Ribbon, "Sending", false};
     case VoiceStage::Transcribing:
       // The scan meridian sweeping a dotted globe is a genuinely good read for ASR working through
       // a clip, and this is the first real trigger `searching` has ever had on this device.
       return {OrbMode::Globe, "Transcribing", false};
+    case VoiceStage::Ready:
+      return {OrbMode::Ring, "Ready in console", true};
     case VoiceStage::Review:
       // A STOP. The normaliser changed something a person has to look at before it is dispatched,
       // so this must not animate as work in progress.
@@ -1486,7 +1496,8 @@ void paintThreadsChrome() {
   // The metric line. The count is the answer and the word only names it — the rhythm the console
   // uses in its stat strip, which is the one thing a list of this size can carry.
   const size_t count = threadRowCount();
-  uip::statLine(14, kContentTop + 40, String(count), "THREADS", kBright);
+  if (message.length() > 0) uip::text(14, kContentTop + 42, 1, kMuted, uip::fitWords(message, 35));
+  else uip::statLine(14, kContentTop + 40, String(count), "THREADS", kBright);
 }
 
 void paintThreads() {
@@ -1530,6 +1541,7 @@ constexpr int16_t kBrowseRowH = 48;
 void paintBrowseChrome(const char* label, size_t count) {
   g().fillRect(0, kContentTop, kW, (int16_t)(kBrowseListTop - kContentTop), panelGrey(kBg));
   uip::statLine(14, kContentTop + 6, String(count), label, kBright);
+  if (message.length() > 0) uip::text(14, kContentTop + 23, 1, kMuted, uip::fitWords(message, 35));
 }
 
 void paintEnvironments() {
@@ -1683,6 +1695,7 @@ bool voiceInJourney() {
   switch (voice.stage()) {
     case VoiceStage::Uploading:
     case VoiceStage::Transcribing:
+    case VoiceStage::Ready:
     case VoiceStage::Review:
     case VoiceStage::Failed:
       return true;
@@ -1765,11 +1778,13 @@ void paintMicButton() {
     snprintf(buf, sizeof(buf), "%u.%us CLIP", (unsigned)(clipHeldMs / 1000),
              (unsigned)((clipHeldMs % 1000) / 100));
     uip::textCentered((int16_t)(capsule.y + kMicMainLine), 2, kText, buf);
-    uip::textCentered((int16_t)(capsule.y + kMicSubLine), 1, kMuted, "send or discard below");
+    uip::textCentered((int16_t)(capsule.y + kMicSubLine), 1, kMuted,
+      uip::fitWords(message.length() > 0 ? message : String("send or discard below"), kCols1));
     return;
   }
   uip::textCentered((int16_t)(capsule.y + kMicMainLine), 2, kText, "HOLD TO TALK");
-  uip::textCentered((int16_t)(capsule.y + kMicSubLine), 1, kMuted, "press and speak");
+  uip::textCentered((int16_t)(capsule.y + kMicSubLine), 1, kMuted,
+    uip::fitWords(message.length() > 0 ? message : String("press and speak"), kCols1));
 }
 
 // Where the clip is going. The thread's own title, so a person knows before they speak.
@@ -1819,6 +1834,7 @@ void paintActionsChrome() {
   g().fillRect(0, kContentTop, kW, (int16_t)(kActionListTop - kContentTop), panelGrey(kBg));
   // The same metric line as the other lists: how many are saved, and what they are.
   uip::statLine(14, kContentTop + 6, String(gw->controlCount()), "SAVED ACTIONS", kBright);
+  if (message.length() > 0) uip::text(14, kContentTop + 23, 1, kMuted, uip::fitWords(message, 35));
 }
 
 void paintActions() {
@@ -1931,8 +1947,19 @@ void paintApprovals() {
   clearContent();
   const size_t count = gw->approvalCount();
   if (count == 0) {
-    uip::textCentered(kContentTop + 80, 2, kMuted, "All clear");
-    uip::textCentered(kContentTop + 112, 1, kHair, "Commands held by policy appear here");
+    const RemoteBlockers& remote = gw->remoteBlockers();
+    if (gw->hasBlockingRequests()) {
+      uip::textCentered(kContentTop + 52, 2, kBright, deviceBlockerLabel(gw->blockerKind()));
+      if (remote.providerApprovals) uip::textCentered(kContentTop + 90, 1, kText,
+        String(remote.providerApprovals) + " provider approval(s)");
+      if (remote.userInputs) uip::textCentered(kContentTop + 110, 1, kText,
+        String(remote.userInputs) + " input request(s)");
+      uip::textCentered(kContentTop + 145, 1, kMuted, "Open the web console");
+      uip::textCentered(kContentTop + 165, 1, kHair, "Answer in the thread there");
+    } else {
+      uip::textCentered(kContentTop + 80, 2, kMuted, "All clear");
+      uip::textCentered(kContentTop + 112, 1, kHair, "Gateway holds appear here");
+    }
     return;
   }
   if (approvalIndex >= count) approvalIndex = 0;
@@ -1963,6 +1990,10 @@ void paintApprovals() {
   }
   uip::divider(24, (int16_t)(box.y + box.h - 22), (int16_t)(box.w - 28), kHair, kSurface);
   uip::text(24, (int16_t)(box.y + box.h - 14), 1, kHair, "Runs on your own machine");
+  const RemoteBlockers& remote = gw->remoteBlockers();
+  if (remote.providerApprovals || remote.userInputs || remote.providerUnknown || remote.inputUnknown) {
+    uip::textCentered(kContentTop + 190, 1, kMuted, "Other requests: open console");
+  } else if (message.length() > 0) uip::textCentered(kContentTop + 190, 1, kMuted, uip::fitWords(message, 35));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2264,9 +2295,12 @@ void addAction(Act id, const char* label, bool primary, bool enabled = true) {
 // The rule that produces an empty bar is the whole point: if this function adds nothing, the bar is
 // not drawn and those 58 pixels belong to the content. A permanent strip of five tabs, four of them
 // inert, was the opposite of that.
+bool uiNetworkBusy();
+
 void buildActions() {
   actionCount = 0;
   if (!gw) return;
+  if (uiNetworkBusy()) { addAction(Act::None, "WORKING", false, false); return; }
 
   // An open config portal takes over the screen, and nothing offered a way out of it: the only
   // exits were joining a network or pulling the power. A device in this state is usually still
@@ -2307,7 +2341,7 @@ void buildActions() {
 
   switch (screen) {
     case Screen::Home: {
-      if (gw->approvalCount() > 0) {
+      if (gw->hasBlockingRequests()) {
         addAction(Act::Review, "REVIEW", true);
         return;
       }
@@ -2435,9 +2469,71 @@ void paintActionBar() {
 // Navigation
 // ---------------------------------------------------------------------------------------------
 
-// Paint, THEN call. Every gateway call below blocks the loop for up to its timeout — HTTPClient has
-// no async mode — so the screen has to say what is happening before the stall, not after it.
+// Exactly one gesture operation may be in flight. Network work never draws or mutates UI
+// state. Release/acquire publishes the bounded job and its result across the two tasks.
+bool uiNetworkReady = false;
+std::atomic<unsigned> uiJobState{0}; // idle / queued / complete
+std::function<void()> uiJobWork;
+std::function<void()> uiJobCompletion;
+DispatchResult uiDispatchResult;
+bool uiOperationSucceeded = false;
+GatewayBrowse uiStagedBrowse;
+uint32_t navigationGeneration = 0;
+String pendingControlEnvironment;
+String pendingControlThread;
+uint32_t pendingControlRevision = 0;
+
+bool uiNetworkBusy() { return uiJobState.load(std::memory_order_acquire) != 0; }
+
+// Drained by GatewayClient's existing network task; no extra TLS-sized task stack.
+void uiNetworkLoop() {
+  if (uiJobState.load(std::memory_order_acquire) != 1) return;
+  uiJobWork();
+  uiJobState.store(2, std::memory_order_release);
+}
+
+bool enqueueUiNetworkJob(std::function<void()> work, std::function<void()> completion) {
+  if (!uiNetworkReady) {
+    message = "Network worker unavailable; restart device";
+    contentDirty = true;
+    return false;
+  }
+  if (uiNetworkBusy()) return false;
+  uiJobWork = std::move(work);
+  uiJobCompletion = std::move(completion);
+  uiJobState.store(1, std::memory_order_release);
+  return true;
+}
+
+void completeUiNetworkJob() {
+  if (uiJobState.load(std::memory_order_acquire) != 2) return;
+  auto completion = std::move(uiJobCompletion);
+  uiJobWork = nullptr;
+  uiJobState.store(0, std::memory_order_release);
+  if (completion) completion();
+  chromeDirty = true;
+  contentDirty = true;
+}
+
+void queueResponsePage(int page, bool open = false, const String& after = String()) {
+  const uint32_t generation = navigationGeneration;
+  const String environment = gw->context().environmentId;
+  const String thread = gw->context().threadId;
+  enqueueUiNetworkJob([page, open, after, environment, thread] {
+    gw->lockState();
+    if (environment == gw->context().environmentId && thread == gw->context().threadId) {
+      if (open) gw->openResponse(after);
+      else gw->fetchResponsePage(page);
+    }
+    gw->unlockState();
+  }, [generation] {
+    if (generation == navigationGeneration) contentDirty = true;
+  });
+}
+
+// Paint the pending state immediately; all socket work is scheduled off the render task.
 void showBusy(const String& title, const String& detail) {
+  message = "";
   if (!displayReady()) return;
   closeDrawerNow();
   drawHeader();
@@ -2456,11 +2552,14 @@ void goTo(Screen next) {
   // classified as speaking, it would sit on the prominent line hiding the thread name behind a
   // capture the person has already walked away from. The outcome survives in `message`.
   if (screen == Screen::Send && voiceInJourney()
-      && (voice.stage() == VoiceStage::Failed || voice.stage() == VoiceStage::Review)) {
+      && (voice.stage() == VoiceStage::Failed || voice.stage() == VoiceStage::Review
+          || voice.stage() == VoiceStage::Ready)) {
     message = voice.detail();
     voice.reset();
   }
   screen = next;
+  navigationGeneration += 1;
+  pickerOpenResponse = false;
   modal = Modal::None;
   chromeDirty = true;
   contentDirty = true;
@@ -2491,10 +2590,16 @@ void afterDispatch(const DispatchResult& result, bool expectReply) {
     contentDirty = true;
     return;
   }
-  if (result.accepted && expectReply) {
+  if (result.requiresApproval) {
+    approvalIndex = 0;
+    goTo(Screen::Approvals);
+    return;
+  }
+  if (result.accepted && expectReply
+      && (result.status == "dispatched" || result.status == "completed")) {
     showBusy("Sent", "Waiting for the agent");
-    gw->openResponse(result.responseAfter);
     goTo(Screen::Response);
+    queueResponsePage(0, true, result.responseAfter);
     return;
   }
   contentDirty = true;
@@ -2514,12 +2619,33 @@ void dispatchControl(const DeviceControl& c) {
     || (c.kind == "legacy" && (c.id == "status" || c.id == "stop"));
   const bool expectReply = !quiet;
   showBusy(c.label, "Sending to selected task");
-  const DispatchResult result = gw->runControl(c);
-  afterDispatch(result, expectReply);
+  const DeviceControl control = c;
+  const String environment = gw->context().environmentId;
+  const String thread = gw->context().threadId;
+  const uint32_t generation = navigationGeneration;
+  const uint32_t layout = gw->controlsRevision();
+  enqueueUiNetworkJob([control, environment, thread, layout] {
+    gw->lockState();
+    if (gw->context().environmentId != environment || gw->context().threadId != thread
+        || gw->controlsRevision() != layout) {
+      uiDispatchResult = DispatchResult();
+      uiDispatchResult.detail = "Context changed; review again";
+    } else uiDispatchResult = gw->runControl(control);
+    gw->unlockState();
+  }, [generation, expectReply, environment, thread] {
+    if (environment != gw->context().environmentId || thread != gw->context().threadId) {
+      message = uiDispatchResult.accepted ? "Sent to previous thread; see console" : uiDispatchResult.detail;
+      return;
+    }
+    if (generation == navigationGeneration) afterDispatch(uiDispatchResult, expectReply);
+  });
 }
 
 void confirmControl(const DeviceControl& c) {
   pendingControl = c;
+  pendingControlEnvironment = gw->context().environmentId;
+  pendingControlThread = gw->context().threadId;
+  pendingControlRevision = gw->controlsRevision();
   modal = Modal::ConfirmControl;
   contentDirty = true;
 }
@@ -2558,6 +2684,7 @@ void runControlRow(const DeviceControl& c) {
 }
 
 void discardClip() {
+  if (uiNetworkBusy()) return;
   clipHeld = false;
   clipHeldMs = 0;
   audio::discard();
@@ -2587,72 +2714,59 @@ void paintVoiceMomentNow() {
   contentDirty = true;
 }
 
-// The upload-and-dispatch half of push-to-talk, now behind a deliberate press rather than behind
-// the finger lifting. Blocks for as long as the upload takes and says so on screen the entire time.
+// Captured PCM remains immutable until the bounded worker completes. A failed transfer keeps it
+// available for explicit retry, and a successful upload follows the one server-owned voice job.
 void sendHeldClip() {
-  if (!clipHeld) return;
-  const size_t bytes = audio::recordedBytes();
-  const uint32_t ms = clipHeldMs;
-  if (bytes == 0) {
-    discardClip();
+  if (!clipHeld || uiNetworkBusy()) return;
+  if (gw->context().environmentId != voiceCaptureEnvironment
+      || gw->context().threadId != voiceCaptureThread) {
+    message = "Thread changed; reselect the recording's thread or discard";
+    contentDirty = true;
     return;
   }
+  const size_t bytes = audio::recordedBytes();
+  if (bytes == 0) { discardClip(); return; }
 
-  // Paint the stage, THEN block in it.
-  //
-  // uploadMedia holds the render loop for the whole transfer, so the uploading frame is STILL — the
-  // orb cannot animate through it and pretending otherwise would be a lie about the device. What it
-  // can do is show the right picture before the stall begins: the full-page voice moment, with one
-  // real orb frame in Ribbon and the word "Sending" under it. The motion arrives at the next stage,
-  // transcribing, which is poll-driven and therefore genuinely animated.
+  struct VoiceUploadWork {
+    GatewayVoice state;
+    uint8_t header[media::kWavHeaderBytes];
+    String mediaId;
+    int httpStatus = -1;
+  };
+  auto work = std::make_shared<VoiceUploadWork>();
+  work->state = voice;
+  media::buildWavHeader(work->header, static_cast<uint32_t>(bytes), audio::sampleRateHz());
+  const uint8_t* pcm = audio::pcm();
+  if (!enqueueUiNetworkJob([work, pcm, bytes]() {
+        work->mediaId = work->state.upload("audio", "audio/wav", "controller.wav", work->header,
+          sizeof(work->header), pcm, bytes, MEDIA_UPLOAD_MAX_BYTES, work->httpStatus);
+      }, [work]() {
+        if (work->mediaId.length() == 0) {
+          // Keep the exact capture, so Retry resumes its idempotent session rather than losing it.
+          voice = work->state;
+          voice.setLocalStage(VoiceStage::Recorded);
+          message = work->httpStatus == 413 ? String("Clip too large; record a shorter note")
+            : work->httpStatus == 429 ? String("Gateway busy; recording kept. Retry shortly")
+            : String("Upload failed; recording kept. Retry SEND");
+          contentDirty = true;
+          return;
+        }
+        voice = work->state;
+        clipHeld = false;
+        clipHeldMs = 0;
+        audio::discard();
+        // Device uploads enqueue transcription and its policy-controlled auto-send themselves.
+        // Sending an audio_prompt here would run the same voice note twice and bypass review.
+        if (!voice.tracking()) {
+          message = voice.detail().length() > 0 ? voice.detail()
+            : String("Uploaded; check voice note in the console");
+        } else {
+          message = "Transcribing";
+        }
+        contentDirty = true;
+      })) return;
   voice.setLocalStage(VoiceStage::Uploading);
   paintVoiceMomentNow();
-
-  // The WAV header is passed as its own segment so the PCM is never memmoved to make room in front
-  // of it — on a megabyte clip that copy is the difference between working and not.
-  uint8_t header[media::kWavHeaderBytes];
-  media::buildWavHeader(header, (uint32_t)bytes, audio::sampleRateHz());
-
-  // Through GatewayVoice, not GatewayClient: the POST answers with both a media id and a job id and
-  // only this one keeps the second, which is what the whole status poll hangs off.
-  int httpStatus = 0;
-  const String mediaId = voice.upload("audio", "audio/wav", "controller.wav", header,
-                                      sizeof(header), audio::pcm(), bytes,
-                                      MEDIA_UPLOAD_MAX_BYTES, httpStatus);
-  clipHeld = false;
-  clipHeldMs = 0;
-  audio::discard();
-  if (mediaId.length() == 0) {
-    voice.reset();
-    message = httpStatus == 413 ? String("Clip too large") : String("Upload failed ") + httpStatus;
-    contentDirty = true;
-    return;
-  }
-
-  // A saved capture action is the owner's configured destination for a voice note; without one the
-  // clip becomes a plain audio prompt on the selected thread.
-  const DeviceControl* target = nullptr;
-  for (size_t i = 0; i < gw->controlCount(); ++i) {
-    const DeviceControl* c = gw->control(i);
-    if (!c || !c->enabled) continue;
-    if (c->kind == "capture_audio" || c->mediaKind == "audio") { target = c; break; }
-  }
-
-  const DispatchResult result = target
-    ? gw->runAction(target->actionId, mediaId)
-    : gw->sendAudioPrompt(mediaId, AUDIO_PROMPT_TEXT);
-  message = result.detail;
-
-  if (voice.tracking()) {
-    // The journey owns the screen until it ends. The response is ARMED so runCycle starts polling
-    // it, but the reply screen is not opened over the top of a capture that is still being
-    // transcribed — one thing at a time is the whole point of this screen.
-    if (result.accepted) gw->openResponse(result.responseAfter);
-    contentDirty = true;
-    return;
-  }
-  // No job to follow: an older gateway, or an upload that produced no job id. Behave as before.
-  afterDispatch(result, true);
 }
 
 // Ends the recording and HOLDS it. Nothing leaves the device here.
@@ -2665,6 +2779,14 @@ void finishRecording() {
   const audio::ClipStats st = audio::measureClip();
   audio::printClipVerdict(st);
 
+  if (audio::captureFailed()) {
+    audio::discard();
+    clipHeld = false;
+    clipHeldMs = 0;
+    message = "Microphone read failed; record again";
+    contentDirty = true;
+    return;
+  }
   if (ms < audio::minimumClipMs() || bytes == 0) {
     audio::discard();
     clipHeld = false;
@@ -2674,6 +2796,14 @@ void finishRecording() {
     return;
   }
 
+  if (st.peak == 0) {
+    audio::discard();
+    clipHeld = false;
+    clipHeldMs = 0;
+    message = "No microphone signal; try recording again";
+    contentDirty = true;
+    return;
+  }
   clipHeld = true;
   clipHeldMs = ms;
   voice.setLocalStage(VoiceStage::Recorded);
@@ -2682,6 +2812,7 @@ void finishRecording() {
 }
 
 void startRecording() {
+  if (uiNetworkBusy()) return;
   if (!audio::available()) {
     message = "This build has no microphone";
     contentDirty = true;
@@ -2697,7 +2828,9 @@ void startRecording() {
   clipHeld = false;
   clipHeldMs = 0;
   // A new capture retires whatever the previous one was still reporting.
-  voice.reset();
+  voiceCaptureEnvironment = gw->context().environmentId;
+  voiceCaptureThread = gw->context().threadId;
+  voice.beginCapture(voiceCaptureEnvironment, voiceCaptureThread);
   recordArmed = true;
   audio::startRecording();
   // Wave, and the mini orb is told about it here — the pump branch below never reaches
@@ -2720,79 +2853,81 @@ void startRecording() {
 // which must commit BEFORE it opens, because selectThread() closes the open response and doing it
 // the other way round would arm the reply and then immediately discard it.
 void commitPicker() {
-  if (pickerCommitAt == 0) return;
+  if (pickerCommitAt == 0 || uiNetworkBusy()) return;
   pickerCommitAt = 0;
   const int target = pickerIndex;
   pickerIndex = -1;
-  if (target < 0 || target == boundThreadIndex()) return;
-
+  if (target < 0 || target == boundThreadIndex()) {
+    const bool open = pickerOpenResponse;
+    pickerOpenResponse = false;
+    if (open && haveThread()) { goTo(Screen::Response); queueResponsePage(0, true); }
+    return;
+  }
+  const ThreadOption* row = gw->thread((size_t)target);
+  if (!row) return;
+  const String targetId = row->id;
   pickerBinding = true;
-  paintContent();                 // "Selecting..." on the glass before the socket
-  bool bound = gw->selectThread((size_t)target);
-  if (!bound) {
-    // ONE retry, and the reason is that `code=-11` is a read timeout, not a rejection.
-    //
-    // Against a Convex-backed gateway this write regularly outruns the client's request budget, and
-    // when it does the POST may well have LANDED — only the answer was lost. Believing the failure
-    // straight away would revert the line to the previous thread and contradict a write that
-    // actually took effect, which is worse than the timeout: the next voice note would go somewhere
-    // the screen was no longer showing. The retry is idempotent, because selectThread() sends the
-    // same explicit id and the gateway resolves it against the same snapshot.
-    bound = gw->selectThread((size_t)target);
-  }
-  pickerBinding = false;
-  if (!bound) {
-    // Both attempts failed, so the device does not know. The honest position is the last CONFIRMED
-    // binding — pickerIndex is already cleared, so the line falls back to it — and the wording says
-    // it is unresolved rather than claiming the selection was rejected. The gateway cycle refreshes
-    // the thread list every 30 s, so if the write did land this corrects itself without anybody
-    // touching the device.
-    message = "Not confirmed - re-checking";
-  } else {
-    message = "";
-  }
-  contentDirty = true;
-  applyPresentation();
-  statusLabel = currentLabel;
+  enqueueUiNetworkJob([target, targetId] {
+    gw->lockState();
+    const ThreadOption* current = gw->thread((size_t)target);
+    uiOperationSucceeded = current && current->id == targetId && gw->selectThread((size_t)target);
+    gw->unlockState();
+  }, [] {
+    pickerBinding = false;
+    const bool open = pickerOpenResponse;
+    pickerOpenResponse = false;
+    if (open && uiOperationSucceeded) {
+      goTo(Screen::Response);
+      queueResponsePage(0, true);
+    }
+    message = uiOperationSucceeded ? "" : "Not confirmed; reload threads";
+    contentDirty = true;
+  });
 }
+
 
 void refreshThreads() {
   showBusy("Threads", "Asking the gateway");
-  gw->refreshThreads();
-  threadsFetched = true;
-  threadScroll = 0;
-  message = gw->threadsDetail();
-  contentDirty = true;
+  enqueueUiNetworkJob([] { gw->refreshThreads(); }, [] {
+    threadsFetched = true;
+    threadScroll = 0;
+    message = gw->threadsDetail();
+  });
 }
+
 
 void goToThreads() {
   goTo(Screen::Threads);
-  if (browse.environmentLabel().length() == 0) {
-    showBusy("Threads", "Finding the environment");
-    browse.refreshEnvironments();
-  }
-  if (threadRowCount() == 0) refreshThreads();
-  contentDirty = true;
+  showBusy("Threads", "Asking the gateway");
+  uiStagedBrowse = browse;
+  enqueueUiNetworkJob([] {
+    if (uiStagedBrowse.environmentLabel().length() == 0) uiStagedBrowse.refreshEnvironments();
+    gw->refreshThreads();
+  }, [] {
+    browse = uiStagedBrowse;
+    threadsFetched = true;
+    threadScroll = 0;
+    message = gw->threadsDetail();
+  });
 }
+
 
 void selectThreadRow(size_t index) {
   const ThreadOption* row = threadRowAt(index);
   if (!row) return;
-  // The overlay row is already the bound thread — the create bound it — so there is nothing to
-  // POST, and posting would hit the very 404 the protocol warns about.
-  if (index >= gw->threadCount()) {
-    message = "Already selected";
-    goTo(Screen::Send);
-    return;
-  }
+  if (index >= gw->threadCount()) { goTo(Screen::Send); return; }
+  const String targetId = row->id;
+  const uint32_t generation = navigationGeneration;
   showBusy("Selecting", uip::fitWords(row->title, kCols1));
-  if (gw->selectThread(index)) {
-    message = "Thread selected";
-    goTo(Screen::Send);
-  } else {
-    message = gw->threadsDetail();
-  }
-  contentDirty = true;
+  enqueueUiNetworkJob([index, targetId] {
+    gw->lockState();
+    const ThreadOption* current = gw->thread(index);
+    uiOperationSucceeded = current && current->id == targetId && gw->selectThread(index);
+    gw->unlockState();
+  }, [generation] {
+    message = uiOperationSucceeded ? "Thread selected" : gw->threadsDetail();
+    if (uiOperationSucceeded && generation == navigationGeneration) goTo(Screen::Send);
+  });
 }
 
 // The single door into THREADS.
@@ -2810,7 +2945,10 @@ void goToThreads();
 // is the name the thread keeps.
 void createThreadNow() {
   showBusy("New thread", "Asking the gateway");
-  if (!browse.createThread()) {
+  uiStagedBrowse = browse;
+  enqueueUiNetworkJob([] { uiOperationSucceeded = uiStagedBrowse.createThread(); }, [] {
+  browse = uiStagedBrowse;
+  if (!uiOperationSucceeded) {
     // A refused create changes NOTHING server-side: the device stays on the thread it was on. So
     // the highlight goes back to the bound row and the line never shows something uncreated.
     pickerIndex = -1;
@@ -2852,61 +2990,78 @@ void createThreadNow() {
   threadsFetched = true;
   message = "Thread created";
   contentDirty = true;
+  });
 }
 
 void refreshEnvironments() {
   showBusy("Environments", "Asking the gateway");
-  browse.refreshEnvironments();
-  envScroll = 0;
-  contentDirty = true;
+  uiStagedBrowse = browse;
+  enqueueUiNetworkJob([] { uiStagedBrowse.refreshEnvironments(); }, [] {
+    browse = uiStagedBrowse;
+    envScroll = 0;
+  });
 }
+
 
 void refreshProjects() {
   showBusy("Folders", "Asking the gateway");
-  browse.refreshProjects();
-  projectScroll = 0;
-  contentDirty = true;
+  uiStagedBrowse = browse;
+  enqueueUiNetworkJob([] { uiStagedBrowse.refreshProjects(); }, [] {
+    browse = uiStagedBrowse;
+    projectScroll = 0;
+  });
 }
+
 
 void selectEnvironmentRow(size_t index) {
   const BrowseEnvironment* row = browse.environment(index);
   if (!row) return;
   showBusy("Binding", uip::fitWords(row->label, kCols1));
-  if (!browse.selectEnvironment(index)) {
-    message = browse.environmentsDetail();
-    contentDirty = true;
-    return;
-  }
-  // Moving environment clears the project and the thread server-side, so the folder list is the
-  // only honest next screen: going straight to threads would show a list that has just been
-  // invalidated.
-  browse.consumeContextCleared();
-  goTo(Screen::Projects);
-  refreshProjects();
+  const uint32_t generation = navigationGeneration;
+  uiStagedBrowse = browse;
+  enqueueUiNetworkJob([index] {
+    uiOperationSucceeded = uiStagedBrowse.selectEnvironment(index);
+  }, [generation] {
+    browse = uiStagedBrowse;
+    if (!uiOperationSucceeded) { message = browse.environmentsDetail(); return; }
+    browse.consumeContextCleared();
+    gw->clearContextBinding(browse.boundEnvironmentId(), browse.boundProjectId());
+    createdRow = ThreadOption();
+    threadsFetched = false;
+    if (generation == navigationGeneration) { goTo(Screen::Projects); refreshProjects(); }
+  });
 }
+
 
 void selectProjectRow(size_t index) {
   const BrowseProject* row = browse.project(index);
   if (!row) return;
   showBusy("Folder", uip::fitWords(row->title, kCols1));
-  if (!browse.selectProject(index)) {
-    message = browse.projectsDetail();
-    contentDirty = true;
-    return;
-  }
-  browse.consumeContextCleared();
-  goTo(Screen::Threads);
-  refreshThreads();
+  const uint32_t generation = navigationGeneration;
+  uiStagedBrowse = browse;
+  enqueueUiNetworkJob([index] {
+    uiOperationSucceeded = uiStagedBrowse.selectProject(index);
+  }, [generation] {
+    browse = uiStagedBrowse;
+    if (!uiOperationSucceeded) { message = browse.projectsDetail(); return; }
+    browse.consumeContextCleared();
+    gw->clearContextBinding(browse.boundEnvironmentId(), browse.boundProjectId());
+    createdRow = ThreadOption();
+    threadsFetched = false;
+    if (generation == navigationGeneration) { goTo(Screen::Threads); refreshThreads(); }
+  });
 }
+
 
 void answerApproval(const String& commandId, const String& label, bool approve) {
   if (commandId.length() == 0) return;
   showBusy(approve ? "Approving" : "Rejecting", uip::fit(label, kCols1));
-  const DispatchResult result = gw->answerApproval(commandId, approve);
-  message = result.detail;
-  // The list this screen was showing is now stale; the client has already made a refresh due.
-  approvalIndex = 0;
-  contentDirty = true;
+  enqueueUiNetworkJob([commandId, approve] {
+    uiDispatchResult = gw->answerApproval(commandId, approve);
+  }, [] {
+    message = uiDispatchResult.detail;
+    approvalIndex = 0;
+  });
 }
 
 // Where a drawer row goes. Each category navigates to the screen that ACTS on it, which is the
@@ -2925,7 +3080,7 @@ void openCategory(Row row) {
     default:
       // An approval queue is the thing that most needs a person; a reply is what they came for
       // otherwise.
-      if (gw->approvalCount() > 0) {
+      if (gw->hasBlockingRequests()) {
         approvalIndex = 0;
         goTo(Screen::Approvals);
         return;
@@ -2933,7 +3088,7 @@ void openCategory(Row row) {
       goTo(Screen::Response);
       if (!gw->responseOpen() && haveThread()) {
         showBusy("Reply", "Loading the latest");
-        gw->openResponse(String());
+        queueResponsePage(0, true);
         contentDirty = true;
       }
       return;
@@ -2975,13 +3130,13 @@ void runAction(Act id) {
       }
       if (!gw->responseOpen()) {
         showBusy("Reply", "Loading the latest");
-        gw->openResponse(String());
+        queueResponsePage(0, true);
         goTo(Screen::Response);
         contentDirty = true;
         return;
       }
       showBusy("Reply", "Refreshing");
-      gw->fetchResponsePage(gw->response().page);
+      queueResponsePage(gw->response().page);
       contentDirty = true;
       return;
     }
@@ -2989,7 +3144,7 @@ void runAction(Act id) {
       const ThreadResponse& r = gw->response();
       if (r.pageCount <= 1) return;
       showBusy("Reply", "Loading page");
-      gw->fetchResponsePage(r.page > 0 ? r.page - 1 : r.pageCount - 1);
+      queueResponsePage(r.page > 0 ? r.page - 1 : r.pageCount - 1);
       contentDirty = true;
       return;
     }
@@ -2997,7 +3152,7 @@ void runAction(Act id) {
       const ThreadResponse& r = gw->response();
       if (r.pageCount <= 1) return;
       showBusy("Reply", "Loading page");
-      gw->fetchResponsePage((r.page + 1) % r.pageCount);
+      queueResponsePage((r.page + 1) % r.pageCount);
       contentDirty = true;
       return;
     }
@@ -3058,7 +3213,35 @@ void runAction(Act id) {
         message = "Re-entering provisioning";
         contentDirty = true;
         prov->resetToProvisioning();
-      } else {
+      } else if (which == Modal::ConfirmControl) {
+        if (pendingControlEnvironment != gw->context().environmentId
+            || pendingControlThread != gw->context().threadId
+            || pendingControlRevision != gw->controlsRevision()) {
+          message = "Context changed; review again";
+          contentDirty = true;
+          return;
+        }
+        if (pendingControl.kind != "reset") {
+          bool stillAssigned = false;
+          auto matches = [](const DeviceControl& current) {
+            return current.id == pendingControl.id && current.enabled
+              && current.actionId == pendingControl.actionId && current.kind == pendingControl.kind
+              && current.mediaKind == pendingControl.mediaKind;
+          };
+          for (size_t i = 0; i < gw->controlCount(); ++i) {
+            const DeviceControl* current = gw->control(i);
+            if (current && matches(*current)) stillAssigned = true;
+          }
+          const ThreadResponse& reply = gw->response();
+          for (size_t i = 0; i < reply.followUpCount; ++i) {
+            if (matches(reply.followUps[i])) stillAssigned = true;
+          }
+          if (!stillAssigned) {
+            message = "Action changed; review again";
+            contentDirty = true;
+            return;
+          }
+        }
         // Re-entered with the confirmation already given, which is why local confirmation lives
         // here and not inside runControl(): the gate must not loop back on itself.
         dispatchControl(pendingControl);
@@ -3120,11 +3303,15 @@ void handleContentTap(int16_t x, int16_t y) {
       // takes the person somewhere they can pick one rather than leaving them on a dead line.
       if (pickerTarget() < 0 && !haveThread()) { goToThreads(); return; }
       // Committed first, so OPEN can never open a thread the device is not actually bound to.
-      commitPicker();
+      if (pickerCommitAt != 0) {
+        pickerOpenResponse = true;
+        commitPicker();
+        return;
+      }
       goTo(Screen::Response);
       if (!gw->responseOpen() && haveThread()) {
         showBusy("Reply", "Loading the latest");
-        gw->openResponse(String());
+        queueResponsePage(0, true);
         contentDirty = true;
       }
       return;
@@ -3279,7 +3466,11 @@ void handleTap(int16_t x, int16_t y) {
     // may be part-way through typing, which is also why this is not an action-bar button.
     if (unclaimed() && y >= kClaimTop && y < kClaimTop + 46) {
       showBusy("New code", "Asking the gateway");
-      gw->requestNewClaimCode();
+      enqueueUiNetworkJob([] {
+        gw->lockState();
+        gw->requestNewClaimCode();
+        gw->unlockState();
+      }, [] {});
       contentDirty = true;
     }
     return;
@@ -3381,6 +3572,8 @@ bool uiBegin(GatewayClient& gateway, Provisioning& provisioning, DeviceStore& de
   store = &deviceStore;
   browse.begin(deviceStore);
   voice.begin(deviceStore);
+  gw->setInteractionHandler(uiNetworkLoop);
+  uiNetworkReady = gw->networkRunning();
 
   orbReady = orb.begin(kOrbDrawPx - 8, kOrbDots);
   // A fifth of the home orb's dot budget. It is 44 px across; a denser cloud at that size reads as
@@ -3396,6 +3589,14 @@ bool uiBegin(GatewayClient& gateway, Provisioning& provisioning, DeviceStore& de
 
 void uiHandleTouch(const TouchEvent& event) {
   if (!displayReady() || !gw || !prov) return;
+  if (!gw->tryLockState(0)) return;
+  struct TouchStateGuard { GatewayClient* client; ~TouchStateGuard() { client->unlockState(); } } touchGuard{gw};
+  // A second tap cannot dispatch twice or change the destination of an in-flight upload.
+  // Keep the header Back affordance available; the late completion cannot navigate over it.
+  if (uiNetworkBusy()) {
+    if (event.gesture == TouchGesture::Tap && event.y < kHeaderH && event.x < 48) goBack();
+    return;
+  }
 
   switch (event.gesture) {
     case TouchGesture::Press:
@@ -3468,7 +3669,7 @@ void uiHandleTouch(const TouchEvent& event) {
         ? (r.page + 1) % r.pageCount
         : (r.page + r.pageCount - 1) % r.pageCount;
       showBusy("Reply", "Loading page");
-      gw->fetchResponsePage(next);
+      queueResponsePage(next);
       contentDirty = true;
       return;
     }
@@ -3535,6 +3736,7 @@ const char* uiBenchScreenName() {
 }
 
 bool uiBenchRecording() { return recordArmed; }
+bool uiBenchNetworkBusy() { return uiNetworkBusy(); }
 
 // The recording branch ends a clip on !touchDown(), reading the panel directly — correct, because
 // a clip ends when the glass stops being touched and that must not depend on which gesture
@@ -3581,6 +3783,11 @@ void uiTick() {
   // uiBegin(). The board is dead at that point, but it must say so on the serial line rather than
   // panicking on a null pointer thirty times a second.
   if (!gw || !prov) return;
+  // Read models and draw from one coherent state. A socket drops this lock; only compact
+  // parsing can defer a frame. Never block the render task waiting for another task.
+  if (!gw->tryLockState(0)) return;
+  struct FrameStateGuard { GatewayClient* client; ~FrameStateGuard() { client->unlockState(); } } frameGuard{gw};
+  completeUiNetworkJob();
 
   // Recording owns the loop while it runs. The I2S ring holds tens of milliseconds, so the pump
   // has to be tighter than the frame budget; the orb stops for the duration and the button's own
@@ -3907,29 +4114,33 @@ void uiTick() {
   // thread A would send it to the wrong place.
   if (pickerCommitAt != 0 && (int32_t)(millis() - pickerCommitAt) >= 0) commitPicker();
 
-  // The voice job status, polled LAST — after everything this frame drew is already on the glass.
-  //
-  // This is the one recurring blocking call on the render loop and the placement is the whole of
-  // why it is acceptable: paint, then stall. It costs one dropped frame roughly once a second
-  // while a capture is in flight, it stops the moment the job reaches a terminal milestone, and it
-  // backs off and gives up rather than freezing the board once a second against a gateway that has
-  // gone away.
-  if (voice.pollDue(millis()) && operable()) {
-    voice.poll();
-    if (voice.revision() != lastVoiceRevision) {
+  // Network polling runs on the same bounded worker as browse/action requests. Render state is a
+  // private worker copy until completion, so an in-flight TLS read never races the orb renderer.
+  if (!uiNetworkBusy() && voice.pollDue(millis()) && operable()) {
+    auto polledVoice = std::make_shared<GatewayVoice>(voice);
+    enqueueUiNetworkJob([polledVoice]() { polledVoice->poll(); }, [polledVoice]() {
+      voice = *polledVoice;
+      if (voice.revision() == lastVoiceRevision) return;
       lastVoiceRevision = voice.revision();
-      // The stage moved: the orb, its word and the line under it all follow from it.
       applyPresentation();
       statusLabel = currentLabel;
       message = voice.detail();
       contentDirty = true;
-      // The journey has ended. Hand the screen over to the reply the dispatch opened, which is what
-      // the person was waiting for; a capture that failed or needs review stays put and says so.
-      if (!voiceInJourney() && screen == Screen::Send && gw->responseOpen()) {
-        goTo(Screen::Response);
+      // Only an observed Sent milestone opens the thread reply. Review/failure remains explicit.
+      if (voice.stage() == VoiceStage::Sent && screen == Screen::Send) {
+        if (gw->context().environmentId != voiceCaptureEnvironment
+            || gw->context().threadId != voiceCaptureThread) {
+          message = "Voice sent to its original thread; open that thread for the reply";
+        } else if (voice.responseAfter().length() > 0) {
+          goTo(Screen::Response);
+          queueResponsePage(0, true, voice.responseAfter());
+        } else {
+          message = "Voice sent; open its reply in the console";
+        }
       }
-    }
+    });
   }
+
 }
 
 void uiSleepUntilNextFrame() {

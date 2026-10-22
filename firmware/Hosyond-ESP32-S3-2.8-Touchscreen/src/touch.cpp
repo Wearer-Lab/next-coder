@@ -52,19 +52,27 @@ constexpr int16_t kLongPressSlopPx = 24;
 // accidental tap wobble is a few pixels.
 constexpr int16_t kDragSlopPx = 8;
 bool longFired = false;
+bool longEligible = true;
+bool canceledUntilLift = false;
+uint32_t lastSampleMs = 0;
+constexpr uint32_t kLostContactMs = 150;
 
-bool readPoint(int16_t& x, int16_t& y) {
+enum class PointSample { Unavailable, Released, Point, Cancel };
+
+PointSample readPoint(int16_t& x, int16_t& y) {
   Wire.beginTransmission(TOUCH_I2C_ADDR);
   Wire.write(0x02);                       // touch count, then point 1
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom((int)TOUCH_I2C_ADDR, 5) != 5) return false;
+  if (Wire.endTransmission(false) != 0) return PointSample::Unavailable;
+  if (Wire.requestFrom((int)TOUCH_I2C_ADDR, 5) != 5) return PointSample::Unavailable;
 
   const uint8_t count = Wire.read() & 0x0F;
   const uint8_t xh = Wire.read();
   const uint8_t xl = Wire.read();
   const uint8_t yh = Wire.read();
   const uint8_t yl = Wire.read();
-  if (count == 0 || count > 2) return false;
+  if (count == 0) return PointSample::Released;
+  // A second finger cannot become a tap or a confirmation on behalf of the first.
+  if (count != 1) return PointSample::Cancel;
 
   int16_t rawX = (int16_t)(((xh & 0x0F) << 8) | xl);
   int16_t rawY = (int16_t)(((yh & 0x0F) << 8) | yl);
@@ -90,7 +98,7 @@ bool readPoint(int16_t& x, int16_t& y) {
 
   x = rawX;
   y = rawY;
-  return true;
+  return PointSample::Point;
 }
 
 }  // namespace
@@ -119,15 +127,35 @@ TouchEvent touchPoll() {
   if (!present) return event;
 
   int16_t x = 0, y = 0;
-  const bool hasPoint = readPoint(x, y);
+  const PointSample sample = readPoint(x, y);
+  if (sample == PointSample::Unavailable || sample == PointSample::Cancel) {
+    // An I2C error is not evidence of a lift. Brief codec/bus contention keeps the gesture alive;
+    // a lost contact or multi-touch cancels it with Release, never a synthetic Tap/confirmation.
+    if (sample == PointSample::Cancel) canceledUntilLift = true;
+    if (!down || (sample == PointSample::Unavailable
+        && millis() - lastSampleMs < kLostContactMs)) return event;
+    down = false;
+    canceledUntilLift = true;
+    longFired = false;
+    event.gesture = TouchGesture::Release;
+    event.x = lastX;
+    event.y = lastY;
+    return event;
+  }
+  lastSampleMs = millis();
+  if (canceledUntilLift) {
+    if (sample == PointSample::Released) canceledUntilLift = false;
+    return event;
+  }
 
-  if (hasPoint) {
+  if (sample == PointSample::Point) {
 #if TOUCH_TRACE
     Serial.printf("[touch] point %d,%d\n", (int)x, (int)y);
 #endif
     if (!down) {
       down = true;
       longFired = false;
+      longEligible = true;
       moved = false;
       startX = prevX = lastX = x;
       startY = prevY = lastY = y;
@@ -142,8 +170,9 @@ TouchEvent touchPoll() {
     lastX = x;
     lastY = y;
     if (abs(x - startX) > kDragSlopPx || abs(y - startY) > kDragSlopPx) moved = true;
+    if (abs(x - startX) > kLongPressSlopPx || abs(y - startY) > kLongPressSlopPx) longEligible = false;
 
-    if (!longFired && millis() - startMs >= kLongPressMs) {
+    if (!longFired && longEligible && millis() - startMs >= kLongPressMs) {
       const int16_t mx = x - startX, my = y - startY;
       if (abs(mx) <= kLongPressSlopPx && abs(my) <= kLongPressSlopPx) {
         longFired = true;
@@ -186,8 +215,11 @@ TouchEvent touchPoll() {
 
   // Horizontal intent wins over a tap; a slow drag still counts, because a deliberate swipe on a
   // 2.8" panel is often slower than a phone gesture.
-  if (dx <= -kSwipeMinPx) { event.gesture = TouchGesture::SwipeLeft; return event; }
-  if (dx >= kSwipeMinPx) { event.gesture = TouchGesture::SwipeRight; return event; }
+  const int16_t dy = lastY - startY;
+  if (abs(dx) > abs(dy)) {
+    if (dx <= -kSwipeMinPx) { event.gesture = TouchGesture::SwipeLeft; return event; }
+    if (dx >= kSwipeMinPx) { event.gesture = TouchGesture::SwipeRight; return event; }
+  }
   // A press that scrolled a list is never also a tap on whatever ended up under the finger.
   if (!moved && heldMs <= kTapMaxMs) { event.gesture = TouchGesture::Tap; return event; }
   event.gesture = TouchGesture::Release;

@@ -5,9 +5,29 @@ Canonical progress ledger for
 This file records what the repository can do now; the roadmap records the target and sequence.
 Anything not marked **done** is not complete.
 
-Last verified: **2026-09-09** in the current working tree. The earlier `674a8f9` evidence remains
-the baseline for the open-input/media initiative; the cloud workstream below is committed but has
-not been deployed anywhere.
+Last verified: **2026-10-22** for the production recovery and firmware audit below. The
+September workstream tables remain the baseline for gates not explicitly superseded here.
+
+## October 22 production and firmware evidence
+
+- The official production origin is `https://coder.next-notes.com`. Google identity sign-in,
+  the cloud-to-connector-to-local-T3 path (T3 0.1.1), a real completed read-only console command,
+  and device-authenticated retrieval of that command's reply were observed during recovery.
+  These observations supersede the older statement that the cloud workstream was never deployed;
+  they do not establish the remaining hosted capacity, rollback, or cross-platform gates.
+- The comprehensive shared-core/Hosyond repair covers transport recovery, nonblocking interaction
+  jobs, stale-context rejection, durable mutation receipts, touch fault handling, capture destination
+  pinning, transcription replay, and bounded signed OTA downloads. Details and explicit product
+  limits are in [the firmware workflow audit](../docs/firmware-workflow-audit.md).
+- The current repository gate passes: 383 frontend, 862 server, 95 connector, 16 cloud contract,
+  29 edge, 13 resilience, and 20 private-control-plane tests (**1,418 passing**, three intentional
+  live-S3 skips), together with the production console build, performance budgets and typechecks.
+- Physical Hosyond action-to-T3-to-screen completion remains unverified. Earlier physical attempts
+  failed before confirmation and produced no device-origin command. Build evidence must not be
+  substituted for the renewed physical workflow pass.
+- Production transcription is disabled; real voice-to-T3 verification requires a production-reachable
+  transcription provider. Transcript editing, provider approvals and free-form user input currently
+  hand off explicitly to the console. Other boards have compile evidence, not equivalent silicon proof.
 
 ## Cloud control-plane and local connector workstream
 

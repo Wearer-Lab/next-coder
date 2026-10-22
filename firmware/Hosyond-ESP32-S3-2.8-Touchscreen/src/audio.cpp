@@ -16,6 +16,7 @@
 #include "es8311.h"
 
 #include "audio_bus.h"
+#include <PcmCaptureStats.h>
 
 // Play each recording back through the speaker. Useful on the bench to prove the whole chain in
 // one press; turn it off once the microphone is trusted, because a speaker next to a microphone is
@@ -41,6 +42,7 @@ size_t clipSamples = 0;             // valid samples in clipBuffer
 size_t clipCapacity = 0;            // in samples, not bytes
 bool audioReady = false;
 bool active = false;
+bool captureFault = false;
 uint32_t startedAt = 0;
 
 // Arbitration state, shared with the speaker task on the other core. Atomic rather than plain
@@ -49,8 +51,11 @@ uint32_t startedAt = 0;
 std::atomic<bool> captureFlag{false};
 std::atomic<uint32_t> captureGen{0};
 std::atomic<bool> paOn{false};
+portMUX_TYPE paMux = portMUX_INITIALIZER_UNLOCKED;
+size_t settleSamples = 0;
+media::PcmCaptureStats captureStats;
 
-constexpr size_t kFrameSamples = 512;   // per i2s_channel_read, per channel
+constexpr size_t kFrameSamples = 256;   // per i2s_channel_read, per channel
 
 bool i2sInit() {
   i2s_chan_config_t chanCfg =
@@ -104,13 +109,20 @@ void setPaEnabled(bool on) {
   // Refuse to power the amplifier while the microphone is live, whoever asked. This is the
   // backstop for rule 4 in audio_bus.h: the speaker task checks captureActive() itself, but it
   // checks it and then acts, and a recording can start in between.
-  if (on && captureFlag.load(std::memory_order_acquire)) return;
+  // Serialize check + GPIO write. Atomic flags alone leave a race where the speaker checked
+  // false, capture cut the amp, then the speaker powered it back on into the microphone.
+  portENTER_CRITICAL(&paMux);
+  if (on && captureFlag.load(std::memory_order_acquire)) {
+    portEXIT_CRITICAL(&paMux);
+    return;
+  }
   paOn.store(on, std::memory_order_release);
 #if AUDIO_PA_ENABLE_ACTIVE_LOW
   digitalWrite(AUDIO_PA_ENABLE_PIN, on ? LOW : HIGH);
 #else
   digitalWrite(AUDIO_PA_ENABLE_PIN, on ? HIGH : LOW);
 #endif
+  portEXIT_CRITICAL(&paMux);
 }
 
 void captureBegin() {
@@ -131,35 +143,51 @@ namespace {
 
 // Reads one I2S frame and appends the left channel to the clip. Returns false when the clip is
 // full, which is one of the three ways recording ends.
-bool captureFrame() {
+enum class CaptureResult { Waiting, Captured, Full, Error };
+
+CaptureResult captureFrame() {
   static int16_t frame[kFrameSamples * 2];  // stereo slots
 
   size_t bytesRead = 0;
-  if (i2s_channel_read(rxHandle, frame, sizeof(frame), &bytesRead, 200) != ESP_OK) return false;
+  // Capture shares the UI task. Consume only DMA bytes already available; an empty DMA queue is
+  // not the end of a recording and must never freeze touch input for the old 200 ms timeout.
+  const esp_err_t result = i2s_channel_read(rxHandle, frame, sizeof(frame), &bytesRead, 0);
+  if (bytesRead == 0) return result == ESP_OK || result == ESP_ERR_TIMEOUT
+    ? CaptureResult::Waiting : CaptureResult::Error;
 
   const size_t framesRead = bytesRead / (sizeof(int16_t) * 2);
   for (size_t i = 0; i < framesRead; ++i) {
-    if (clipSamples >= clipCapacity) return false;
+    if (settleSamples > 0) { settleSamples -= 1; continue; }
+    if (clipSamples >= clipCapacity) return CaptureResult::Full;
     int32_t sample = frame[i * 2];  // left channel
 #if AUDIO_GAIN_SHIFT
-    sample <<= AUDIO_GAIN_SHIFT;
+    // Left-shifting a negative signed microphone sample is undefined C++ behavior.
+    sample *= (1 << AUDIO_GAIN_SHIFT);
     if (sample > INT16_MAX) sample = INT16_MAX;
     if (sample < INT16_MIN) sample = INT16_MIN;
 #endif
     clipBuffer[clipSamples++] = (int16_t)sample;
+    captureStats.add(static_cast<int16_t>(sample));
   }
-  return true;
+  return CaptureResult::Captured;
 }
 
 }  // namespace
 
 bool available() { return audioReady; }
 bool recording() { return active; }
+bool captureFailed() { return captureFault; }
 uint32_t sampleRateHz() { return (uint32_t)AUDIO_SAMPLE_RATE_HZ; }
 uint32_t minimumClipMs() { return (uint32_t)AUDIO_CAPTURE_MIN_MS; }
 size_t recordedBytes() { return clipSamples * sizeof(int16_t); }
 const uint8_t* pcm() { return (const uint8_t*)clipBuffer; }
-void discard() { clipSamples = 0; }
+void discard() {
+  // Releasing a note also clears its private PCM, rather than retaining the last capture in PSRAM
+  // until another recording happens to overwrite it. The capture buffer is never shared in flight.
+  if (clipBuffer && clipSamples > 0) memset(clipBuffer, 0, clipSamples * sizeof(int16_t));
+  clipSamples = 0;
+  captureStats = media::PcmCaptureStats();
+}
 
 uint32_t recordedMs() {
   return (uint32_t)((uint64_t)clipSamples * 1000ULL / (uint64_t)AUDIO_SAMPLE_RATE_HZ);
@@ -209,14 +237,20 @@ bool begin() {
 
 void startRecording() {
   if (!audioReady) return;
+  discard();
+  captureFault = false;
   // Claim the bus before touching the ADC. This does not wait for the speaker task — see rule 3 in
   // audio_bus.h — it only makes sure that everything the task does from now on is an abort.
   bus::captureBegin();
   clipSamples = 0;
+  captureStats = media::PcmCaptureStats();
   // The first frames after the codec starts are unreliable while its ADC settles. Discarding them
   // here rather than after the fact is what stops a voice note beginning with a click.
   for (int i = 0; i < 2; ++i) captureFrame();
   clipSamples = 0;
+  captureStats = media::PcmCaptureStats();
+  // Drop newly arriving ADC samples as well as old DMA data, without sleeping on the UI task.
+  settleSamples = static_cast<size_t>(AUDIO_SAMPLE_RATE_HZ) * 32 / 1000;
   startedAt = millis();
   active = true;
 }
@@ -228,10 +262,13 @@ void stopRecording() {
 
 bool pumpRecording() {
   if (!audioReady || !active) return false;
-  if (!captureFrame()) {
+  const CaptureResult captured = captureFrame();
+  if (captured == CaptureResult::Waiting) delay(1);
+  if (captured == CaptureResult::Full || captured == CaptureResult::Error) {
+    captureFault = captured == CaptureResult::Error;
     active = false;
     bus::captureEnd();
-    Serial.println("[audio] Clip buffer full.");
+    Serial.println(captured == CaptureResult::Full ? "[audio] Clip buffer full." : "[audio] Capture read failed.");
     return false;
   }
   if (millis() - startedAt >= AUDIO_CAPTURE_MAX_MS) {
@@ -247,19 +284,11 @@ ClipStats measureClip() {
   ClipStats st;
   if (clipSamples == 0) return st;
 
-  int64_t sum = 0;
-  uint64_t sumSquares = 0;
-  for (size_t i = 0; i < clipSamples; ++i) {
-    const int32_t v = clipBuffer[i];
-    const int32_t a = v < 0 ? -v : v;
-    if (a > st.peak) st.peak = a;
-    sum += v;
-    sumSquares += (uint64_t)((int64_t)v * v);
-  }
-  st.rms = sqrt((double)sumSquares / (double)clipSamples);
+  st.peak = captureStats.peak;
+  st.rms = sqrt(static_cast<double>(captureStats.squares) / captureStats.count);
   st.ms = recordedMs();
-  const int64_t mean = sum / (int64_t)clipSamples;
-  st.dcOffset = (uint32_t)(mean < 0 ? -mean : mean);
+  const int64_t mean = captureStats.sum / static_cast<int64_t>(captureStats.count);
+  st.dcOffset = static_cast<uint32_t>(mean < 0 ? -mean : mean);
   return st;
 }
 
@@ -316,6 +345,7 @@ void bootSelfTest() {
   const uint32_t began = millis();
   while (millis() - began < AUDIO_BOOT_SELFTEST_MS) {
     if (!pumpRecording()) break;
+    delay(1);
   }
   active = false;
   bus::captureEnd();
@@ -327,7 +357,7 @@ void bootSelfTest() {
   } else {
     Serial.println("[audio] Self-test FAILED — see the verdict above.");
   }
-  clipSamples = 0;
+  discard();
 #endif
 }
 
@@ -348,6 +378,7 @@ void startRecording() {}
 bool pumpRecording() { return false; }
 void stopRecording() {}
 bool recording() { return false; }
+bool captureFailed() { return false; }
 uint32_t recordedMs() { return 0; }
 size_t recordedBytes() { return 0; }
 const uint8_t* pcm() { return nullptr; }

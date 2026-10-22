@@ -64,6 +64,11 @@ void Provisioning::begin(DeviceStore& store, const String& apNameSeed) {
 }
 
 void Provisioning::enterProvisioning(bool keepStation) {
+  portalJoinPending_ = false;
+  portalRecoveryPending_ = false;
+  pendingPassword_ = "";
+  pendingSsid_ = "";
+  pendingGateway_ = "";
   status_.state = ProvisioningState::Provisioning;
   status_.detail = keepStation ? "Reconfigure at " + apName_ : "Join " + apName_;
 
@@ -81,18 +86,22 @@ void Provisioning::enterProvisioning(bool keepStation) {
 
 void Provisioning::enterConnecting() {
   configPortal_ = false;
+  portalJoinPending_ = false;
+  portalRecoveryPending_ = false;
   stopPortal();
   status_.state = ProvisioningState::Connecting;
   status_.detail = store_->wifiSsid();
   connectStartedAt_ = millis();
   WiFi.mode(WIFI_STA);
-  WiFi.begin(store_->wifiSsid().c_str(), store_->wifiPassword().c_str());
+  const auto settings = store_->transportSnapshot();
+  WiFi.begin(settings.wifiSsid.c_str(), settings.wifiPassword.c_str());
   Serial.printf("[wifi] joining %s\n", store_->wifiSsid().c_str());
 }
 
 void Provisioning::resetToProvisioning() {
   if (store_ != nullptr) store_->resetForProvisioning();
   status_.joinFailures = 0;
+  knownGoodNetwork_ = false;
   portalError_ = "";
   enterProvisioning();
 }
@@ -106,6 +115,19 @@ void Provisioning::openConfigPortal() {
 
 void Provisioning::closeConfigPortal() {
   if (!configPortal_) return;
+  if (portalJoinPending_) {
+    // Closing setup cancels an uncommitted candidate, even if it has just associated. Only the
+    // stored network is authoritative until pollPortalJoin validates and persists the candidate.
+    portalJoinPending_ = false;
+    portalRecoveryPending_ = false;
+    pendingPassword_ = "";
+    pendingSsid_ = "";
+    pendingGateway_ = "";
+    portalError_ = "";
+    discovered_ = "";
+    enterConnecting();
+    return;
+  }
   configPortal_ = false;
   discovered_ = "";
   portalError_ = "";
@@ -117,6 +139,7 @@ void Provisioning::closeConfigPortal() {
   if (WiFi.status() == WL_CONNECTED) {
     WiFi.mode(WIFI_STA);
     status_.state = ProvisioningState::Online;
+    knownGoodNetwork_ = true;
     status_.detail = WiFi.localIP().toString();
     justConnected_ = true;
     Serial.println("[wifi] config portal closed; back online");
@@ -140,6 +163,8 @@ ProvisioningState Provisioning::poll() {
     case ProvisioningState::Provisioning: {
       dns_.processNextRequest();
       server_.handleClient();
+      pollPortalJoin();
+      if (status_.state != ProvisioningState::Provisioning) break;
       // A liveness tick, so an idle portal is distinguishable from a wedged loop() on the bench.
       static uint32_t lastTickAt = 0;
       if (millis() - lastTickAt > 10000) {
@@ -166,6 +191,7 @@ ProvisioningState Provisioning::poll() {
     case ProvisioningState::Connecting: {
       if (WiFi.status() == WL_CONNECTED) {
         status_.state = ProvisioningState::Online;
+        knownGoodNetwork_ = true;
         status_.joinFailures = 0;
         status_.detail = WiFi.localIP().toString();
         justConnected_ = true;
@@ -175,9 +201,9 @@ ProvisioningState Provisioning::poll() {
       // The timeout is the whole point: the previous firmware's `while (status != CONNECTED)` loop
       // made a wrong password unrecoverable without USB.
       if (millis() - connectStartedAt_ > kJoinTimeoutMs) {
-        status_.joinFailures += 1;
+        if (status_.joinFailures < UINT8_MAX) status_.joinFailures += 1;
         Serial.printf("[wifi] join failed (%u/%u)\n", status_.joinFailures, kMaxJoinFailures);
-        if (status_.joinFailures >= kMaxJoinFailures) {
+        if (!knownGoodNetwork_ && status_.joinFailures >= kMaxJoinFailures) {
           portalError_ = "Could not join " + store_->wifiSsid() + ". Check the password.";
           status_.detail = "Join failed";
           enterProvisioning();
@@ -236,6 +262,7 @@ void Provisioning::startPortal(bool keepStation) {
 
   portalUp_ = true;
   portalLastClientAt_ = millis();
+  nextPortalRecoveryAt_ = millis() + 30000;
   Serial.printf("[wifi] portal up: SSID %s at %s\n", apName_.c_str(), status_.portalUrl.c_str());
 }
 
@@ -325,6 +352,11 @@ void Provisioning::handlePortalRoot() {
 void Provisioning::handlePortalSubmit() {
   portalLastClientAt_ = millis();
 
+  if (portalJoinPending_) {
+    server_.send(409, "text/plain", "A network join is already in progress. Wait for its result.");
+    return;
+  }
+
   if (server_.arg("action") == "done") {
     server_.send(
       200,
@@ -405,46 +437,81 @@ void Provisioning::handlePortalSubmit() {
   );
   server_.client().flush();
 
-  if (attemptJoin(ssid, password, kJoinTimeoutMs)) {
-    if (gateway.length() > 0 && !store_->setGatewayUrl(gateway)) {
-      portalError_ = "Gateway URL was not saved.";
-      portalUp_ = false;
-      startPortal();
+  // The HTTP handler is called from the render loop. Start association and let poll() complete
+  // it; a wrong password must not freeze touch/render for the full 20-second join timeout.
+  pendingSsid_ = ssid;
+  pendingPassword_ = password;
+  pendingGateway_ = gateway;
+  portalJoinPending_ = true;
+  portalRecoveryPending_ = false;
+  portalJoinStartedAt_ = millis();
+  portalError_ = "Trying that network…";
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.disconnect(false);
+  WiFi.begin(pendingSsid_.c_str(), pendingPassword_.c_str());
+}
+
+void Provisioning::pollPortalJoin() {
+  if (portalJoinPending_) {
+    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == pendingSsid_) {
+      const bool saved = (pendingGateway_.length() == 0 || store_->setGatewayUrl(pendingGateway_))
+          && store_->setWifiCredentials(pendingSsid_, pendingPassword_);
+      pendingPassword_ = "";
+      pendingSsid_ = "";
+      pendingGateway_ = "";
+      portalJoinPending_ = false;
+      if (!saved) {
+        portalError_ = "Network settings could not be saved. Please retry.";
+        return;
+      }
+      portalError_ = "";
+      status_.joinFailures = 0;
+      stopPortal();
+      WiFi.mode(WIFI_STA);
+      status_.state = ProvisioningState::Online;
+      knownGoodNetwork_ = true;
+      status_.detail = WiFi.localIP().toString();
+      justConnected_ = true;
+      Serial.println("[wifi] provisioned and connected");
       return;
     }
-    store_->setWifiCredentials(ssid, password);
-    portalError_ = "";
-    status_.joinFailures = 0;
-    stopPortal();
-    status_.state = ProvisioningState::Online;
-    status_.detail = WiFi.localIP().toString();
-    justConnected_ = true;
-    Serial.printf("[wifi] provisioned and connected: %s\n", WiFi.localIP().toString().c_str());
+    if (millis() - portalJoinStartedAt_ >= kJoinTimeoutMs) {
+      portalError_ = "Could not join " + pendingSsid_ + ". Check the password and try again.";
+      pendingPassword_ = "";
+      pendingSsid_ = "";
+      pendingGateway_ = "";
+      portalJoinPending_ = false;
+      WiFi.disconnect(false);
+      nextPortalRecoveryAt_ = millis() + 30000;
+    }
     return;
   }
 
-  portalError_ = "Could not join " + ssid + ". Check the password and try again.";
-  Serial.println("[wifi] portal join attempt failed; credentials not saved");
-  // The AP had to come down to attempt the join, so bring it back for the retry.
-  portalUp_ = false;
-  startPortal();
-}
-
-bool Provisioning::attemptJoin(const String& ssid, const String& password, uint32_t timeoutMs) {
-  // AP_STA keeps the portal client's socket alive for as long as possible while the STA interface
-  // negotiates, so the browser is not dropped the instant the owner presses Connect.
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.begin(ssid.c_str(), password.c_str());
-  const uint32_t startedAt = millis();
-  while (millis() - startedAt < timeoutMs) {
-    if (WiFi.status() == WL_CONNECTED) {
+  // A router may be offline at boot, before we can observe a known-good join. Keep the fallback
+  // portal accessible while retrying stored credentials; recovery must not wait 15 idle minutes.
+  if (configPortal_ || !store_ || !store_->hasWifiCredentials()) return;
+  if (portalRecoveryPending_) {
+    if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == store_->wifiSsid()) {
+      portalRecoveryPending_ = false;
+      stopPortal();
       WiFi.mode(WIFI_STA);
-      return true;
+      status_.state = ProvisioningState::Online;
+      knownGoodNetwork_ = true;
+      status_.joinFailures = 0;
+      status_.detail = WiFi.localIP().toString();
+      justConnected_ = true;
+    } else if (millis() - portalJoinStartedAt_ >= kJoinTimeoutMs) {
+      portalRecoveryPending_ = false;
+      nextPortalRecoveryAt_ = millis() + 30000;
     }
-    delay(200);
+    return;
   }
-  WiFi.disconnect(true);
-  return false;
+  if ((int32_t)(millis() - nextPortalRecoveryAt_) < 0) return;
+  WiFi.mode(WIFI_AP_STA);
+  const auto settings = store_->transportSnapshot();
+  WiFi.begin(settings.wifiSsid.c_str(), settings.wifiPassword.c_str());
+  portalRecoveryPending_ = true;
+  portalJoinStartedAt_ = millis();
 }
 
 void Provisioning::handlePortalNotFound() {

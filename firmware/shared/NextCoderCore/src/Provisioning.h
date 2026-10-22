@@ -79,7 +79,7 @@ class Provisioning {
   void handlePortalRoot();
   void handlePortalSubmit();
   void handlePortalNotFound();
-  bool attemptJoin(const String& ssid, const String& password, uint32_t timeoutMs);
+  void pollPortalJoin();
   String scanOptionsHtml();
 
   DeviceStore* store_ = nullptr;
@@ -92,6 +92,12 @@ class Provisioning {
   bool portalUp_ = false;
   bool routesRegistered_ = false;
   bool justConnected_ = false;
+  bool knownGoodNetwork_ = false;
+  bool portalJoinPending_ = false;
+  bool portalRecoveryPending_ = false;
+  String pendingSsid_, pendingPassword_, pendingGateway_;
+  uint32_t portalJoinStartedAt_ = 0;
+  uint32_t nextPortalRecoveryAt_ = 0;
   uint32_t connectStartedAt_ = 0;
   uint32_t portalLastClientAt_ = 0;
   String portalError_;

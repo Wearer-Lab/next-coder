@@ -87,6 +87,35 @@ struct PendingApproval {
   String createdAt;
 };
 
+// Compact blockers preserve the three trust realms without retaining private question text.
+constexpr size_t kMaxRemoteBlockerCount = 99;
+enum class DeviceBlockerKind : uint8_t { None, GatewayApproval, ProviderApproval, UserInput, Unknown };
+struct RemoteBlockers {
+  size_t providerApprovals = 0;
+  size_t userInputs = 0;
+  bool providerUnknown = false;
+  bool inputUnknown = false;
+};
+inline size_t boundedRemoteBlockerCount(size_t count) {
+  return count > kMaxRemoteBlockerCount ? kMaxRemoteBlockerCount : count;
+}
+inline DeviceBlockerKind deviceBlockerKind(size_t gatewayApprovals, const RemoteBlockers& remote) {
+  if (gatewayApprovals) return DeviceBlockerKind::GatewayApproval;
+  if (remote.userInputs) return DeviceBlockerKind::UserInput;
+  if (remote.providerApprovals) return DeviceBlockerKind::ProviderApproval;
+  if (remote.providerUnknown || remote.inputUnknown) return DeviceBlockerKind::Unknown;
+  return DeviceBlockerKind::None;
+}
+inline const char* deviceBlockerLabel(DeviceBlockerKind kind) {
+  switch (kind) {
+    case DeviceBlockerKind::GatewayApproval: return "Gateway approval";
+    case DeviceBlockerKind::ProviderApproval: return "Provider approval";
+    case DeviceBlockerKind::UserInput: return "Needs input";
+    case DeviceBlockerKind::Unknown: return "Check T3 status";
+    default: return "";
+  }
+}
+
 // The two-line status surface, from GET /v1/device/display and from the `screen` object a dispatch
 // may answer with. `counts` is the account at a glance — a total per resource and nothing else.
 // Naming a resource takes one of the list routes: threads here, environments and projects in
@@ -117,12 +146,11 @@ struct DisplayModel {
 // hardware and that no device-facing list of environments or projects existed; both were true
 // until the gateway grew those routes, and neither is now.
 //
-// `threadId` is still the field this class itself changes — see GatewayClient::selectThread() —
-// and it is the gate on every requiresThread control. The two levels above it live in
-// GatewayBrowse, which is why `projectId` does not appear in this struct: nothing in GatewayClient
-// reads it, and a cached copy that only one of two owners updates is a copy that goes stale.
+// GatewayClient keeps all three confirmed binding ids so a dispatch can carry preconditions.
+// Browse owns labels and lists; successful selections publish their authoritative ids here.
 struct RuntimeContext {
   String environmentId;
+  String projectId;
   String threadId;
   String defaultPrompt;
   String shellCommand;
@@ -136,7 +164,7 @@ struct RuntimeContext {
 //   complete   done
 //   empty      the thread has never answered
 //   error      set locally; the fetch failed
-// Anything other than waiting/streaming stops the poll.
+// Transient read failures stay visibly error and retain retryPending until recovery or close.
 struct ThreadResponse {
   String lines[kMaxResponseLines];
   size_t lineCount = 0;
@@ -144,6 +172,7 @@ struct ThreadResponse {
   int pageCount = 1;
   String state = "empty";
   String messageId;
+  bool retryPending = false; // transient read failure; never implies a command replay
   DeviceControl followUps[kMaxFollowUpActions];
   size_t followUpCount = 0;
 };

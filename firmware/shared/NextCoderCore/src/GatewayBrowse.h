@@ -15,7 +15,7 @@
 //
 // Same contract as GatewayClient's gesture calls, and it matters more here because there is no
 // polling to hide behind: each call below performs exactly ONE blocking HTTP request and returns
-// when it is done. Paint the pending frame first, then call.
+// when it is done. Call on a network worker, publish its staged result on the UI task.
 
 #include <Arduino.h>
 
@@ -101,7 +101,7 @@ class GatewayBrowse {
   // Creating a thread
   // ---------------------------------------------------------------------------------------------
   //
-  // `POST /v1/device/threads` with an empty body. A project with no threads used to leave a
+  // `POST /v1/device/threads` with a durable clientRequestId. A project with no threads used to leave a
   // controller with nothing to point at and no way out except the web console — which is the one
   // place the owner is not standing when they pick the device up.
   //
