@@ -9,6 +9,7 @@ import {
   extractSessionFailures,
   mergeHostCatalogue,
   normalizeCatalogueEntry,
+  reconcileCommandStatus,
   resolveLatestModelSelection,
   resolveModelSelection,
   usableHarnesses,
@@ -181,4 +182,12 @@ test("selection falls back to a real usable model when the request is invalid", 
   assert.equal(claudeLatest.model, "claude-fable-5");
 
   assert.equal(resolveModelSelection({ harnesses: mergeHostCatalogue([], []) }), null);
+});
+
+test("completion evidence is timed from dispatch start across a delayed acknowledgement", () => {
+  const command = { status: "dispatched", createdAt: "2026-10-22T12:00:23.000Z", updatedAt: "2026-10-22T12:00:23.000Z", metrics: { completedAt: "2026-10-22T12:00:23.000Z", dispatchDurationMs: 23000 } };
+  const outcome = { lastAssistantAt: "2026-10-22T12:00:22.800Z", lastAssistantText: "OK" };
+  assert.equal(reconcileCommandStatus(command, outcome).status, "completed");
+  assert.equal(reconcileCommandStatus(command, { ...outcome, lastAssistantAt: "2026-10-22T11:59:59.999Z" }), null);
+  assert.equal(reconcileCommandStatus(command, {}), null, "an acknowledgement alone is never completion");
 });

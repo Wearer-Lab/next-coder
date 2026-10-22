@@ -747,3 +747,20 @@ test("watch and unwatch are owner-scoped routes that drive the hub", async (t) =
   const anonymous = await fetch(watchUrl, { method: "POST" });
   assert.equal(anonymous.status, 401);
 });
+
+test("a reply collected before its command acknowledgement is reconciled after recording dispatch", async () => {
+  const { store, environment, t3, hub, events } = await hubFixture();
+  hub.watch({ userId: "user_1", environmentId: environment.id, threadId: "thread_1" });
+  await hub.runOnce();
+  await until(() => t3.sockets.length === 1, "a socket");
+  t3.latest().push(snapshotItem(800));
+  const repliedAt = new Date(Date.now() - 500).toISOString();
+  t3.latest().push(eventItem(801, "thread.message-sent", { threadId: "thread_1", messageId: "fast_reply", role: "assistant", text: "Early real reply", streaming: false, createdAt: repliedAt, updatedAt: repliedAt }));
+  await until(() => events.typed("t3.thread.event").length === 1, "the reply before acknowledgement");
+  const command = await store.createCommand({ userId: "user_1", environmentId: environment.id, threadId: "thread_1", intent: { type: "agent_prompt", text: "reply" }, normalized: {}, status: "dispatched", metrics: { completedAt: new Date().toISOString(), dispatchDurationMs: 2000 } });
+  await hub.reconcileCommand(command);
+  const settled = await store.getCommandForUser("user_1", command.id);
+  assert.equal(settled.status, "completed");
+  assert.equal(settled.result.response, "Early real reply");
+  hub.stop();
+});

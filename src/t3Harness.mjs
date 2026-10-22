@@ -208,7 +208,13 @@ export function extractThreadOutcomes(snapshot) {
 export function reconcileCommandStatus(command, outcome) {
   if (!outcome || command?.status !== "dispatched") return null;
 
-  const dispatchedAt = Date.parse(command.updatedAt ?? command.createdAt ?? "");
+  const recordedAt = Date.parse(command.updatedAt ?? command.createdAt ?? "");
+  const acknowledgedAt = Date.parse(command.metrics?.completedAt ?? "");
+  const dispatchDuration = command.metrics?.dispatchDurationMs;
+  // The command is stored after T3 acknowledges dispatch. A real reply can arrive while that
+  // acknowledgement is in transit; freshness starts when dispatch began, not when it returned.
+  const dispatchedAt = Number.isFinite(acknowledgedAt) && Number.isFinite(dispatchDuration)
+    && dispatchDuration >= 0 ? acknowledgedAt - dispatchDuration : recordedAt;
 
   if (outcome.failure) {
     // Only attribute a failure that is not older than the command itself.

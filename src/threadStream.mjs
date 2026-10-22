@@ -579,7 +579,12 @@ export function createThreadStreamHub({
     }
   }
 
-  return { watch, unwatch, isStreaming, describe, runOnce, start, stop };
+  async function reconcileCommand(command) {
+    const entry = entries.get(keyFor(command.userId, command.environmentId, command.threadId));
+    return entry ? await reconcile(entry) : [];
+  }
+
+  return { watch, unwatch, isStreaming, describe, runOnce, reconcileCommand, start, stop };
 }
 
 function clip(text) {

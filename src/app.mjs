@@ -194,6 +194,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIST_DIR = join(__dirname, "..", "dist", "web");
 const t3TransportResolversByStore = new WeakMap();
 const notificationPublishersByStore = new WeakMap();
+const threadStreamHubsByStore = new WeakMap();
 const defaultT3TransportResolver = createT3TransportResolver();
 
 async function resolveEnvironmentHarnessesWithTransport(environment, snapshot, transportResolver) {
@@ -289,6 +290,7 @@ export function createApp({
     ...(config.threadStreamIntervalMs ? { intervalMs: config.threadStreamIntervalMs } : {}),
     ...(config.threadStreamWatchTtlMs ? { watchTtlMs: config.threadStreamWatchTtlMs } : {}),
   });
+  threadStreamHubsByStore.set(store, threadStreams);
   // Constructed here, started from server.mjs. Tests drive runOnce() so nothing depends on a timer.
   const mediaJobRunner = createMediaJobRunner({
     store,
@@ -5588,7 +5590,7 @@ async function executeIntent({
     });
     throw new HttpError(502, "T3 dispatch failed.", { command, cause: errorMessage(error) });
   }
-  const command = await store.createCommand({
+  let command = await store.createCommand({
     userId: actor.userId,
     deviceId: actor.type === "device" ? actor.id : null,
     environmentId: environment.id,
@@ -5600,6 +5602,13 @@ async function executeIntent({
     result,
     metrics: commandMetrics({ startedAt, dispatchStartedAt, completed: true, mediaCapturedAt }),
   });
+  try {
+    // Stream evidence may precede the acknowledgement and this durable command record.
+    const updates = await threadStreamHubsByStore.get(store)?.reconcileCommand(command);
+    if (updates?.length) command = await store.getCommandForUser(actor.userId, command.id) ?? command;
+  } catch {
+    // Dispatch already succeeded; a projection failure must not invite a duplicate dispatch.
+  }
   return { command };
 }
 
