@@ -33,6 +33,9 @@ test("bootstrap topology uses one non-public fail-closed edge stub with the prod
     readFile("cloudflare/bootstrap/staging-edge-stub.ts", "utf8"),
   ]);
   assert.equal(validateBootstrapTopology(edge, control, stub), true);
+  // Local workerd accepts experimental flags that the hosted deployment API rejects.
+  // Startup RPC must carry plain values instead of enabling experimental signal serialization.
+  assert.ok(!control.compatibility_flags.includes("enable_abortsignal_rpc"));
   assert.equal(stub.name, STAGING_SERVICES.edge);
   assert.equal(stub.workers_dev, false);
   assert.equal(stub.preview_urls, false);

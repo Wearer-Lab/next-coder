@@ -20,7 +20,7 @@ export class AgentControllerGatewayContainer extends Container<RuntimeBindings> 
   /**
    * Only plain startup values cross RPC. Create cancellation inside the Durable Object and
    * retain the SDK's outbound interception, concurrent-start coalescing and lifecycle alarms.
-   * enable_abortsignal_rpc also permits the SDK's port probes to forward their signals.
+   * The signal stays local to native port probes; nested signals cannot cross Worker RPC.
    */
   async startGateway(
     envVars: Record<string, string>,

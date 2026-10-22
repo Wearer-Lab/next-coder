@@ -29,8 +29,9 @@ The Worker uses `AGENT_CONTROLLER_GATEWAY.getByName("agent-controller-control-pl
 the `startGateway()` RPC method for ports 3996 and 3998. Only the string startup environment and a
 timeout cross RPC; cancellation is created inside the Durable Object. The method retains the SDK's
 `startAndWaitForPorts()` lifecycle, outbound interception, concurrent-start coalescing, and alarms,
-with one deadline for the complete startup. `enable_abortsignal_rpc` is required for the SDK's
-port probes, and `pingEndpoint` is a host rather than a complete URL. This keeps the process-local event broker,
+with one deadline for the complete startup. No signal is passed in the Worker RPC arguments:
+`enable_abortsignal_rpc` is experimental and Cloudflare rejects it on deployment. The SDK's native
+port probes use the local signal. `pingEndpoint` is a host rather than a complete URL. This keeps the process-local event broker,
 auth cache, and in-memory rate limiter coherent while the migration is incomplete. Durable product
 records live in Convex; the container filesystem is not production state.
 

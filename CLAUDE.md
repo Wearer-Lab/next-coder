@@ -800,8 +800,8 @@ unverified live/hardware evidence.
 
 The private Container's `startGateway()` RPC accepts only the string startup environment and a
 timeout. Create its cancellation signal inside the Durable Object, retain the Containers SDK's
-startup/lifecycle path (including outbound interception and alarms), and keep
-`enable_abortsignal_rpc` in the control-plane config for SDK port probes. A raw
+startup/lifecycle path (including outbound interception and alarms). Never add
+`enable_abortsignal_rpc`: it is experimental and the deployed Cloudflare API rejects it. A raw
 `this.container.start()` bypasses that lifecycle. Health probe `pingEndpoint` is a host/path, not a
 full URL. Never publish arbitrary platform error fields, including names or stacks: they may echo
 startup secrets. See `cloudflare-control-plane/README.md`.
