@@ -110,9 +110,12 @@ function nativeStore({ backend, platform, executable, env, run }) {
       validateAccount(account);
       validateSecret(secret);
       if (platform === "darwin") {
-        // Passing -w last makes `security` read the password from its private stdin;
-        // the standing secret never appears in argv or a shell command.
-        await run(executable, ["add-generic-password", "-a", account, "-s", CREDENTIAL_SERVICE, "-U", "-w"], { input: secret, env });
+        // A bare -w prompts through the controlling terminal; piped stdin can silently store an
+        // empty password. Feed security's own interactive command parser instead, using hex data
+        // so credential characters cannot become commands. Nothing sensitive enters process argv.
+        const quotedAccount = `"${account.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+        const input = `add-generic-password -a ${quotedAccount} -s ${CREDENTIAL_SERVICE} -U -X ${Buffer.from(secret, "utf8").toString("hex")}\n`;
+        await run(executable, ["-i"], { input, env });
       } else if (platform === "linux") {
         await run(executable, ["store", `--label=Next Coder connector (${account})`, "service", CREDENTIAL_SERVICE, "account", account], { input: secret, env });
       } else {

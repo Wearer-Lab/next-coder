@@ -845,7 +845,8 @@ export function ConnectEnvironmentDialog({
       setMint(created);
       setSession(created.session);
     } catch (error) {
-      mintedForRef.current = null;
+      // Keep this attempt recorded across controller renders. A failed mint needs an explicit
+      // retry; clearing the key here turns each error/connection update into another POST.
       setMint(null);
       // Self-hosted deployments can fall back to direct credentials. Managed cloud deliberately
       // keeps that trust boundary closed, so a mint failure remains an actionable connector error.
@@ -1086,7 +1087,8 @@ function ConnectHandoff({
             <span>{error}</span>
           </div>
         </div>
-        <p>Pair by pasting the credential from the T3 host instead.</p>
+        <p>Check the gateway connection, then request a new connect command.</p>
+        <Button size="sm" onClick={onRetry}><RefreshCw className="size-3.5" /> Try again</Button>
       </section>
     );
   }

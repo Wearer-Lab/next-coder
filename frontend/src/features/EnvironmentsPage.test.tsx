@@ -202,6 +202,27 @@ test("keeps the rejected direct URL and token flow out of managed cloud", async 
   expect(screen.queryByLabelText("Access token")).toBeNull();
 });
 
+test("does not remint a failed cloud enrollment on controller updates and permits an explicit retry", async () => {
+  const c = controller();
+  Object.assign(c, {
+    authConfig: { deploymentMode: "cloud", clerk: { enabled: true } },
+    createConnectSession: vi.fn().mockRejectedValue(new Error("Gateway unavailable")),
+  });
+  const page = renderPage(c);
+  fireEvent.click(screen.getByRole("button", { name: "Connect T3 Code" }));
+  fireEvent.click(screen.getByRole("button", { name: /Continue/u }));
+  fireEvent.click(screen.getByRole("button", { name: /Continue/u }));
+  expect(await screen.findByText("Gateway unavailable")).toBeVisible();
+
+  for (const connection of ["error", "reconnecting", "connected"] as const) {
+    page.rerender(<ConfirmProvider><EnvironmentsPage controller={{ ...c, connection }} /></ConfirmProvider>);
+  }
+  expect(c.createConnectSession).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText(/pasting the credential/u)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(c.createConnectSession).toHaveBeenCalledTimes(2));
+});
+
 test("offers connector migration instead of URL or token edits for a legacy direct cloud record", async () => {
   const environment: Environment = {
     id: "env_legacy",

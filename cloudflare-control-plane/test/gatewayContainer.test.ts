@@ -4,7 +4,7 @@ import type { RuntimeBindings } from "../src/env";
 import { AgentControllerGatewayContainer } from "../src/gatewayContainer";
 import worker from "../src/index";
 
-const { start } = vi.hoisted(() => ({ start: vi.fn() }));
+const { start, outboundRegistry } = vi.hoisted(() => ({ start: vi.fn(), outboundRegistry: new Map() }));
 
 // Exercise our RPC method without a live platform instance. The SDK owns platform startup,
 // outbound interception and alarms; replacing those internals is deliberately outside this test.
@@ -12,6 +12,8 @@ vi.mock("@cloudflare/containers", () => ({
   ContainerProxy: class {},
   switchPort: (request: Request) => request,
   Container: class {
+    static get outboundByHost() { return outboundRegistry.get(this.name); }
+    static set outboundByHost(handlers) { outboundRegistry.set(this.name, handlers); }
     constructor(_ctx: unknown, protected env: RuntimeBindings) {}
     startAndWaitForPorts = start;
   },
@@ -32,6 +34,19 @@ function gateway() {
 }
 
 describe("container startup RPC", () => {
+  it("registers private outbound traffic with the SDK proxy instead of falling through to DNS", async () => {
+    const routeConnectorRevocation = vi.fn(async () => ({ ok: true, value: { revoked: true } }));
+    const handler = outboundRegistry.get("AgentControllerGatewayContainer")?.["connector-router.internal"];
+    expect(handler).toBeTypeOf("function");
+    const response = await handler(new Request("http://connector-router.internal/v1/revoke", {
+      method: "POST",
+      body: JSON.stringify({ environmentId: "env_fixture", connectorId: "connector_fixture", reason: "superseded_by_reenrollment" }),
+    }), { CONNECTOR_ROUTER: { routeConnectorRevocation } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ revoked: true });
+    expect(routeConnectorRevocation).toHaveBeenCalledExactlyOnceWith("env_fixture", "connector_fixture", "superseded_by_reenrollment");
+  });
+
   it("selects the existing singleton through the typed namespace and sends only startup values", async () => {
     const startGateway = vi.fn(async (_envVars: Record<string, string>, _timeoutMs: number) => {});
     const getByName = vi.fn(() => ({

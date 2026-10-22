@@ -24,7 +24,12 @@ test("macOS Keychain adapter uses exact namespace, stdin, and argument arrays", 
     calls.push({ file, args, input: options.input });
     assert.equal(args.includes("standing-secret"), false);
     const account = args[args.indexOf("-a") + 1];
-    if (args[0] === "add-generic-password") { values.set(account, options.input); return ok(); }
+    if (args[0] === "-i") {
+      const command = options.input.match(/^add-generic-password -a "([^"]+)" -s (\S+) -U -X ([a-f0-9]+)\n$/);
+      assert.ok(command);
+      values.set(command[1], Buffer.from(command[3], "hex").toString("utf8"));
+      return ok();
+    }
     if (args[0] === "find-generic-password") return values.has(account) ? ok(`${values.get(account)}\n`) : { code: 44, stdout: "", stderr: "The specified item could not be found." };
     values.delete(account); return ok();
   };
@@ -33,8 +38,8 @@ test("macOS Keychain adapter uses exact namespace, stdin, and argument arrays", 
   assert.equal(await store.read("account:one"), "standing-secret");
   await store.delete("account:one");
   assert.equal(store.backend, "macos-keychain");
-  assert.deepEqual(calls[0].args, ["add-generic-password", "-a", "account:one", "-s", CREDENTIAL_SERVICE, "-U", "-w"]);
-  assert.equal(calls[0].input, "standing-secret");
+  assert.deepEqual(calls[0].args, ["-i"]);
+  assert.equal(calls[0].input, `add-generic-password -a "account:one" -s ${CREDENTIAL_SERVICE} -U -X ${Buffer.from("standing-secret").toString("hex")}\n`);
 });
 
 test("Linux Secret Service adapter requires a session and never places the secret in argv", async () => {
@@ -83,7 +88,12 @@ test("a credential stored under the legacy service name is still readable", asyn
   const values = new Map();
   const key = (args) => `${args[args.indexOf("-s") + 1]}/${args[args.indexOf("-a") + 1]}`;
   const run = async (file, args, options) => {
-    if (args[0] === "add-generic-password") { values.set(key(args), options.input); return ok(); }
+    if (args[0] === "-i") {
+      const command = options.input.match(/^add-generic-password -a "([^"]+)" -s (\S+) -U -X ([a-f0-9]+)\n$/);
+      assert.ok(command);
+      values.set(`${command[2]}/${command[1]}`, Buffer.from(command[3], "hex").toString("utf8"));
+      return ok();
+    }
     if (args[0] === "find-generic-password") return values.has(key(args)) ? ok(`${values.get(key(args))}\n`) : { code: 44, stdout: "", stderr: "The specified item could not be found." };
     values.delete(key(args));
     return ok();

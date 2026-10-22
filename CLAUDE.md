@@ -104,6 +104,9 @@ contains only the backend and an A/B slot pointer; rotation keeps the pending va
 native item. Migration writes and verifies native storage before atomically removing plaintext.
 Headless systems without a native facility retain the existing private-file representation, but an
 enrollment already bound to a native backend fails closed if that backend becomes unavailable.
+On macOS, send a hex-encoded `add-generic-password -X` command through `security -i` stdin.
+Bare `-w` prompts through the controlling terminal and can store an empty value from a piped
+process. Verify the native write by reading it back before committing the state pointer.
 
 Connector-owned T3 process control is exact and platform-specific. POSIX uses a detached process
 group. Windows never executes `npx.cmd` through a shell: it resolves the verified npm
@@ -820,6 +823,9 @@ startup/lifecycle path (including outbound interception and alarms). Never add
 `this.container.start()` bypasses that lifecycle. Health probe `pingEndpoint` is a host/path, not a
 full URL. Never publish arbitrary platform error fields, including names or stacks: they may echo
 startup secrets. See `cloudflare-control-plane/README.md`.
+Register `outboundByHost` through the inherited SDK setter (a static block assignment), not a
+static class field. A field shadows the registry setter: interception selects the private host,
+but ContainerProxy cannot find its handler and falls through to DNS.
 
 - Server code is `.mjs` ESM with no build step and only two runtime dependencies: `@clerk/backend`, and
   `web-push`, which `src/webPush.mjs` alone imports. Keep it that way.
