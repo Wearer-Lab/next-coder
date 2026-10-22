@@ -6480,7 +6480,7 @@ async function assertExpectedDeviceContext(store, device, body = {}, operation =
             intent: { type: "context_precondition_rejected", expectedProjectId: body.expectedProjectId ?? null } });
           const claim = await store.claimCommandRequest({ ...identity, requestHash });
           request = claim.request;
-          if (claim.claimed) request = await store.settleCommandRequest({ ...identity, requestHash, status: "failed", httpStatus: 409 });
+          if (claim.claimed) request = await store.settleCommandRequest({ ...identity, requestHash, status: "failed", commandId: null, httpStatus: 409 });
         }
       }
       throw new HttpError(409, "The controller context changed. Refresh and confirm the action again.", {

@@ -18,6 +18,50 @@ test("projected system action aliases round-trip as system controls rather than 
   ]);
 });
 
+test("context rejection settles a command-less receipt through the strict production Store contract", async (t) => {
+  const { server, store } = createApp();
+  const settle = store.settleCommandRequest;
+  const settlements = [];
+  store.settleCommandRequest = async (input) => {
+    // Convex requires commandId even when no command ran. Memory's default previously hid this
+    // omission and production returned 500 after claiming a permanently processing receipt.
+    for (const field of ["userId", "actorType", "actorId", "operation", "clientRequestId", "requestHash", "status", "commandId", "httpStatus"]) {
+      assert.ok(Object.hasOwn(input, field), `production settlement requires ${field}`);
+    }
+    assert.equal(input.commandId, null);
+    settlements.push(input);
+    return await settle(input);
+  };
+  await listen(server);
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const auth = await createAuthHeaders(fetch, baseUrl);
+  const created = await requestJson(fetch, baseUrl, "/v1/devices", {
+    method: "POST", headers: auth, body: { label: "Strict receipt controller", profile: "next-coder" },
+  });
+  const headers = { "x-device-id": created.device.id, "x-device-secret": created.secret };
+  await requestJson(fetch, baseUrl, `/v1/devices/${created.device.id}/controls`, {
+    method: "PUT", headers: auth, body: { controls: [{ kind: "status" }] },
+  });
+  const clientRequestId = "dev:strict-context-rejection";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(new URL("/v1/device/actions/system_status/run", baseUrl), {
+      method: "POST", headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ clientRequestId, expectedThreadId: "stale-thread" }),
+    });
+    assert.equal(response.status, 409);
+    const body = await response.json();
+    assert.equal(body.error.details.code, "device_context_changed");
+    assert.equal(body.error.details.request.status, "failed");
+    assert.equal(body.error.details.request.commandId, null);
+  }
+  assert.equal(settlements.length, 1, "a rejected retry reuses its terminal receipt");
+  const receipt = await requestJson(fetch, baseUrl,
+    `/v1/device/requests/${clientRequestId}?operation=intent.submit`, { method: "GET", headers });
+  assert.equal(receipt.request.status, "failed");
+  assert.equal(receipt.request.commandId, null);
+});
+
 test("saved actions and ordered device controls execute through the normal policy pipeline", async (t) => {
   const originalFetch = globalThis.fetch;
   const dispatches = [];
