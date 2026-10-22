@@ -51,10 +51,24 @@ String canonicalManifest(JsonObject manifest) {
   return output;
 }
 
+// How many times the artifact download is attempted, and how long the device waits between
+// attempts. A failed handshake leaves the heap in no worse a state than a successful one, so the
+// retry is safe; the bound keeps a device that cannot reach the artifact from retrying forever.
+constexpr int kDownloadAttempts = 4;
+constexpr uint32_t kDownloadRetryDelayMs = 4000;
+
 bool verifyManifest(JsonObject manifest) {
 #if REQUIRE_OTA_SIGNATURE
   const char* signature = manifest["signature"] | "";
-  if (strlen(signature) != 64 || strlen(OTA_MANIFEST_VERIFY_KEY) == 0) return false;
+  if (strlen(signature) != 64 || strlen(OTA_MANIFEST_VERIFY_KEY) == 0) {
+    // The two failure modes look identical from the outside - "manifest signature invalid" - but
+    // they need different fixes: a missing key is a build or seed problem, a wrong digest is a
+    // canonical-form problem. Say which one it is, and how long the key is, without ever printing
+    // the key.
+    Serial.printf("[ota] manifest rejected: signature length %u, verify key length %u\n",
+                  (unsigned)strlen(signature), (unsigned)strlen(OTA_MANIFEST_VERIFY_KEY));
+    return false;
+  }
   const String canonical = canonicalManifest(manifest);
   uint8_t digest[32];
   const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
@@ -62,9 +76,36 @@ bool verifyManifest(JsonObject manifest) {
       info, reinterpret_cast<const unsigned char*>(OTA_MANIFEST_VERIFY_KEY),
       strlen(OTA_MANIFEST_VERIFY_KEY),
       reinterpret_cast<const unsigned char*>(canonical.c_str()), canonical.length(), digest) != 0) {
+    Serial.printf("[ota] manifest rejected: HMAC over %u canonical bytes failed\n",
+                  (unsigned)canonical.length());
     return false;
   }
-  return hexDigest(digest, sizeof(digest)).equalsIgnoreCase(signature);
+  const String computed = hexDigest(digest, sizeof(digest));
+  if (!computed.equalsIgnoreCase(signature)) {
+    // Both digests are public values: the signature travelled in the manifest, and the computed one
+    // is a hash of a public document. Printing them makes the failure diagnosable from the serial
+    // log alone, which is the only place a bench operator can look.
+    Serial.printf("[ota] manifest rejected: digest mismatch\n  gateway %s\n  device  %s\n",
+                  signature, computed.c_str());
+    // A fingerprint of every field the digest was taken over, so a mismatch is traced to the field
+    // that parsed differently instead of being guessed at. Lengths only: the url carries a signed
+    // capability token, and no field value is printed.
+    Serial.printf(
+        "[ota] canonical %u bytes: channel=%u createdAt=%u hardware=%u notes=%u sha=%u url=%u "
+        "version=%u size=%u mandatory=%d\n",
+        (unsigned)canonical.length(),
+        (unsigned)strlen(manifest["channel"] | "stable"),
+        (unsigned)strlen(manifest["createdAt"] | ""),
+        (unsigned)strlen(manifest["hardwareModel"] | ""),
+        (unsigned)strlen(manifest["releaseNotes"] | ""),
+        (unsigned)strlen(manifest["sha256"] | ""),
+        (unsigned)strlen(manifest["url"] | ""),
+        (unsigned)strlen(manifest["version"] | ""),
+        (unsigned)(long)(manifest["sizeBytes"] | 0),
+        (int)(manifest["mandatory"] | false));
+    return false;
+  }
+  return true;
 #else
   (void)manifest;
   return true;
@@ -152,7 +193,7 @@ bool GatewayClient::applyFirmwareUpdate(const String& manifestPayload) {
   http.setConnectTimeout(5000);
   http.setTimeout(15000);
   if (!gateway_tls::beginHttp(http, plain, secure, downloadUrl, "ota")) {
-    reportFirmwareStatus("failed", target.c_str(), "download connection failed");
+    reportFirmwareStatus("failed", target.c_str(), "download connection failed (tls refused)");
     return false;
   }
   if (originOf(downloadUrl) == originOf(store_->gatewayUrl())) {
@@ -160,12 +201,36 @@ bool GatewayClient::applyFirmwareUpdate(const String& manifestPayload) {
     http.addHeader("x-device-secret", store_->deviceSecret());
   }
 
+  // The download needs a TLS session of its own, and mbedTLS wants one contiguous block for
+  // it. By the time an update is polled, the display buffers and the orb canvas have fragmented
+  // the heap, and the handshake can fail on a request that a moment later would succeed - the
+  // symptom is a socket hang-up on the far side and a bare -1 here. So the attempt is repeated a
+  // few times: the update is idempotent, the cost is a few seconds, and the alternative is a
+  // device that can never update itself while the screen is on.
   const uint32_t heldDepth = releaseStateForBlockingCall();
-  const int code = http.GET();
+  int code = 0;
+  for (int attempt = 1; attempt <= kDownloadAttempts; attempt += 1) {
+    Serial.printf("[ota] download attempt %d/%d, free heap %u bytes\n", attempt, kDownloadAttempts,
+                  (unsigned)ESP.getFreeHeap());
+    code = http.GET();
+    if (code == HTTP_CODE_OK) break;
+    http.end();
+    if (attempt < kDownloadAttempts) {
+      delay(kDownloadRetryDelayMs);
+      // A new session needs a new handshake, so the client is begun again.
+      if (!gateway_tls::beginHttp(http, plain, secure, downloadUrl, "ota")) break;
+      if (originOf(downloadUrl) == originOf(store_->gatewayUrl())) {
+        http.addHeader("x-device-id", store_->deviceId());
+        http.addHeader("x-device-secret", store_->deviceSecret());
+      }
+    }
+  }
   if (code != HTTP_CODE_OK) {
     http.end();
     reacquireStateAfterBlockingCall(heldDepth);
-    reportFirmwareStatus("failed", target.c_str(), "download request failed");
+    char detail[48];
+    snprintf(detail, sizeof(detail), "download request failed (code %d)", code);
+    reportFirmwareStatus("failed", target.c_str(), detail);
     return false;
   }
   const int contentLength = http.getSize();
