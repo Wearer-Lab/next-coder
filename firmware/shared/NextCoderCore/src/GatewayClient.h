@@ -22,6 +22,14 @@
 
 #include "DeviceStore.h"
 #include "OperateModel.h"
+// The board configuration has to be visible BEFORE the OTA verifier key is resolved.
+//
+// GatewayTls.h is what pulls in the board's include/controller_config.h, and that seed is where a
+// factory unit's OTA verifier key lives. Resolving the key before this include meant the key was
+// resolved to the empty default, the seed's value was never consulted, and every manifest the
+// gateway published was rejected as "manifest signature invalid" — with a 200 on the status report
+// and nothing on the device to say why.
+#include "GatewayTls.h"
 
 #ifndef ENABLE_OTA_APPLY
 #if SECURE_BUILD_ENABLE_OTA_APPLY
@@ -37,12 +45,14 @@
 #define REQUIRE_OTA_SIGNATURE 0
 #endif
 #endif
-#ifndef OTA_MANIFEST_VERIFY_KEY
+// The seed's key is the default; an explicit build-time key overrides it, because the key belongs
+// to the gateway environment and not to the unit.
 #ifdef BUILD_OTA_MANIFEST_VERIFY_KEY
+#undef OTA_MANIFEST_VERIFY_KEY
 #define OTA_MANIFEST_VERIFY_KEY BUILD_OTA_MANIFEST_VERIFY_KEY
-#else
-#define OTA_MANIFEST_VERIFY_KEY ""
 #endif
+#ifndef OTA_MANIFEST_VERIFY_KEY
+#define OTA_MANIFEST_VERIFY_KEY ""
 #endif
 
 enum class GatewayLink : uint8_t {

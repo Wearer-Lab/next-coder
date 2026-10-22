@@ -70,6 +70,16 @@ GatewayStatus probeOnce(const String& base) {
   return GatewayStatus::BadResponse;
 }
 
+// The probe shares the TLS lock with the gateway request path. mbedTLS needs one ~32 KB
+// contiguous block per handshake, and internal RAM here is already fragmented; a probe that
+// overlaps a gateway request can leave the request without a session buffer at all.
+GatewayStatus probeOnceLocked(const String& base) {
+  if (!gateway_tls::lockTls()) return GatewayStatus::Unknown;
+  const GatewayStatus status = probeOnce(base);
+  gateway_tls::unlockTls();
+  return status;
+}
+
 void probeTask(void*) {
   // Its own task on purpose. HTTPClient blocks for the whole connect-and-read, up to four seconds
   // here, and doing that on the render loop would stall the animation exactly like the blocking
@@ -84,7 +94,7 @@ void probeTask(void*) {
       if (WiFi.status() != WL_CONNECTED) {
         status = GatewayStatus::Unknown;
       } else {
-        GatewayStatus s = probeOnce(deviceStore().gatewayUrl());
+        GatewayStatus s = probeOnceLocked(deviceStore().gatewayUrl());
 
         // If the configured gateway does not answer, look for one. An address that cannot be
         // reached is worth nothing, so replacing it with one that can is never a downgrade — and
@@ -96,7 +106,7 @@ void probeTask(void*) {
         if (s != GatewayStatus::Reachable) {
           const GatewayCandidate found = discoverGateway();
           if (found.found && found.baseUrl != deviceStore().gatewayUrl()) {
-            const GatewayStatus probed = probeOnce(found.baseUrl);
+            const GatewayStatus probed = probeOnceLocked(found.baseUrl);
             if (probed == GatewayStatus::Reachable) {
               Serial.printf("[gateway] adopting discovered %s (%s); previous %s was %s\n",
                             found.baseUrl.c_str(), found.name.c_str(),

@@ -20,11 +20,19 @@ namespace {
 constexpr uint32_t kHeartbeatIntervalMs = 30000;
 constexpr uint32_t kConfigIntervalMs = 60000;
 constexpr uint32_t kSetupCodeIntervalMs = 10UL * 60UL * 1000UL;
-// Bounds the worst-case render stall, because this call sits on the render loop until the client
-// can publish under a lock instead of holding one across its request. A local gateway answers in
-// tens of milliseconds; anything slower than this is a gateway that is not going to answer usefully
-// inside a frame budget anyway, and waiting longer only freezes the animation for longer.
-constexpr uint16_t kTimeoutMs = 1200;
+// The request budget has to cover a TLS handshake and a store round trip, not just the reply.
+//
+// The old 1200 ms budget was sized for a plaintext LAN gateway answering in tens of milliseconds.
+// Against a verified HTTPS gateway it no longer covers the work: a handshake on this SoC costs
+// several hundred milliseconds and the Convex-backed display summary is another network round trip
+// on top of that, so the device logged HTTPClient error(-11) regularly even though the write had
+// landed. A timeout that fires after the request succeeded is worse than a slow answer, because
+// the device then believes it does not know what the gateway knows.
+//
+// The connect timeout stays short. An absent gateway fails at connect, so it is still detected in
+// about a second; the longer budget is only spent waiting for a gateway that IS there and is slow.
+constexpr uint16_t kConnectTimeoutMs = 2500;
+constexpr uint16_t kTimeoutMs = 6000;
 
 String generateDeviceCredential() {
   uint8_t bytes[32];
@@ -115,6 +123,22 @@ int GatewayClient::request(const char* method, const char* path, const String& b
 
   const String url = base + path;
 
+  // Only one TLS handshake may be alive at a time. mbedTLS needs a ~32 KB contiguous block for
+  // the session buffers, and internal RAM on this hardware is already fragmented by the display
+  // buffers and the Wi-Fi driver. Two concurrent handshakes mean the second one fails with
+  // MBEDTLS_ERR_SSL_ALLOC_FAILED and the request never leaves the device. The lock is recursive
+  // because this client can be re-entered while a request is in flight.
+  const bool tlsHeld = gateway_tls::lockTls();
+  if (!tlsHeld) {
+    response = "gateway busy";
+    return -1;
+  }
+  // Released on every exit path, including the early returns below.
+  struct TlsGuard {
+    bool held;
+    ~TlsGuard() { if (held) gateway_tls::unlockTls(); }
+  } tlsGuard{tlsHeld};
+
   // Declaration order is load-bearing, not style.
   //
   // C++ destroys locals in reverse declaration order, and HTTPClient keeps a reference to the
@@ -130,7 +154,7 @@ int GatewayClient::request(const char* method, const char* path, const String& b
   HTTPClient http;
 
   http.setTimeout(kTimeoutMs);
-  http.setConnectTimeout(kTimeoutMs);
+  http.setConnectTimeout(kConnectTimeoutMs);
 
   if (!gateway_tls::beginHttp(http, plain, secure, url, "gateway")) return -1;
 

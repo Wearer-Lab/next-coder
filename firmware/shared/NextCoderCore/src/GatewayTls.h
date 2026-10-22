@@ -4,6 +4,8 @@
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <time.h>
 
 // Board projects expose their generated/bench configuration on PlatformIO's include path. Keeping
@@ -40,6 +42,39 @@
 #endif
 
 namespace gateway_tls {
+
+// One TLS handshake at a time.
+//
+// mbedTLS allocates its input and output buffers as one contiguous block of roughly 32 KB when
+// the session is set up. On this hardware that block has to come out of internal RAM, which the
+// display buffers and the Wi-Fi driver have already fragmented. Two handshakes alive at the same
+// moment therefore do not fail slowly — the second one fails with MBEDTLS_ERR_SSL_ALLOC_FAILED
+// and the request never reaches the gateway.
+//
+// The probe task and the gateway request path are separate tasks on different cores, so nothing
+// else stops them from overlapping. This lock is the only thing that does, and it is recursive
+// because the gateway client is re-entrant (a request made while answering another one must not
+// deadlock against itself).
+inline SemaphoreHandle_t& tlsLock() {
+  static SemaphoreHandle_t handle = nullptr;
+  if (handle == nullptr) {
+    handle = xSemaphoreCreateRecursiveMutex();
+  }
+  return handle;
+}
+
+// Returns true when the lock was taken. A caller that cannot get it in time must skip the request
+// rather than perform a handshake outside the lock, which is the exact failure this prevents.
+inline bool lockTls(unsigned int timeoutMs = 10000) {
+  SemaphoreHandle_t handle = tlsLock();
+  if (handle == nullptr) return false;
+  return xSemaphoreTakeRecursive(handle, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+inline void unlockTls() {
+  SemaphoreHandle_t handle = tlsLock();
+  if (handle != nullptr) xSemaphoreGiveRecursive(handle);
+}
 
 inline bool isPrivateIpv4Host(const String& host) {
   if (host == "localhost") return true;
