@@ -118,6 +118,21 @@ manifest and artifact SHA-256, records the attempt in NVS, and confirms the new 
 healthy gateway heartbeat. The 16 KB network-task stack is intentional: the 4 KB OTA buffer plus
 HTTP/TLS frames overflowed the former 8 KB stack during a physical rollout test.
 
+Cloud HTTP responses can be chunked even when their bodies are small. `GatewayHttp.h` wraps
+the request clients so an empty single-byte read yields to the scheduler: ESP32's
+`Stream::timedRead()` otherwise spins for the six-second HTTP timeout while parsing chunk framing,
+starving the idle watchdog. `BoundedBody` caps decoded bytes before allocation for both declared
+and unknown response lengths. Incomplete or oversized responses fail the request instead of
+returning a truncated success. TLS certificate verification remains mandatory.
+
+On 2026-10-22, Hosyond firmware 0.2.10 reproduced the watchdog in that chunk-header path against
+production. The 0.2.11 fix completed a 90-second physical observation with real production
+heartbeats, no watchdog/panic/reboot or gateway request failures, and steady 30.3 FPS after startup.
+Steady frame gaps were at most 34 ms; startup and the initial state transition had 144 ms and
+70 ms gaps. This was an unclaimed-device test, not proof of account control or a hardware-to-T3
+command. The shared code also compiled in the CrowPanel capture-placeholder environment; other
+boards were not physically exercised.
+
 **Gesture.** Manual `refreshThreads()`, `selectThread()`, the `send*` / `run*` calls, `fetchResponsePage()`,
 and `answerApproval()` are driven by a person. Each performs one request and **blocks for up to the
 5 s timeout** — `HTTPClient` has no async mode, and a worker task would put a lock in front of every

@@ -12,6 +12,7 @@
 #include <WiFiClientSecure.h>
 
 #include "GatewayTls.h"
+#include "GatewayHttp.h"
 
 namespace {
 // The reference firmware's cadences. A heartbeat is cheap and proves liveness; config changes
@@ -149,8 +150,8 @@ int GatewayClient::request(const char* method, const char* path, const String& b
   // thread. The device was rebooting roughly twice a minute.
   //
   // Clients first, HTTPClient last: it dies first, while what it points at is still alive.
-  WiFiClientSecure secure;
-  WiFiClient plain;
+  gateway_http::YieldingClient<WiFiClientSecure> secure;
+  gateway_http::YieldingClient<WiFiClient> plain;
   HTTPClient http;
 
   http.setTimeout(kTimeoutMs);
@@ -170,7 +171,7 @@ int GatewayClient::request(const char* method, const char* path, const String& b
   // Everything from here to the end of the read is socket wait, so the lock goes back first. The
   // renderer can take it and paint a frame from the values already published while this waits.
   const uint32_t heldDepth = releaseStateForBlockingCall();
-  const int code = String(method) == "POST" ? http.POST(body) : http.GET();
+  int code = String(method) == "POST" ? http.POST(body) : http.GET();
   if (code > 0) {
     // A device-facing body larger than this is a bug or an attack, never a payload — the biggest
     // real one is a twelve-row thread list. Reading it into a String first and rejecting afterwards
@@ -179,8 +180,14 @@ int GatewayClient::request(const char* method, const char* path, const String& b
     if (length > (int)kMaxResponseBodyBytes) {
       Serial.printf("[gateway] %s oversized response %d bytes\n", path, length);
       response = "response too large";
+      code = HTTPC_ERROR_STREAM_WRITE;
     } else {
-      response = http.getString();
+      gateway_http::BoundedBody sink(response, kMaxResponseBodyBytes);
+      const int read = http.writeToStream(&sink);
+      if (read < 0 || sink.failed()) {
+        response = "gateway response incomplete";
+        code = read < 0 ? read : HTTPC_ERROR_STREAM_WRITE;
+      }
     }
   }
 

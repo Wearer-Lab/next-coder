@@ -914,6 +914,13 @@ companion are the two real paths.
 
 `firmware/shared/NextCoderCore` (via `lib_extra_dirs`) owns the writable device state and orb
 renderer the boards share:
+
+Cloud chunk framing must not busy-wait on a network core. The Arduino `HTTPClient` chunk parser
+calls `Stream::readStringUntil`, whose `timedRead` spins without yielding; a six-second response
+pause triggered the Hosyond idle watchdog in October 2026. Shared `GatewayHttp.h` makes empty
+single-byte reads yield and bounds decoded bodies before allocation. Preserve both properties
+when changing the HTTP transport; moving HTTP off the render task alone does not prevent watchdogs.
+
 `DeviceStore` wraps NVS (namespace `agentctl`) for identity, gateway URL, Wi-Fi credentials, the cached claim code, and
 the config cache; `Provisioning` is the boot state machine plus a SoftAP captive portal. **`controller_config.h` is a
 bench seed, not a source of truth** — `DeviceStore` copies it into NVS only on a unit that has none, and a factory unit
