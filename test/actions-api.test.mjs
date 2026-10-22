@@ -6,6 +6,17 @@ import test from "node:test";
 
 import { createApp } from "../src/app.mjs";
 import { createFileStore } from "../src/fileStore.mjs";
+import { normalizeDeviceControlItems } from "../src/actions.mjs";
+
+test("projected system action aliases round-trip as system controls rather than saved-action IDs", () => {
+  assert.deepEqual(normalizeDeviceControlItems([
+    { id: "system_status", actionId: "system_status", kind: "status", label: "Status", enabled: true },
+    { id: "system_stop", actionId: "system_stop", kind: "stop", label: "Stop run" },
+  ]), [
+    { id: "system_status", kind: "status", label: "Status" },
+    { id: "system_stop", kind: "stop", label: "Stop run" },
+  ]);
+});
 
 test("saved actions and ordered device controls execute through the normal policy pipeline", async (t) => {
   const originalFetch = globalThis.fetch;
@@ -130,6 +141,10 @@ test("saved actions and ordered device controls execute through the normal polic
   ]);
   assert.equal(ownerControls.controls[1].label, "Continue task with a deliberately long label");
 
+  const beforeExpiry = await store.getEnvironmentForUser("user_dev", environment.environment.id);
+  await store.updateEnvironmentHealth({ userId: "user_dev", environmentId: environment.environment.id,
+    health: { capabilities: { ...beforeExpiry.health.capabilities, freshUntil: new Date(0).toISOString() } },
+  });
   const deviceControls = await requestJson(originalFetch, baseUrl, "/v1/device/controls", {
     method: "GET", headers: deviceAuth,
   });
@@ -138,6 +153,9 @@ test("saved actions and ordered device controls execute through the normal polic
   assert.equal(deviceControls.controls[0].actionId, "system_status");
   assert.equal(deviceControls.controls[1].actionId, prompt.id);
   assert.equal(deviceControls.controls[1].label.length, 18);
+  assert.equal(deviceControls.controls.every((control) => control.enabled), true);
+  const renewed = await store.getEnvironmentForUser("user_dev", environment.environment.id);
+  assert.ok(Date.parse(renewed.health.capabilities.freshUntil) > Date.now());
 
   await requestJson(originalFetch, baseUrl, `/v1/devices/${created.device.id}/config`, {
     method: "PUT", headers: auth, body: { threadId: null },

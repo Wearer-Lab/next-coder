@@ -4705,6 +4705,7 @@ async function validateDeviceControlAssignments({ store, device, items, config }
 }
 
 async function resolveDeviceControls({ store, device, stored, config, forFirmware = false }) {
+  const capabilityEnvironments = new Map();
   const labelCharacters = Math.max(1, Math.min(80, Number(device.status?.limits?.labelCharacters) || 18));
   const resolvedLabel = (label) => forFirmware
     ? Array.from(String(label)).slice(0, labelCharacters).join("")
@@ -4712,7 +4713,7 @@ async function resolveDeviceControls({ store, device, stored, config, forFirmwar
   const controls = [];
   for (const item of stored.items ?? []) {
     if (!item.actionId) {
-      const availability = await systemControlAvailability({ store, device, kind: item.kind, config });
+      const availability = await systemControlAvailability({ store, device, kind: item.kind, config, capabilityEnvironments });
       controls.push({
         id: item.id,
         label: resolvedLabel(item.label),
@@ -4737,7 +4738,7 @@ async function resolveDeviceControls({ store, device, stored, config, forFirmwar
       });
       continue;
     }
-    const availability = await savedActionAvailability({ store, device, action, config });
+    const availability = await savedActionAvailability({ store, device, action, config, capabilityEnvironments });
     controls.push({
       id: item.id,
       label: resolvedLabel(item.label ?? action.label),
@@ -4763,6 +4764,7 @@ async function savedActionAvailability({
   seen = new Set(),
   inheritedEnvironmentId = null,
   inheritedThreadId = null,
+  capabilityEnvironments = new Map(),
 }) {
   if (seen.has(action.id)) return { enabled: false, reason: "This macro contains a reference cycle." };
   if (action.disabled) return { enabled: false, reason: disabledRecordMessage("action", action) };
@@ -4772,7 +4774,7 @@ async function savedActionAvailability({
     ? action.environmentId
     : inheritedEnvironmentId ?? device.config?.environmentId;
   if (!environmentId) return { enabled: false, reason: "No T3 environment is selected." };
-  const environment = await store.getEnvironmentForUser(device.userId, environmentId);
+  const environment = await controlCapabilityEnvironment(store, device.userId, environmentId, capabilityEnvironments);
   if (!environment) return { enabled: false, reason: "The selected T3 environment is unavailable." };
   const requiredCapability = action.type === "media" && action.payload?.mediaKind === "image"
     ? "image"
@@ -4801,6 +4803,7 @@ async function savedActionAvailability({
         seen: nextSeen,
         inheritedEnvironmentId: environmentId,
         inheritedThreadId: threadId,
+        capabilityEnvironments,
       });
       if (!result.enabled) return result;
     }
@@ -4818,11 +4821,11 @@ async function savedActionAvailability({
   return { enabled: false, reason: policy.reason };
 }
 
-async function systemControlAvailability({ store, device, kind, config }) {
+async function systemControlAvailability({ store, device, kind, config, capabilityEnvironments = new Map() }) {
   if (kind === "reset") return { enabled: true, reason: null };
   const environmentId = device.config?.environmentId;
   if (!environmentId) return { enabled: false, reason: "No T3 environment is selected." };
-  const environment = await store.getEnvironmentForUser(device.userId, environmentId);
+  const environment = await controlCapabilityEnvironment(store, device.userId, environmentId, capabilityEnvironments);
   if (!environment) return { enabled: false, reason: "The selected T3 environment is unavailable." };
   const capability = storedEnvironmentCapabilityAvailability(
     environment,
@@ -4844,6 +4847,25 @@ async function systemControlAvailability({ store, device, kind, config }) {
   return policy.allowed || policy.requiresApproval
     ? { enabled: true, reason: policy.requiresApproval ? "Execution requires owner approval." : null }
     : { enabled: false, reason: policy.reason };
+}
+
+async function controlCapabilityEnvironment(store, userId, environmentId, cache) {
+  if (!cache.has(environmentId)) cache.set(environmentId, (async () => {
+    const environment = await store.getEnvironmentForUser(userId, environmentId);
+    if (!environment || capabilityManifestIsFresh(environment.health?.capabilities)) return environment;
+    try {
+      const manifest = ownerSafeT3CapabilityProjection(await transportForStore(store, environment)
+        .capabilities(environment, { allowStale: true }));
+      if (capabilityManifestIsFresh(manifest)) await store.updateEnvironmentHealth({
+        userId, environmentId, health: { capabilities: manifest },
+      });
+      return { ...environment, health: { ...environment.health, capabilities: manifest } };
+    } catch {
+      // An unavailable connector stays disabled. One probe per environment in this bounded layout.
+      return environment;
+    }
+  })());
+  return await cache.get(environmentId);
 }
 
 function storedEnvironmentCapabilityAvailability(environment, name, attachment = false) {

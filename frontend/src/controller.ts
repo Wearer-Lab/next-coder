@@ -1509,6 +1509,34 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
   }, [api]);
   loadSnapshotRef.current = loadSnapshot;
 
+  const capabilityFreshUntil = environments.find((environment) => environment.id === selectedEnvironmentId)
+    ?.health?.capabilities?.freshUntil;
+  useEffect(() => {
+    const deadline = Date.parse(capabilityFreshUntil ?? "");
+    if (!authenticated || !selectedEnvironmentId || !Number.isFinite(deadline)) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const renew = () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      void loadCapabilities(selectedEnvironmentId).catch(() => {}).finally(() => {
+        if (!cancelled) timer = window.setTimeout(renew, 30_000);
+      });
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== "hidden" && Date.now() >= deadline) {
+        window.clearTimeout(timer);
+        renew();
+      }
+    };
+    timer = window.setTimeout(renew, Math.max(1_000, deadline - Date.now() + 50));
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [authenticated, selectedEnvironmentId, capabilityFreshUntil, loadCapabilities]);
+
   const prefetchWorkspaces = useCallback(async (environmentIds: readonly string[]) => {
     const uniqueIds = selectWorkspacePrefetchIds(environmentIds);
     await runWithConcurrency(uniqueIds, WORKSPACE_PREFETCH_CONCURRENCY, async (environmentId) => {

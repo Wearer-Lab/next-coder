@@ -3,7 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { requestJson } from "./api";
 import { useController } from "./controller";
-import type { AuthConfig, ClerkBridge } from "./types";
+import type { AuthConfig, ClerkBridge, T3CapabilityManifest } from "./types";
 
 vi.mock("./api", async (original) => ({ ...await original<typeof import("./api")>(), requestJson: vi.fn() }));
 
@@ -15,9 +15,20 @@ test("loads selected capabilities once rather than feeding health updates back i
     addEventListener(name: string, handler: (event: { data: string }) => void) { listeners.set(name, handler); }
     close() {}
   });
-  const environment = { id: "env_fixture", label: "Mac", transportMode: "connector", status: "reachable" };
+  const environment = { id: "env_fixture", label: "Mac", transportMode: "connector", status: "reachable", health: { capabilities: undefined as T3CapabilityManifest | undefined } };
   vi.mocked(requestJson).mockImplementation(async (path) => {
-    if (path.endsWith("/capabilities")) return { manifest: { schema: "next-coder.t3-capabilities.v1", features: { dispatch: { state: "supported" } } }, capabilities: { orchestrationOperate: true } };
+    if (path.endsWith("/capabilities")) {
+      const manifest: T3CapabilityManifest = {
+        schema: "next-coder.t3-capabilities.v1", contractVersion: "t3-adapter.v1", installedVersion: "0.1.1",
+        probedAt: new Date().toISOString(), freshness: "fresh", source: "connector_probe",
+        freshUntil: new Date(Date.now() + 2500).toISOString(), probes: {},
+        features: { dispatch: { state: "supported", evidence: "fixture" } },
+        attachments: { image: { state: "supported", evidence: "fixture" }, audio: { state: "unsupported", evidence: "fixture" }, file: { state: "unsupported", evidence: "fixture" }, maxCount: 8, maxImageBytes: 1024 },
+        runtimeModes: [], interactionModes: [], approvalDecisions: [], recovery: null,
+      };
+      environment.health.capabilities = manifest;
+      return { manifest, capabilities: { orchestrationOperate: true } };
+    }
     if (path.endsWith("/snapshot")) return { environment, snapshot: { projects: [], threads: [] } };
     if (path === "/v1/t3/environments") return { environments: [environment] };
     return {
@@ -27,7 +38,7 @@ test("loads selected capabilities once rather than feeding health updates back i
     };
   });
   const clerk = { loaded: true, signedIn: true, getToken: async () => "fixture-token" } as ClerkBridge;
-  const { result, rerender } = renderHook(() => useController({ authConfig: {} as AuthConfig, clerk }));
+  const { result, rerender, unmount } = renderHook(() => useController({ authConfig: {} as AuthConfig, clerk }));
   await waitFor(() => expect(result.current.environments[0]?.health?.capabilities).toBeDefined());
   expect(result.current.environments[0]?.health?.capabilities?.features.dispatch.state).toBe("supported");
   const capabilityReads = () => vi.mocked(requestJson).mock.calls.filter(([path]) => path.endsWith("/capabilities")).length;
@@ -48,4 +59,6 @@ test("loads selected capabilities once rather than feeding health updates back i
   rerender();
   await act(async () => { await Promise.resolve(); });
   expect(capabilityReads()).toBe(1);
+  await waitFor(() => expect(capabilityReads()).toBe(2), { timeout: 4000 });
+  unmount();
 });

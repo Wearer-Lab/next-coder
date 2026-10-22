@@ -67,7 +67,8 @@ export function normalizeDeviceControlItems(input, { menuItems = 8 } = {}) {
       throw new HttpError(400, `controls[${index}] must be an object.`);
     }
     const actionId = optionalString(item.actionId);
-    if (actionId) {
+    const systemKind = Object.entries(SYSTEM_CONTROL_IDS).find(([, id]) => id === actionId)?.[0];
+    if (actionId && !systemKind) {
       const id = optionalString(item.id) ?? actionId;
       if (seen.has(id)) throw new HttpError(400, `Duplicate control id: ${id}.`);
       seen.add(id);
@@ -78,7 +79,7 @@ export function normalizeDeviceControlItems(input, { menuItems = 8 } = {}) {
         ...(optionalString(item.label) ? { label: optionalString(item.label) } : {}),
       };
     }
-    const control = optionalString(item.control) ?? optionalString(item.kind);
+    const control = systemKind ?? optionalString(item.control) ?? optionalString(item.kind);
     if (!Object.hasOwn(SYSTEM_CONTROL_IDS, control)) {
       throw new HttpError(400, `controls[${index}] requires an actionId or a supported system control.`);
     }
