@@ -95,8 +95,7 @@ Repeat for production. The required `CONNECTOR_ROUTER` Service Binding is declar
 environment and production startup fails closed when it is absent. The runtime forces
 `STORAGE_PROVIDER=convex`, Clerk auth, TLS, disabled dev
 tokens, `DEPLOYMENT_MODE=cloud`, and S3-backed media/firmware in cloud environments. It also disables UDP discovery,
-snapshot polling, live-thread scheduling, and transcription polling because permanent process timers
-are not a safe Container lifecycle contract. It likewise forces `WEB_PUSH_WORKER_ENABLED=0`; the
+snapshot polling and transcription polling in favor of edge Queue/Cron consumers. The leased live-thread hub currently runs in the explicit Node Container adapter: no replacement platform thread-stream consumer is implemented. Its one-second tick opens only owner-authorized watches and closes expired leases; browser/device renewals restore watches after a Container restart. It likewise forces `WEB_PUSH_WORKER_ENABLED=0`; the
 edge Queue/Cron `push.deliver` task is the only managed-cloud delivery scheduler. Only the private
 Container startup environment receives VAPID private material and the sealing key. The public
 `/v1/push/config` projection contains support state, active key id, and the active public key only.
@@ -177,10 +176,8 @@ deploy, or substitute for Queue/R2/Convex/rollover evidence.
   must expect a cold start or brief unavailability and validate staged rollout behavior.
 - Media and firmware use the existing S3-compatible adapter with R2 credentials. A native Worker R2
   binding/FUSE adapter is not part of this Container architecture; live R2 proof is still required.
-- Process timers are disabled in the cloud Container. The edge Queue/Cron handlers own snapshot,
-  media, retention, and connector projection work through the private background capability.
-- Connector-mode T3 routing is wired through the private named entrypoint, but it has not been proven
-  against a deployed Container, edge Worker, real connector process, or live T3 runtime.
+- The edge Queue/Cron handlers own snapshot, media, retention, and connector projection work through the private background capability. Live-thread scheduling remains a leased Node Container compatibility path; moving that scheduler and fanout to a platform-native lifecycle remains outstanding.
+- Production connector routing, snapshot reads, and prompt dispatch were observed against the deployed Container, edge Worker, real connector, and native T3 0.1.1 on October 22, 2026. This does not establish multi-instance fanout or restart/recovery guarantees.
 - Container capacity and billing require a Cloudflare Workers Paid plan. No external service was
   provisioned or deployed by this work.
 - Startup-wait telemetry identifies cold-start candidates but cannot prove that Cloudflare allocated

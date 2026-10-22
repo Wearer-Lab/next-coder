@@ -65,11 +65,13 @@ export function resolveRuntimeConfig(env: RuntimeBindings): ResolvedRuntimeConfi
     DISCOVERY_ENABLED: "0",
     CONNECTOR_ROUTER_BASE_URL: "http://connector-router.internal",
     SNAPSHOT_POLL_ENABLED: "0",
-    THREAD_STREAM_ENABLED: "0",
+    // This explicit Node Container adapter owns the leased stream hub and its cleanup tick.
+    // There is no platform thread-stream consumer yet: claiming one leaves watches idle forever.
+    THREAD_STREAM_ENABLED: "1",
     TRANSCRIPTION_WORKER_ENABLED: "0",
     WEB_PUSH_WORKER_ENABLED: "0",
     CLOUD_SNAPSHOT_CONSUMER_ENABLED: "1",
-    CLOUD_THREAD_STREAM_CONSUMER_ENABLED: "1",
+    CLOUD_THREAD_STREAM_CONSUMER_ENABLED: "0",
     CLOUD_MEDIA_CONSUMER_ENABLED: "1",
   };
 
