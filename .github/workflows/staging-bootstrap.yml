@@ -184,6 +184,8 @@ jobs:
           STAGING_RUNTIME_SECRET_S3_SECRET_ACCESS_KEY: ${{ secrets.STAGING_RUNTIME_S3_SECRET_ACCESS_KEY }}
           STAGING_RUNTIME_SECRET_WEB_PUSH_VAPID_KEYS: ${{ secrets.STAGING_RUNTIME_WEB_PUSH_VAPID_KEYS }}
           STAGING_RUNTIME_SECRET_WEB_PUSH_STORAGE_ENCRYPTION_KEY: ${{ secrets.STAGING_RUNTIME_WEB_PUSH_STORAGE_ENCRYPTION_KEY }}
+          STAGING_RUNTIME_SECRET_FACTORY_TOKEN: ${{ secrets.STAGING_RUNTIME_FACTORY_TOKEN }}
+          STAGING_RUNTIME_SECRET_OTA_SIGNING_KEY: ${{ secrets.STAGING_RUNTIME_OTA_SIGNING_KEY }}
         run: node ../automation/scripts/bootstrap-staging.mjs execute
       - name: Upload redacted bootstrap evidence
         if: always()

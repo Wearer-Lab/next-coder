@@ -26,6 +26,11 @@ export const REQUIRED_CONTROL_PLANE_SECRETS = Object.freeze([
   "S3_SECRET_ACCESS_KEY",
   "WEB_PUSH_VAPID_KEYS",
   "WEB_PUSH_STORAGE_ENCRYPTION_KEY",
+  // Without a factory token no unit can be registered or claimed, and without the OTA signing
+  // key the firmware release channel cannot publish a manifest a device would accept. Both are
+  // part of the control plane's contract, so the preflight fails closed without them.
+  "FACTORY_TOKEN",
+  "OTA_SIGNING_KEY",
 ]);
 export const REQUIRED_CONVEX_ENVIRONMENT_NAMES = Object.freeze(["GATEWAY_CONVEX_SECRET"]);
 export const REQUIRED_STAGING_QUEUES = Object.freeze([
