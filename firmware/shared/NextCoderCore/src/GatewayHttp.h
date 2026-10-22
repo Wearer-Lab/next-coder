@@ -16,6 +16,11 @@ class YieldingClient : public Client {
     if (value < 0) delay(1);
     return value;
   }
+  int read(uint8_t* buffer, size_t size) override {
+    const int count = Client::read(buffer, size);
+    if (count <= 0 && size) delay(1);
+    return count;
+  }
 };
 
 // HTTPClient decodes chunk framing before writing here. Bound unknown-length responses too:

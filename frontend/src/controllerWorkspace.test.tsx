@@ -10,7 +10,11 @@ vi.mock("./api", async (original) => ({ ...await original<typeof import("./api")
 afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks(); });
 
 test("loads selected capabilities once rather than feeding health updates back into workspace reads", async () => {
-  vi.stubGlobal("EventSource", class { addEventListener() {} close() {} });
+  const listeners = new Map<string, (event: { data: string }) => void>();
+  vi.stubGlobal("EventSource", class {
+    addEventListener(name: string, handler: (event: { data: string }) => void) { listeners.set(name, handler); }
+    close() {}
+  });
   const environment = { id: "env_fixture", label: "Mac", transportMode: "connector", status: "reachable" };
   vi.mocked(requestJson).mockImplementation(async (path) => {
     if (path.endsWith("/capabilities")) return { capabilities: { version: 1 } };
@@ -27,6 +31,16 @@ test("loads selected capabilities once rather than feeding health updates back i
   await waitFor(() => expect(result.current.environments[0]?.health?.capabilities).toBeDefined());
   const capabilityReads = () => vi.mocked(requestJson).mock.calls.filter(([path]) => path.endsWith("/capabilities")).length;
   expect(capabilityReads()).toBe(1);
+  const readsBeforeAuth = vi.mocked(requestJson).mock.calls.length;
+  await act(async () => {
+    for (const action of ["ensureUser", "authenticateDevice", "createConnectorTicket", "consumeConnectorTicket"]) {
+      listeners.get("state.changed")?.({ data: JSON.stringify({ summary: { latestAction: action } }) });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 800));
+  });
+  expect(vi.mocked(requestJson).mock.calls.length).toBe(readsBeforeAuth);
+  act(() => listeners.get("state.changed")?.({ data: JSON.stringify({ summary: { latestAction: "claimDevice" } }) }));
+  await waitFor(() => expect(vi.mocked(requestJson).mock.calls.length).toBeGreaterThan(readsBeforeAuth));
   await act(async () => {
     await result.current.refreshAll();
   });

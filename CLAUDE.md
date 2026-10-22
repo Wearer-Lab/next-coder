@@ -934,7 +934,7 @@ renderer the boards share:
 Cloud chunk framing must not busy-wait on a network core. The Arduino `HTTPClient` chunk parser
 calls `Stream::readStringUntil`, whose `timedRead` spins without yielding; a six-second response
 pause triggered the Hosyond idle watchdog in October 2026. Shared `GatewayHttp.h` makes empty
-single-byte reads yield and bounds decoded bodies before allocation. Preserve both properties
+single-byte and bulk reads yield and bounds decoded bodies before allocation. Bulk TLS reads can return no bytes while HTTPClient yields only `delay(0)`; the claimed-device heartbeat exposed a second idle-watchdog spin, fixed by yielding on non-positive bulk reads too. Preserve both properties
 when changing the HTTP transport; moving HTTP off the render task alone does not prevent watchdogs.
 
 `DeviceStore` wraps NVS (namespace `agentctl`) for identity, gateway URL, Wi-Fi credentials, the cached claim code, and
@@ -944,3 +944,5 @@ gets its identity from the `nvsSeed` CSV that `POST /v1/factory/batches` returns
 the factory cannot know the customer's network. CrowPanel uses EXIT hold for Wi-Fi reset; Hosyond
 uses BOOT hold, while a short BOOT tap reopens its configuration portal. See
 `firmware/shared/README.md` and the board READMEs.
+
+Convex authentication bookkeeping (`ensureUser`, `authenticate*`, connector ticket issue/consume) must not broadcast full console invalidations. Every authenticated read runs that bookkeeping, so broadcasting it creates a read → auth → invalidation → read loop. Older deployed adapters are filtered at the console during rollout; real product mutations still invalidate their owner.

@@ -10,6 +10,7 @@ function fakeClient() {
     mutation: async (name, args) => {
       if (name === "gatewayStore:createDevice") return { id: "dev_1", userId: args.userId };
       if (name === "gatewayStore:authenticateDevice") return { id: "dev_1", userId: "user_owner" };
+      if (name === "gatewayStore:recordDeviceHeartbeat") return { device: { id: "dev_1", userId: "user_owner" } };
       if (name === "gatewayStore:ensureUser") return { id: args.userId, email: args.email };
       if (name === "gatewayStore:authenticateUserToken") return { user: { id: "user_from_token" } };
       return { ok: true };
@@ -34,14 +35,13 @@ test("Convex mutations resolve the user from the result when args do not name on
   const changes = [];
   store.subscribe((change) => changes.push(change));
 
-  await store.authenticateDevice("dev_1", "secret");
+  await store.recordDeviceHeartbeat({ deviceId: "dev_1", status: {} });
   assert.equal(changes.at(-1).userId, "user_owner");
-
+  changes.length = 0;
+  await store.authenticateDevice("dev_1", "secret");
   await store.ensureUser({ userId: "user_3", email: "a@b.c" });
-  assert.equal(changes.at(-1).userId, "user_3");
-
   await store.authenticateUserToken("token-secret");
-  assert.equal(changes.at(-1).userId, "user_from_token");
+  assert.deepEqual(changes, [], "auth bookkeeping must not trigger a console read/auth/refetch loop");
 });
 
 test("Convex queries never emit change notifications", async () => {

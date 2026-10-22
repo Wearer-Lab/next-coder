@@ -1092,6 +1092,11 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
     stream.addEventListener("state.changed", (event) => {
       try {
         const payload = JSON.parse(event.data) as { summary?: { latestAction?: string } };
+        // Older cloud adapters broadcast authentication bookkeeping on ordinary reads. Ignore
+        // these invalidations during rolling deployments or a refetch perpetually triggers itself.
+        const action = payload.summary?.latestAction;
+        if (action === "ensureUser" || action?.startsWith("authenticate")
+          || action === "createConnectorTicket" || action === "consumeConnectorTicket") return;
         setConnectionDetail(payload.summary?.latestAction ?? "State updated");
       } catch {
         setConnectionDetail("State updated");

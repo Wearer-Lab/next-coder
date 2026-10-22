@@ -246,7 +246,11 @@ export function createConvexStoreAdapter({
       // Convex holds the state, so there is no local store to diff. Emitting the affected user
       // on every mutation is what keeps live dashboard updates working under STORAGE_PROVIDER=convex.
       const userId = affectedUserId(args, result);
-      if (userId) notify({ userId, action: method });
+      // Authentication runs for every request. Broadcasting those bookkeeping writes causes
+      // state.changed -> console refetch -> authentication -> state.changed indefinitely.
+      const authenticationOnly = method === "ensureUser" || method.startsWith("authenticate")
+        || method === "createConnectorTicket" || method === "consumeConnectorTicket";
+      if (userId && !authenticationOnly) notify({ userId, action: method });
       return result;
     }
     throw new Error(`Convex Store API function ${method} has unsupported type ${fn.type}.`);

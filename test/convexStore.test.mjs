@@ -784,3 +784,18 @@ function jsonResponse(body, status = 200) {
     headers: { "content-type": "application/json" },
   });
 }
+
+test("authentication bookkeeping does not invalidate the console but product changes do", async () => {
+  const store = createConvexStoreAdapter({
+    gatewaySecret: "fixture-secret",
+    client: { query: async () => null, mutation: async () => ({ id: "user_1", email: "fixture@example.test", userId: "user_1" }) },
+  });
+  const changes = [];
+  store.subscribe((change) => changes.push(change));
+  await store.ensureUser({ userId: "user_1" });
+  await store.authenticateDevice("device_1", "fixture-secret");
+  await store.authenticateConnector("connector_1", "fixture-secret");
+  assert.deepEqual(changes, []);
+  await store.updateUserOnboarding({ userId: "user_1", status: "completed" });
+  assert.deepEqual(changes, [{ userId: "user_1", action: "updateUserOnboarding" }]);
+});

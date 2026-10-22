@@ -44,7 +44,7 @@ struct Socket {
   virtual ~Socket() = default;
   int next = -1;
   virtual int read() { return next; }
-  size_t read(uint8_t*, size_t) { return 0; }
+  virtual int read(uint8_t*, size_t) { return next < 0 ? -1 : 0; }
 };
 int main() {
   gateway_http::YieldingClient<Socket> client;
@@ -53,6 +53,11 @@ int main() {
   assert(yields == 100);
   client.next = 'x';
   assert(socket.read() == 'x' && yields == 100);
+  uint8_t buffer[4];
+  assert(socket.read(buffer, 4) == 0 && yields == 101);
+  client.next = -1;
+  assert(socket.read(buffer, 4) == -1 && yields == 102);
+  assert(socket.read(buffer, 0) == -1 && yields == 102);
   String output;
   gateway_http::BoundedBody sink(output, 4);
   const uint8_t body[] = {'a', 'b', 'c', 'd', 'e'};
