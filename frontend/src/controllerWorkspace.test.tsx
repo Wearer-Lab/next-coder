@@ -17,7 +17,7 @@ test("loads selected capabilities once rather than feeding health updates back i
   });
   const environment = { id: "env_fixture", label: "Mac", transportMode: "connector", status: "reachable" };
   vi.mocked(requestJson).mockImplementation(async (path) => {
-    if (path.endsWith("/capabilities")) return { capabilities: { version: 1 } };
+    if (path.endsWith("/capabilities")) return { manifest: { schema: "next-coder.t3-capabilities.v1", features: { dispatch: { state: "supported" } } }, capabilities: { orchestrationOperate: true } };
     if (path.endsWith("/snapshot")) return { environment, snapshot: { projects: [], threads: [] } };
     if (path === "/v1/t3/environments") return { environments: [environment] };
     return {
@@ -29,6 +29,7 @@ test("loads selected capabilities once rather than feeding health updates back i
   const clerk = { loaded: true, signedIn: true, getToken: async () => "fixture-token" } as ClerkBridge;
   const { result, rerender } = renderHook(() => useController({ authConfig: {} as AuthConfig, clerk }));
   await waitFor(() => expect(result.current.environments[0]?.health?.capabilities).toBeDefined());
+  expect(result.current.environments[0]?.health?.capabilities?.features.dispatch.state).toBe("supported");
   const capabilityReads = () => vi.mocked(requestJson).mock.calls.filter(([path]) => path.endsWith("/capabilities")).length;
   expect(capabilityReads()).toBe(1);
   const readsBeforeAuth = vi.mocked(requestJson).mock.calls.length;

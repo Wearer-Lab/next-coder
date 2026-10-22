@@ -594,7 +594,14 @@ void GatewayClient::eventTaskLoop() {
     http.addHeader("x-device-id", store_->deviceId());
     http.addHeader("x-device-secret", store_->deviceSecret());
 
+    // The event stream keeps its established session, but its handshake must share the same
+    // allocation gate as request/probe/OTA handshakes on this constrained board.
+    if (!gateway_tls::lockTls()) {
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      continue;
+    }
     const int code = http.GET();
+    gateway_tls::unlockTls();
     if (code != 200) {
       Serial.printf("[gateway] device event stream failed code=%d\n", code);
       http.end();

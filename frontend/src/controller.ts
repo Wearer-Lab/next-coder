@@ -1499,13 +1499,13 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
   ]);
 
   const loadCapabilities = useCallback(async (environmentId: string) => {
-    const result = await api<{ capabilities: T3CapabilityManifest }>(
+    const result = await api<{ manifest: T3CapabilityManifest }>(
       `/v1/t3/environments/${encodeURIComponent(environmentId)}/capabilities`,
     );
     setEnvironments((current) => current.map((environment) => environment.id === environmentId
-      ? { ...environment, health: { ...(environment.health ?? {}), capabilities: result.capabilities } }
+      ? { ...environment, health: { ...(environment.health ?? {}), capabilities: result.manifest } }
       : environment));
-    return result.capabilities;
+    return result.manifest;
   }, [api]);
   loadSnapshotRef.current = loadSnapshot;
 

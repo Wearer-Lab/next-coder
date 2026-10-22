@@ -946,3 +946,5 @@ uses BOOT hold, while a short BOOT tap reopens its configuration portal. See
 `firmware/shared/README.md` and the board READMEs.
 
 Convex authentication bookkeeping (`ensureUser`, `authenticate*`, connector ticket issue/consume) must not broadcast full console invalidations. Every authenticated read runs that bookkeeping, so broadcasting it creates a read → auth → invalidation → read loop. Older deployed adapters are filtered at the console during rollout; real product mutations still invalidate their owner.
+
+The environment capabilities HTTP response has both `manifest` (the versioned feature/freshness contract) and `capabilities` (coarse gateway permission flags). The console stores `manifest` in `health.capabilities`; storing the coarse flags there falsely disables all composer actions. Device SSE handshakes share the global TLS allocation gate, then release it for the established stream.
