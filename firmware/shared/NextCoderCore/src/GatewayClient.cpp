@@ -124,96 +124,93 @@ int GatewayClient::request(const char* method, const char* path, const String& b
 
   const String url = base + path;
 
-  // Only one TLS handshake may be alive at a time. mbedTLS needs a ~32 KB contiguous block for
-  // the session buffers, and internal RAM on this hardware is already fragmented by the display
-  // buffers and the Wi-Fi driver. Two concurrent handshakes mean the second one fails with
-  // MBEDTLS_ERR_SSL_ALLOC_FAILED and the request never leaves the device. The lock is recursive
-  // because this client can be re-entered while a request is in flight.
-  const bool tlsHeld = gateway_tls::lockTls();
-  if (!tlsHeld) {
-    response = "gateway busy";
-    return -1;
-  }
-  // Released on every exit path, including the early returns below.
-  struct TlsGuard {
-    bool held;
-    ~TlsGuard() { if (held) gateway_tls::unlockTls(); }
-  } tlsGuard{tlsHeld};
-
-  // Declaration order is load-bearing, not style.
-  //
-  // C++ destroys locals in reverse declaration order, and HTTPClient keeps a reference to the
-  // client it was handed. With HTTPClient declared first it is destroyed LAST — after the client it
-  // points at — so ~HTTPClient() calls stop() on freed memory. That crashed as
-  // InstrFetchProhibited at PC 0xfffffffd (a call through a dead vtable), and corrupted the lwIP
-  // TCP heap on the way out, which surfaced later as pbuf_free/tcp_seg_free panics in the tcpip
-  // thread. The device was rebooting roughly twice a minute.
-  //
-  // Clients first, HTTPClient last: it dies first, while what it points at is still alive.
-  gateway_http::YieldingClient<WiFiClientSecure> secure;
-  gateway_http::YieldingClient<WiFiClient> plain;
-  HTTPClient http;
-
-  http.setTimeout(kTimeoutMs);
-  http.setConnectTimeout(kConnectTimeoutMs);
-
-  if (!gateway_tls::beginHttp(http, plain, secure, url, "gateway")) return -1;
-
-  http.addHeader("content-type", "application/json");
-  http.addHeader("x-device-id", store_->deviceId());
-  http.addHeader("x-device-secret", credentialOverride ? *credentialOverride : store_->deviceSecret());
-  // HTTPClient discards every response header it was not told to keep, so without this the
-  // retry-after read below always parsed an empty string and every 429 backed off for the 1 s
-  // floor instead of the interval the gateway asked for.
-  const char* kCollected[] = {"retry-after"};
-  http.collectHeaders(kCollected, 1);
-
-  // Everything from here to the end of the read is socket wait, so the lock goes back first. The
-  // renderer can take it and paint a frame from the values already published while this waits.
+  const String deviceId = store_->deviceId();
+  const String credential = credentialOverride ? *credentialOverride : store_->deviceSecret();
+  long retryAfter = 1;
+  // Never wait for TLS while owning state, or reacquire state while owning TLS. Otherwise a
+  // touch read and a background heartbeat can wait on each other until the 10 s TLS timeout.
   const uint32_t heldDepth = releaseStateForBlockingCall();
-  int code = String(method) == "POST" ? http.POST(body) : http.GET();
-  if (code > 0) {
-    // A device-facing body larger than this is a bug or an attack, never a payload — the biggest
-    // real one is a twelve-row thread list. Reading it into a String first and rejecting afterwards
-    // would already have spent the heap this guard exists to protect.
-    const int length = http.getSize();
-    if (length > (int)kMaxResponseBodyBytes) {
-      Serial.printf("[gateway] %s oversized response %d bytes\n", path, length);
-      response = "response too large";
-      code = HTTPC_ERROR_STREAM_WRITE;
-    } else {
-      gateway_http::BoundedBody sink(response, kMaxResponseBodyBytes);
-      const int read = http.writeToStream(&sink);
-      if (read < 0 || sink.failed()) {
-        response = "gateway response incomplete";
-        code = read < 0 ? read : HTTPC_ERROR_STREAM_WRITE;
+  const int code = [&]() -> int {
+    // Only one TLS handshake may be alive at a time. mbedTLS needs a ~32 KB contiguous block for
+    // the session buffers, and internal RAM on this hardware is already fragmented by the display
+    // buffers and the Wi-Fi driver. Two concurrent handshakes mean the second one fails with
+    // MBEDTLS_ERR_SSL_ALLOC_FAILED and the request never leaves the device. The lock is recursive
+    // because this client can be re-entered while a request is in flight.
+    const bool tlsHeld = gateway_tls::lockTls();
+    if (!tlsHeld) {
+      Serial.printf("[gateway] %s TLS gate timeout\n", path);
+      response = "gateway busy";
+      return -1;
+    }
+    // Released on every exit path, including the early returns below.
+    struct TlsGuard {
+      bool held;
+      ~TlsGuard() { if (held) gateway_tls::unlockTls(); }
+    } tlsGuard{tlsHeld};
+
+    // Declaration order is load-bearing, not style.
+    //
+    // C++ destroys locals in reverse declaration order, and HTTPClient keeps a reference to the
+    // client it was handed. With HTTPClient declared first it is destroyed LAST — after the client it
+    // points at — so ~HTTPClient() calls stop() on freed memory. That crashed as
+    // InstrFetchProhibited at PC 0xfffffffd (a call through a dead vtable), and corrupted the lwIP
+    // TCP heap on the way out, which surfaced later as pbuf_free/tcp_seg_free panics in the tcpip
+    // thread. The device was rebooting roughly twice a minute.
+    //
+    // Clients first, HTTPClient last: it dies first, while what it points at is still alive.
+    gateway_http::YieldingClient<WiFiClientSecure> secure;
+    gateway_http::YieldingClient<WiFiClient> plain;
+    HTTPClient http;
+
+    http.setTimeout(kTimeoutMs);
+    http.setConnectTimeout(kConnectTimeoutMs);
+
+    if (!gateway_tls::beginHttp(http, plain, secure, url, "gateway")) return -1;
+
+    http.addHeader("content-type", "application/json");
+    http.addHeader("x-device-id", deviceId);
+    http.addHeader("x-device-secret", credential);
+    // HTTPClient discards every response header it was not told to keep, so without this the
+    // retry-after read below always parsed an empty string and every 429 backed off for the 1 s
+    // floor instead of the interval the gateway asked for.
+    const char* kCollected[] = {"retry-after"};
+    http.collectHeaders(kCollected, 1);
+
+    int code = String(method) == "POST" ? http.POST(body) : http.GET();
+    if (code > 0) {
+      // A device-facing body larger than this is a bug or an attack, never a payload — the biggest
+      // real one is a twelve-row thread list. Reading it into a String first and rejecting afterwards
+      // would already have spent the heap this guard exists to protect.
+      const int length = http.getSize();
+      if (length > (int)kMaxResponseBodyBytes) {
+        Serial.printf("[gateway] %s oversized response %d bytes\n", path, length);
+        response = "response too large";
+        code = HTTPC_ERROR_STREAM_WRITE;
+      } else {
+        gateway_http::BoundedBody sink(response, kMaxResponseBodyBytes);
+        const int read = http.writeToStream(&sink);
+        if (read < 0 || sink.failed()) {
+          response = "gateway response incomplete";
+          code = read < 0 ? read : HTTPC_ERROR_STREAM_WRITE;
+        }
       }
     }
-  }
 
-  // HTTPClient logs "error(-11): read Timeout" with no indication of which call died, which makes a
-  // recurring failure impossible to attribute. Name the path and the code.
-  if (code <= 0) Serial.printf("[gateway] %s failed code=%d\n", path, code);
+    // HTTPClient logs "error(-11): read Timeout" with no indication of which call died, which makes a
+    // recurring failure impossible to attribute. Name the path and the code.
+    if (code <= 0) Serial.printf("[gateway] %s failed code=%d\n", path, code);
 
-  // Reader is done; take the lock back before touching a single member below.
+    if (code == 429) retryAfter = max(1L, http.header("retry-after").toInt());
+    http.end();
+    return code;
+  }();
   reacquireStateAfterBlockingCall(heldDepth);
 
-  // 401 means the credential itself was rejected — the owner revoked this device, or it was
-  // transfer-reset. No amount of retrying fixes that, so it is recorded here, once, rather than
-  // being re-derived at every call site.
   if (trackAuthState) {
     if (code == 401) revoked_ = true;
     else if (code >= 200 && code < 300) revoked_ = false;
   }
-
-  // A rate-limited gateway is telling us exactly how long to wait; ignoring it turns one 429 into
-  // a storm.
-  if (code == 429) {
-    const int retryAfter = http.header("retry-after").toInt();
-    backoffUntil_ = millis() + (uint32_t)max(1, retryAfter) * 1000UL;
-  }
-
-  http.end();
+  if (code == 429) backoffUntil_ = millis() + (uint32_t)retryAfter * 1000UL;
   return code;
 }
 

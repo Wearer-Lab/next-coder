@@ -255,7 +255,9 @@ drawer says what is actually true of the device and doubles as the way to the sc
   answers 403.
 - **The action bar** carries at most three things, all of them doable on the screen in front of you:
   APPROVE/REJECT on a held command, SEND/DISCARD on a recorded clip, PREV/NEXT on a paged reply,
-  RETRY on a failed turn, RELOAD on an empty list. When it has nothing, it is not drawn and those
+  RETRY on a failed reply fetch, RELOAD on an empty list. A reply-fetch error also keeps ACTIONS
+  available on HOME; RETRY reloads the reply and does not resubmit a command. When the bar has
+  nothing, it is not drawn and those
   58 px belong to the content.
 - **A vertical drag** scrolls a list, **a horizontal swipe** pages the response, and **a drag that
   started in the header** pulls the drawer. One gesture, one meaning, decided by where the finger

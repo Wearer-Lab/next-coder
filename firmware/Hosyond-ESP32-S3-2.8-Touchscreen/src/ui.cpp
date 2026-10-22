@@ -2317,6 +2317,8 @@ void buildActions() {
       }
       if (gw->responseOpen() && gw->response().state == "error") {
         addAction(Act::Retry, "RETRY", true);
+        // A failed reply read must not trap the owner outside saved actions.
+        if (gw->controlCount() > 0) addAction(Act::SavedActions, "ACTIONS", false);
         return;
       }
       if (audio::available()) addAction(Act::Talk, "TALK", true);
