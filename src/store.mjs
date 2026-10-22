@@ -2253,7 +2253,9 @@ export function createStore(seed = {}, options = {}) {
       const conflict = existing.kind !== input.kind
         || existing.contentType !== input.contentType
         || existing.expectedSizeBytes !== input.expectedSizeBytes
-        || existing.expectedSha256 !== input.expectedSha256;
+        || existing.expectedSha256 !== input.expectedSha256
+        || (existing.environmentId ?? null) !== (input.environmentId ?? null)
+        || (existing.threadId ?? null) !== (input.threadId ?? null);
       return { created: false, conflict, session: publicMediaUploadSession(existing) };
     }
 
@@ -2781,11 +2783,13 @@ export function createStore(seed = {}, options = {}) {
     const kind = input.kind ?? "transcription";
 
     // Enqueue is idempotent. Two clicks on "Transcribe" (or a retry after a flaky response) must
-    // not produce two workers racing to write the same transcript.
+    // not produce two workers racing to write the same transcript. A device capture also reuses
+    // its terminal job: a replayed finalize must never auto-send that recording a second time.
     const active = [...mediaJobs.values()].find((job) => job.userId === input.userId
       && job.mediaId === input.mediaId
       && job.kind === kind
-      && !MEDIA_JOB_TERMINAL_STAGES.has(job.stage));
+      && (!MEDIA_JOB_TERMINAL_STAGES.has(job.stage)
+        || (input.deviceId && job.deviceId === input.deviceId)));
     if (active) return structuredClone(active);
 
     const job = {

@@ -129,7 +129,7 @@ import { normalizeGatewayProfileInput, publicGatewayProfile } from "./gatewayPro
 import { createSnapshotPoller } from "./snapshotPoller.mjs";
 import { createThreadStreamHub } from "./threadStream.mjs";
 import { createCommandArbiter } from "./commandArbiter.mjs";
-import { createStore, emptyEnvironmentRemoval } from "./store.mjs";
+import { createStore, emptyEnvironmentRemoval, MEDIA_JOB_TERMINAL_STAGES } from "./store.mjs";
 import { assertSecureTransport } from "./transport.mjs";
 import {
   TERMINAL_SCOPE,
@@ -3400,6 +3400,7 @@ export function createApp({
         }
         const body = await readJson(req);
         const action = await systemDeviceAction(actionId) ?? await store.getActionForUser(device.userId, actionId);
+        await assertExpectedDeviceContext(store, device, body, COMMAND_REQUEST_OPERATION);
         if (!action) throw new HttpError(404, "Action not found.");
         if (action.type === "media") {
           const mediaUploadId = requireString(body.mediaUploadId, "mediaUploadId");
@@ -3502,6 +3503,7 @@ export function createApp({
         await enforceDeviceWrite(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
         const body = await readJson(req);
+        await assertExpectedDeviceContext(store, device, body, THREAD_CREATE_REQUEST_OPERATION);
         const requestedTitle = normalizeTitle(body.title);
         const environment = await boundDeviceEnvironment(store, device);
         // A thread has to be created *somewhere*. Unlike thread selection, which can fall back to
@@ -4263,10 +4265,14 @@ export function createApp({
         await enforceDeviceWrite(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
         const body = await readJson(req);
+        const captureTarget = deviceCaptureTarget(device, body);
+        if (body.kind === "audio" && (!captureTarget.environmentId || !captureTarget.threadId)) {
+          throw new HttpError(409, "Select an environment and thread before recording audio.", { code: "capture_target_required" });
+        }
         const result = await createMediaUploadIntent({
           store,
           config,
-          actor: { type: "device", id: device.id, userId: device.userId },
+          actor: { type: "device", id: device.id, userId: device.userId, ...captureTarget },
           payload: body,
         });
         return sendJson(res, result.created ? 201 : 200, {
@@ -4315,6 +4321,9 @@ export function createApp({
           sessionId: deviceMediaUploadFinalizeMatch[1],
         });
         if (!result?.media) throw new HttpError(409, "Media upload could not be finalized.");
+        if (result.media.kind === "audio" && (!result.media.environmentId || !result.media.threadId)) {
+          throw new HttpError(409, "This recording has no captured target. Select a thread and record again.", { code: "capture_target_required" });
+        }
         const queued = await enqueueDeviceTranscription({
           store,
           config,
@@ -4386,7 +4395,13 @@ export function createApp({
         // account are two microphones in two rooms, and one has no business reading the other's
         // capture — the transcript is in this response.
         if (!job || job.deviceId !== device.id) throw new HttpError(404, "Media job not found.");
-        return sendJson(res, 200, { job: deviceJobStatus(job) });
+        const command = job.commandId ? await store.getCommandForUser(device.userId, job.commandId) : null;
+        return sendJson(res, 200, {
+          job: {
+            ...deviceJobStatus(job),
+            ...(command ? { responseAfter: actionResponseAfter({ command }) } : {}),
+          },
+        });
       }
 
       if (req.method === "GET" && url.pathname === "/v1/device/state") {
@@ -6449,8 +6464,62 @@ async function enqueueTranscription({ store, config, userId, mediaId, res }) {
  * there is no job to poll rather than having its upload rejected after the bytes are already
  * stored.
  */
+async function assertExpectedDeviceContext(store, device, body = {}, operation = COMMAND_REQUEST_OPERATION) {
+  for (const [expected, field] of [["expectedEnvironmentId", "environmentId"], ["expectedProjectId", "projectId"], ["expectedThreadId", "threadId"]]) {
+    if (!Object.hasOwn(body, expected)) continue;
+    const value = body[expected] === null ? null : requireString(body[expected], expected);
+    if (value !== (optionalString(device.config?.[field]) ?? null)) {
+      const clientRequestId = normalizeClientRequestId(body.clientRequestId);
+      let request = null;
+      if (clientRequestId) {
+        const identity = { userId: device.userId, actorType: "device", actorId: device.id, operation, clientRequestId };
+        request = await store.getCommandRequest(identity);
+        if (!request) {
+          const requestHash = commandRequestHash({ operation,
+            environmentId: optionalString(body.expectedEnvironmentId), threadId: optionalString(body.expectedThreadId),
+            intent: { type: "context_precondition_rejected", expectedProjectId: body.expectedProjectId ?? null } });
+          const claim = await store.claimCommandRequest({ ...identity, requestHash });
+          request = claim.request;
+          if (claim.claimed) request = await store.settleCommandRequest({ ...identity, requestHash, status: "failed", httpStatus: 409 });
+        }
+      }
+      throw new HttpError(409, "The controller context changed. Refresh and confirm the action again.", {
+        code: "device_context_changed", ...(request ? { request } : {}),
+      });
+    }
+  }
+}
+
+function deviceCaptureTarget(device, body = {}) {
+  const target = {
+    environmentId: optionalString(device.config?.environmentId) ?? null,
+    threadId: optionalString(device.config?.threadId) ?? null,
+  };
+  for (const field of ["environmentId", "threadId"]) {
+    if (body[field] == null) continue;
+    const supplied = requireString(body[field], field);
+    if (supplied !== target[field]) {
+      throw new HttpError(409, "The controller target changed. Select the intended thread before recording again.", {
+        code: "capture_target_changed",
+      });
+    }
+  }
+  return target;
+}
+
 async function enqueueDeviceTranscription({ store, config, events, device, media, body = {} }) {
   if (media.kind !== "audio") return { job: null, media };
+  const previous = (await store.listMediaJobs({ userId: device.userId, mediaId: media.id }))
+    .find((job) => job.kind === "transcription" && job.deviceId === device.id);
+  if (previous) return { job: previous, media };
+  const captureTarget = media.environmentId || media.threadId
+    ? { environmentId: media.environmentId ?? null, threadId: media.threadId ?? null }
+    : deviceCaptureTarget(device, body);
+  for (const field of ["environmentId", "threadId"]) {
+    if (optionalString(body[field]) && body[field] !== captureTarget[field]) {
+      throw new HttpError(409, "This recording belongs to a different capture target.", { code: "capture_target_changed" });
+    }
+  }
   if (!isTranscriptionProviderEnabled(config.transcriptionProvider)) {
     const unavailable = await store.updateMediaProcessing?.({
       userId: device.userId,
@@ -6472,8 +6541,8 @@ async function enqueueDeviceTranscription({ store, config, events, device, media
     // Pinned to the target the controller was pointed at when it recorded. Reading the device's
     // config at dispatch instead would send a delayed capture to whatever thread happens to be
     // selected by then, which is not the thread the owner was talking to.
-    environmentId: optionalString(body.environmentId) ?? optionalString(device.config?.environmentId) ?? null,
-    threadId: optionalString(body.threadId) ?? optionalString(device.config?.threadId) ?? null,
+    environmentId: captureTarget.environmentId,
+    threadId: captureTarget.threadId,
     provider: config.transcriptionProvider,
     model: config.transcriptionModel ?? null,
     language: config.transcriptionLanguage ?? null,
@@ -6481,6 +6550,10 @@ async function enqueueDeviceTranscription({ store, config, events, device, media
     reviewRequired: config.transcriptionReviewRequired === true,
   });
   if (!job) return { job: null, media };
+
+  // Finalize is retryable, including after an auto-sent capture has finished. Reuse its terminal
+  // job without changing processing metadata back to "processing" or dispatching it again.
+  if (MEDIA_JOB_TERMINAL_STAGES.has(job.stage)) return { job, media };
 
   const queued = await store.updateMediaProcessing?.({
     userId: device.userId,
@@ -6626,8 +6699,8 @@ async function dispatchVoiceTranscript({ store, config, job, transcript }) {
   // here as `false` and the capture waits.
   if (!voiceAutoSendEnabled(device)) return null;
 
-  const environmentId = job.environmentId ?? device.config?.environmentId ?? null;
-  const threadId = job.threadId ?? device.config?.threadId ?? null;
+  const environmentId = job.environmentId ?? null;
+  const threadId = job.threadId ?? null;
   if (!environmentId || !threadId) {
     return {
       autoSend: true,

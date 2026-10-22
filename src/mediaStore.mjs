@@ -98,8 +98,8 @@ export async function createMediaUploadIntent({ store, config, actor, payload })
       : companion
         ? (companion.action === "record_audio" ? "companion_recording" : "companion_camera")
         : normalizeOwnerCaptureSource(payload?.captureSource, descriptor.kind),
-    environmentId: companion?.environmentId ?? null,
-    threadId: companion?.threadId ?? null,
+    environmentId: companion?.environmentId ?? (actor.type === "device" ? actor.environmentId ?? null : null),
+    threadId: companion?.threadId ?? (actor.type === "device" ? actor.threadId ?? null : null),
     companionHandoffId: companion?.id ?? null,
     createdAt,
     expiresAt,
