@@ -85,6 +85,10 @@ async function bootstrap() {
   const app = authConfig.clerk?.enabled && authConfig.clerk.publishableKey ? (
     <ClerkProvider
       publishableKey={authConfig.clerk.publishableKey}
+      // The Clerk instance may share a parent domain with a marketing site. OAuth must return
+      // to this console, including when it runs on a different deployment origin.
+      signInForceRedirectUrl={window.location.origin}
+      signUpForceRedirectUrl={window.location.origin}
       afterSignOutUrl="/"
       appearance={{
         // The console's palette is two tone, and the account surfaces Clerk

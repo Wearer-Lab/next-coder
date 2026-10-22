@@ -126,6 +126,10 @@ Auth mode comes from `AUTH_PROVIDER` (defaults to `clerk` if `CLERK_SECRET_KEY` 
 `POST /v1/users/dev` is hard-disabled; dev tokens only exist for tests and `DEMO_MODE=1`. `src/clerkAuth.mjs` adapts the
 raw `node:http` request into a WHATWG `Request` for `@clerk/backend` and caches user profiles for 5 minutes.
 
+The console pins Clerk's sign-in and sign-up return URLs to its current origin. The Clerk
+instance's dashboard defaults may point at the parent-domain marketing site, so relying on those
+defaults can send a successful OAuth flow away from the console. Keep deployment origins dynamic.
+
 `authenticateUser()` takes an optional `url` argument, which enables `?token=` query-string auth for endpoints the
 browser cannot send headers on (SSE). That path only applies in non-Clerk mode — in Clerk mode the same-origin session
 cookie is used and the query token is ignored.
