@@ -250,11 +250,11 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
               </div>
 
               <h1 className="landing__hero-title landing__reveal" style={revealStyle("0.1s")}>
-                Drive T3 Code from a controller, or from anywhere.
+                Drive all coding harnesses from anywhere using T3 Code.
               </h1>
 
               <p className="landing__lede landing__reveal" style={revealStyle("0.2s")}>
-                Next Coder is the control plane between you and the T3 Code environment on your
+                Next Coder is the control device between you and the T3 Code environment on your
                 own machine. It authenticates you, applies your policy, and dispatches the command. It
                 never runs the agent itself — your code and your models stay where they already are.
               </p>
