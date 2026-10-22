@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { createConvexStore, createConvexStoreAdapter } from "../src/convexStore.mjs";
+import { normalizeActionInput } from "../src/actions.mjs";
 
 test("Convex store adapter maps Store API calls to configured Convex functions", async () => {
   const calls = [];
@@ -798,4 +799,16 @@ test("authentication bookkeeping does not invalidate the console but product cha
   assert.deepEqual(changes, []);
   await store.updateUserOnboarding({ userId: "user_1", status: "completed" });
   assert.deepEqual(changes, [{ userId: "user_1", action: "updateUserOnboarding" }]);
+});
+
+test("an inherited saved action keeps explicit null targets at the Convex wire boundary", async () => {
+  let wire;
+  const store = createConvexStoreAdapter({ gatewaySecret: "fixture-secret", client: {
+    query: async () => null,
+    mutation: async (_name, args) => { wire = JSON.parse(JSON.stringify(args)); return { id: "action_fixture", userId: "user_fixture" }; },
+  } });
+  await store.createAction({ userId: "user_fixture", ...normalizeActionInput({ type: "prompt", label: "Verify", payload: { text: "Reply OK" }, targetMode: "device-current", environmentId: null, threadId: null }) });
+  assert.equal(wire.environmentId, null);
+  assert.equal(wire.threadId, null);
+  assert.deepEqual(wire.steps, []);
 });

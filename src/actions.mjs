@@ -25,10 +25,10 @@ export function normalizeActionInput(body, existing = null) {
     throw new HttpError(400, "targetMode must be device-current or fixed.");
   }
   const environmentId = Object.hasOwn(body, "environmentId")
-    ? optionalString(body.environmentId)
+    ? optionalString(body.environmentId) ?? null
     : existing?.environmentId ?? null;
   const threadId = Object.hasOwn(body, "threadId")
-    ? optionalString(body.threadId)
+    ? optionalString(body.threadId) ?? null
     : existing?.threadId ?? null;
   if (targetMode === "fixed" && !environmentId) {
     throw new HttpError(400, "A fixed action requires environmentId.");

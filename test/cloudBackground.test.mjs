@@ -281,3 +281,22 @@ async function freePort() {
   await new Promise((resolve) => server.close(resolve));
   return port;
 }
+
+test("Container shutdown closes an open SSE response before finishing", { timeout: 5000 }, async (t) => {
+  const runtime = await createContainerServers({
+    env: { DEPLOYMENT_ENVIRONMENT: "local", HOST: "127.0.0.1", PORT: "0", INTERNAL_HOST: "127.0.0.1", INTERNAL_PORT: String(await freePort()), STORAGE_PROVIDER: "memory", AUTH_PROVIDER: "dev", ENABLE_DEV_TOKENS: "1", DISCOVERY_ENABLED: "0", SNAPSHOT_POLL_ENABLED: "0", THREAD_STREAM_ENABLED: "0", TRANSCRIPTION_WORKER_ENABLED: "0" },
+    logger: { info() {}, error() {} },
+  });
+  const abort = new AbortController();
+  t.after(async () => { abort.abort(); await runtime.stop(); });
+  await runtime.start();
+  const origin = `http://127.0.0.1:${runtime.server.address().port}`;
+  const created = await (await fetch(origin + "/v1/users/dev", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: "shutdown_fixture", email: "fixture@example.test" }) })).json();
+  const response = await fetch(origin + "/v1/events", { headers: { authorization: `Bearer ${created.apiToken.secret}` }, signal: abort.signal });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/event-stream/u);
+  assert.ok((await response.body.getReader().read()).value.length > 0);
+  await runtime.stop();
+  assert.equal(runtime.server.listening, false);
+  assert.equal(runtime.internalServer.listening, false);
+});

@@ -230,7 +230,12 @@ function listen(server, port, host) {
 
 function close(server) {
   if (!server.listening) return Promise.resolve();
-  return new Promise((resolve) => server.close(() => resolve()));
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+    // SSE responses have no natural end. Drain the listeners, then close their sockets so a
+    // deployment SIGTERM cannot leave a live process with both gateway ports already closed.
+    server.closeAllConnections();
+  });
 }
 
 function parsePort(value, fallback, name) {
