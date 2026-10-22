@@ -51,10 +51,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     secondary:
       "border-control-strong bg-surface-raised text-ink hover:bg-surface-inset",
     ghost: "border-transparent bg-transparent text-ink-muted hover:bg-surface-inset hover:text-ink",
+    // The destructive action keeps a thin semantic accent instead of a filled
+    // slab of colour: the surface stays monochrome and the hairline plus the
+    // label still say "this one destroys something".
     danger:
-      "border-danger bg-danger text-white shadow-[0_8px_18px_rgb(179_60_52_/_14%)] hover:bg-danger-strong",
+      "border-danger bg-surface-inset text-danger-strong hover:border-danger hover:bg-danger/10",
     "danger-ghost":
-      "border-transparent bg-transparent text-danger hover:border-danger/20 hover:bg-danger/8",
+      "border-transparent bg-transparent text-danger-strong hover:border-danger/20 hover:bg-danger/8",
   };
   const sizes: Record<ButtonSize, string> = {
     sm: "min-h-8 px-3 text-xs",
@@ -188,7 +191,7 @@ export function StatusBadge({
     info: { shell: "border-info/20 bg-info/8 text-info-strong", dot: "bg-info" },
     success: { shell: "border-success/20 bg-success/8 text-success-strong", dot: "bg-success" },
     warning: { shell: "border-warning/20 bg-warning/8 text-warning-strong", dot: "bg-warning" },
-    danger: { shell: "border-danger/20 bg-danger/8 text-danger", dot: "bg-danger" },
+    danger: { shell: "border-danger/20 bg-danger/8 text-danger-strong", dot: "bg-danger" },
     live: { shell: "border-primary/20 bg-primary/8 text-primary", dot: "bg-primary" },
   };
   const config = tones[tone];
@@ -357,7 +360,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             aria-modal="true"
             aria-labelledby="confirm-title"
             aria-describedby="confirm-description"
-            className="w-full max-w-md rounded-xl border border-control bg-surface-raised p-5 shadow-[0_28px_80px_rgb(24_33_30_/_28%)]"
+            className="w-full max-w-md rounded-xl border border-control bg-surface-raised p-5 shadow-[0_28px_80px_rgb(0_0_0_/_28%)]"
           >
             <div className="flex gap-3">
               <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-danger/10 text-danger">

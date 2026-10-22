@@ -52,10 +52,32 @@ test("says what the product does before asking for an account", () => {
 // A self-hoster who has not finished wiring Clerk needs the reason. A sign-up button that
 // silently does nothing is the worst version of this screen.
 test("explains a gateway with no sign-in configured instead of showing a dead button", () => {
-  render(<LandingPage authConfig={{ clerk: { enabled: false, publishableKey: null } }} clerk={null} />);
+  render(
+    <LandingPage
+      authConfig={{ clerk: { enabled: false, publishableKey: null }, gatewayReachable: true }}
+      clerk={null}
+    />,
+  );
 
   expect(screen.getByText(/Sign-in is not configured/u)).toBeInTheDocument();
   expect(screen.getByText("CLERK_SECRET_KEY")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Create your account/u })).not.toBeInTheDocument();
+});
+
+// A gateway that could not answer is a different fact from a gateway with Clerk switched off.
+// The keys may be bound and the service behind them down, so the copy must not send the operator
+// to set environment variables that are already set.
+test("blames the deployment, not the keys, when the gateway did not answer", () => {
+  render(
+    <LandingPage
+      authConfig={{ clerk: { enabled: false, publishableKey: null }, gatewayReachable: false }}
+      clerk={null}
+    />,
+  );
+
+  expect(screen.getByText(/gateway is not answering/u)).toBeInTheDocument();
+  expect(screen.queryByText(/Sign-in is not configured/u)).not.toBeInTheDocument();
+  expect(screen.queryByText("CLERK_SECRET_KEY")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Create your account/u })).not.toBeInTheDocument();
 });
 

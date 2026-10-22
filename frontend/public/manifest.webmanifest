@@ -2,14 +2,14 @@
   "id": "/",
   "name": "Next Coder",
   "short_name": "Next Coder",
-  "description": "Operate remote coding agents, T3 Code environments, and physical controllers from one high-trust console.",
+  "description": "Remote control for your own coding agents: a browser console, a phone and a hardware controller, all driving the T3 Code environment that stays on your own machine.",
   "start_url": "/#quick",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
-  "theme_color": "#111211",
-  "background_color": "#111211",
+  "theme_color": "#070708",
+  "background_color": "#070708",
   "categories": ["developer", "productivity", "utilities"],
   "icons": [
     {

@@ -1,22 +1,31 @@
 #!/usr/bin/env node
-// Regenerates the PWA icon set in frontend/public/icons/.
+// Regenerates the PWA icon set and the social card in frontend/public/icons/.
 // Zero dependencies: rasterizes the brand mark by hand and writes PNGs with node:zlib.
 //
 //   node frontend/scripts/generate-icons.mjs
 //
-// The mark mirrors the in-app brand glyph (lucide TerminalSquare): a rounded square
-// with a lime chevron and prompt bar on the console-dark canvas.
+// The mark is the Next Coder prompt caret: a chevron and a cursor bar. Its
+// geometry lives in frontend/src/brandMark.json, which the console's <BrandMark>
+// component reads as well, so the installed icon and the in-app mark are the
+// same shape rather than two drawings that drifted apart.
+//
+// The set is monochrome: a black ground and a white glyph. Output is
+// deterministic — the same input always produces byte-identical PNGs.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 
-const outputDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "icons");
+const scriptDirectory = dirname(fileURLToPath(import.meta.url));
+const outputDir = join(scriptDirectory, "..", "public", "icons");
+const mark = JSON.parse(readFileSync(join(scriptDirectory, "..", "src", "brandMark.json"), "utf8"));
 
-const CANVAS = [0x11, 0x12, 0x11];
-const SURFACE = [0x1a, 0x1b, 0x1a];
-const PRIMARY = [0xa9, 0xe8, 0x5e];
+const GROUND = [0x00, 0x00, 0x00];
+const GLYPH = [0xff, 0xff, 0xff];
+
+/** The mark is authored on a 32 x 32 grid; the viewBox in brandMark.json says so too. */
+const MARK_UNITS = 32;
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -94,6 +103,20 @@ function cover(distance, feather) {
   return Math.min(1, Math.max(0, 0.5 - distance / feather));
 }
 
+/**
+ * The distance from a point to the mark's strokes, in the mark's own units.
+ * The chevron is two segments and the cursor bar is a third, each stroked with
+ * a round cap, which is exactly how the SVG in the console draws them.
+ */
+function markDistance(x, y) {
+  const half = mark.strokeWidth / 2;
+  const [tip, elbow, heel] = mark.chevron;
+  let distance = segment(x, y, tip[0], tip[1], elbow[0], elbow[1], half);
+  distance = Math.min(distance, segment(x, y, elbow[0], elbow[1], heel[0], heel[1], half));
+  distance = Math.min(distance, segment(x, y, mark.bar[0], mark.bar[1], mark.bar[2], mark.bar[3], half));
+  return distance;
+}
+
 function sample(u, v, options) {
   const feather = options.feather;
   const scale = options.contentScale;
@@ -104,23 +127,14 @@ function sample(u, v, options) {
   let pixel = [0, 0, 0, 0];
 
   if (options.fullBleed) {
-    pixel = over(pixel, CANVAS, 1);
+    pixel = over(pixel, GROUND, 1);
   } else {
     const outer = roundedRect(u, v, { x0: 0.06, y0: 0.06, x1: 0.94, y1: 0.94, r: 0.2 });
-    pixel = over(pixel, CANVAS, cover(outer, feather));
+    pixel = over(pixel, GROUND, cover(outer, feather));
   }
 
-  const plate = roundedRect(x, y, { x0: 0.24, y0: 0.24, x1: 0.76, y1: 0.76, r: 0.11 });
-  pixel = over(pixel, SURFACE, cover(plate, feather));
-  // Lime keyline around the terminal plate.
-  pixel = over(pixel, PRIMARY, cover(Math.abs(plate + 0.015) - 0.015, feather));
-
-  const chevron = Math.min(
-    segment(x, y, 0.375, 0.4, 0.5, 0.5, 0.028),
-    segment(x, y, 0.5, 0.5, 0.375, 0.6, 0.028),
-  );
-  pixel = over(pixel, PRIMARY, cover(chevron, feather));
-  pixel = over(pixel, PRIMARY, cover(segment(x, y, 0.545, 0.6, 0.64, 0.6, 0.028), feather));
+  const glyph = cover(markDistance(x * MARK_UNITS, y * MARK_UNITS) / MARK_UNITS, feather);
+  pixel = over(pixel, GLYPH, glyph);
 
   return pixel;
 }
@@ -158,6 +172,102 @@ function renderIcon(size, options) {
   return encodePng(size, size, rgba);
 }
 
+/* The social card ---------------------------------------------------------- */
+
+/*
+   The share card is the same mark on the same black ground, with the wordmark
+   set in the dot-matrix face the console and the marketing pages use. The face
+   is a five-by-seven pixel grid, so the wordmark is drawn as pixels too: no
+   font file, no dependency, and the card matches the product exactly.
+*/
+const PIXEL_FONT = {
+  N: ["10001", "11001", "11001", "10101", "10011", "10011", "10001"],
+  E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+  X: ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
+  T: ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
+  C: ["01110", "10001", "10000", "10000", "10000", "10001", "01110"],
+  O: ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
+  D: ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
+  R: ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
+  " ": ["00000", "00000", "00000", "00000", "00000", "00000", "00000"],
+};
+
+function wordmarkWidth(text, unit) {
+  return text.length * 6 * unit - unit;
+}
+
+function drawMark(rgba, width, height, originX, originY, size) {
+  // One output pixel of feather, expressed in the mark's own units.
+  const feather = MARK_UNITS / size;
+  for (let py = 0; py < size; py += 1) {
+    for (let px = 0; px < size; px += 1) {
+      const mx = ((px + 0.5) / size) * MARK_UNITS;
+      const my = ((py + 0.5) / size) * MARK_UNITS;
+      const coverage = cover(markDistance(mx, my), feather);
+      if (coverage <= 0) continue;
+      const x = originX + px;
+      const y = originY + py;
+      if (x < 0 || y < 0 || x >= width || y >= height) continue;
+      const offset = (y * width + x) * 4;
+      rgba[offset] = Math.round(rgba[offset] + (GLYPH[0] - rgba[offset]) * coverage);
+      rgba[offset + 1] = Math.round(rgba[offset + 1] + (GLYPH[1] - rgba[offset + 1]) * coverage);
+      rgba[offset + 2] = Math.round(rgba[offset + 2] + (GLYPH[2] - rgba[offset + 2]) * coverage);
+    }
+  }
+}
+
+function drawWordmark(rgba, width, height, text, originX, originY, unit) {
+  for (let index = 0; index < text.length; index += 1) {
+    const glyph = PIXEL_FONT[text[index]];
+    if (!glyph) continue;
+    for (let row = 0; row < glyph.length; row += 1) {
+      for (let column = 0; column < glyph[row].length; column += 1) {
+        if (glyph[row][column] !== "1") continue;
+        const x = originX + (index * 6 + column) * unit;
+        const y = originY + row * unit;
+        for (let dy = 0; dy < unit; dy += 1) {
+          for (let dx = 0; dx < unit; dx += 1) {
+            const px = x + dx;
+            const py = y + dy;
+            if (px < 0 || py < 0 || px >= width || py >= height) continue;
+            const offset = (py * width + px) * 4;
+            rgba[offset] = GLYPH[0];
+            rgba[offset + 1] = GLYPH[1];
+            rgba[offset + 2] = GLYPH[2];
+          }
+        }
+      }
+    }
+  }
+}
+
+function renderSocialCard(width, height) {
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let index = 0; index < width * height; index += 1) {
+    rgba[index * 4] = GROUND[0];
+    rgba[index * 4 + 1] = GROUND[1];
+    rgba[index * 4 + 2] = GROUND[2];
+    rgba[index * 4 + 3] = 255;
+  }
+
+  const markSize = Math.round(height * 0.36);
+  drawMark(rgba, width, height, Math.round((width - markSize) / 2), Math.round(height * 0.16), markSize);
+
+  const unit = Math.round(height * 0.026);
+  const text = "NEXT CODER";
+  drawWordmark(
+    rgba,
+    width,
+    height,
+    text,
+    Math.round((width - wordmarkWidth(text, unit)) / 2),
+    Math.round(height * 0.66),
+    unit,
+  );
+
+  return encodePng(width, height, rgba);
+}
+
 const targets = [
   { file: "icon-192.png", size: 192, options: { contentScale: 1, fullBleed: false } },
   { file: "icon-512.png", size: 512, options: { contentScale: 1, fullBleed: false } },
@@ -171,3 +281,6 @@ for (const target of targets) {
   writeFileSync(join(outputDir, target.file), renderIcon(target.size, target.options));
   process.stdout.write(`wrote ${target.file} (${target.size}x${target.size})\n`);
 }
+
+writeFileSync(join(outputDir, "social-card.png"), renderSocialCard(1200, 630));
+process.stdout.write("wrote social-card.png (1200x630)\n");

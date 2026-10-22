@@ -1244,19 +1244,21 @@
     padding: 0.6rem 0.9rem;
   }
 
+  /* The window chrome is decoration, not state: three greys read as a
+     terminal bar without putting a colour on the page. */
   .devland__dot {
     width: 0.55rem;
     height: 0.55rem;
     border-radius: 999px;
-    background: #ef4444;
+    background: #4a4a4a;
   }
 
   .devland__dot[data-tone="warning"] {
-    background: #f5b544;
+    background: #6b6b6b;
   }
 
   .devland__dot[data-tone="success"] {
-    background: #4ade80;
+    background: #9a9a9a;
   }
 
   .devland__terminal-title {
@@ -1308,12 +1310,14 @@
     color: #ffffff;
   }
 
+  /* The transcript markers are ink, not a hue: the arrow recedes, the tick
+     is the brightest thing on the line. */
   .devland__arrow {
-    color: #b7a8ff;
+    color: var(--ld-muted);
   }
 
   .devland__ok {
-    color: #4ade80;
+    color: #ffffff;
   }
 
   .devland__pipeline {
@@ -1359,7 +1363,7 @@
   .devland__pipeline code {
     font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.68rem;
-    color: #b7a8ff;
+    color: #ffffff;
     white-space: nowrap;
   }
 

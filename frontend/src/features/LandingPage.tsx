@@ -2,7 +2,6 @@ import {
   Boxes,
   Cable,
   Check,
-  CircleAlert,
   Cpu,
   GalleryVerticalEnd,
   KeyRound,
@@ -18,6 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { BrandMark } from "../brandMark";
 import type { AuthConfig, ClerkBridge } from "../types";
 import {
   LandingBackdrop,
@@ -29,6 +29,7 @@ import {
   TrustRow,
   revealStyle,
 } from "./landingChrome";
+import { SignInNotice, signInAvailability } from "./signInNotice";
 
 interface LandingPageProps {
   authConfig: AuthConfig;
@@ -197,7 +198,8 @@ const faq = [
  * with nothing explaining what the product was or what signing in would get them.
  */
 export function LandingPage({ authConfig, clerk }: LandingPageProps) {
-  const clerkReady = Boolean(authConfig.clerk?.enabled && clerk);
+  const signIn = signInAvailability(authConfig, clerk);
+  const clerkReady = signIn === "ready";
   const checkingSession = clerkReady && !clerk?.loaded;
 
   const headerActions = clerkReady ? (
@@ -222,17 +224,13 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
       </LandingButton>
     </div>
   ) : (
-    // A self-hoster who has not finished wiring Clerk needs the reason, not a dead button.
-    <div className="landing__notice landing__reveal" style={revealStyle("0.28s")} role="status">
-      <CircleAlert className="size-4 shrink-0" aria-hidden="true" />
-      <div>
-        <p className="font-semibold">Sign-in is not configured on this gateway.</p>
-        <p className="mt-1 text-xs leading-relaxed">
-          Set <code>CLERK_PUBLISHABLE_KEY</code> and <code>CLERK_SECRET_KEY</code> in the gateway
-          environment, then restart the service.
-        </p>
-      </div>
-    </div>
+    // A self-hoster who has not finished wiring Clerk needs the reason, not a dead button — and
+    // a gateway that did not answer needs a different reason, because its keys may be fine.
+    <SignInNotice
+      availability={signIn}
+      className="landing__reveal"
+      style={revealStyle("0.28s")}
+    />
   );
 
   return (
@@ -460,7 +458,7 @@ export function LandingPage({ authConfig, clerk }: LandingPageProps) {
         <div className="landing__inner landing__footer-inner">
           <div className="landing__footer-brand">
             <div className="brand-mark brand-mark--muted" aria-hidden="true">
-              <TerminalSquare className="size-3.5" />
+              <BrandMark className="size-3.5" />
             </div>
             <span>Next Coder · self-hostable gateway · MIT firmware</span>
           </div>

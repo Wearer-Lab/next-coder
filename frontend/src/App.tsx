@@ -38,6 +38,7 @@ import {
 } from "react";
 
 import { connectionActivity, refreshActivity } from "./activity";
+import { BrandMark } from "./brandMark";
 import { type ClaimLink, readClaimLink } from "./claimLink";
 import { readCompanionCode } from "./companionLink";
 import { connectorForEnvironment } from "./connectorHealth";
@@ -561,7 +562,7 @@ function AppContent({ authConfig, clerk = null }: AppProps) {
       >
         <div className="sidebar__brand">
           <div className="brand-mark" aria-hidden="true">
-            <TerminalSquare className="size-4" />
+            <BrandMark className="size-4" />
           </div>
           <div className="brand-copy">
             <p className="brand-copy__name">Next Coder</p>

@@ -1,4 +1,4 @@
-import { CircleAlert, LogIn, Radio, ShieldCheck, Smartphone, Sparkles } from "lucide-react";
+import { LogIn, Radio, ShieldCheck, Smartphone, Sparkles } from "lucide-react";
 
 import type { AuthConfig, ClerkBridge } from "../types";
 import {
@@ -8,6 +8,7 @@ import {
   Shot,
   marketingPageLinks,
 } from "./landingChrome";
+import { SignInNotice, signInAvailability } from "./signInNotice";
 
 interface DeveloperLandingPageProps {
   authConfig: AuthConfig;
@@ -92,7 +93,8 @@ function SetupTranscript() {
  * with the setup transcript instead of a product shot, and holds the account CTA to the end.
  */
 export function DeveloperLandingPage({ authConfig, clerk }: DeveloperLandingPageProps) {
-  const clerkReady = Boolean(authConfig.clerk?.enabled && clerk);
+  const signIn = signInAvailability(authConfig, clerk);
+  const clerkReady = signIn === "ready";
   const checkingSession = clerkReady && !clerk?.loaded;
 
   const accountActions = clerkReady ? (
@@ -106,16 +108,9 @@ export function DeveloperLandingPage({ authConfig, clerk }: DeveloperLandingPage
       </LandingButton>
     </div>
   ) : (
-    <div className="landing__notice" role="status">
-      <CircleAlert className="size-4 shrink-0" aria-hidden="true" />
-      <div>
-        <p className="font-semibold">Sign-in is not configured on this gateway.</p>
-        <p className="mt-1 text-xs leading-relaxed">
-          Set <code>CLERK_PUBLISHABLE_KEY</code> and <code>CLERK_SECRET_KEY</code> in the gateway
-          environment, then restart the service.
-        </p>
-      </div>
-    </div>
+    // No account door on this page. The reason is stated, and a gateway that did not answer gets
+    // its own reason rather than being told its Clerk keys are missing.
+    <SignInNotice availability={signIn} />
   );
 
   return (

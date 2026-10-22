@@ -28,6 +28,15 @@ export interface AuthConfig {
     enabled?: boolean;
     publishableKey?: string | null;
   };
+  /**
+   * Console-only. The gateway never sends this: the bootstrap fetch sets it.
+   *
+   * `false` means the console could not get an answer out of the gateway at all — a 5xx, a
+   * network failure, or a timeout. That is a different fact from "the gateway answered and
+   * Clerk is switched off", and the signed-out pages have to say so in different words.
+   * Absent means the gateway answered and the copy may speak about its configuration.
+   */
+  gatewayReachable?: boolean;
 }
 
 export interface RemoteAccessStatus {

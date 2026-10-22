@@ -1,0 +1,9 @@
+# Next Coder — the signed-out front door may be indexed; the control plane may not.
+#
+# The product is one single-page app: the marketing pages are hash routes under
+# "/", and the console behind the sign-in is not a crawlable document. The API
+# and the device claim link are never content.
+User-agent: *
+Allow: /
+Disallow: /v1/
+Disallow: /claim

@@ -74,3 +74,17 @@ test("sends someone who wants software today to the console", () => {
   fireEvent.click(screen.getByRole("button", { name: /Use the console instead/u }));
   expect(clerk.openSignUp).toHaveBeenCalled();
 });
+
+// The console path on this page ends in an account, so when the gateway cannot answer, the page
+// has to say so rather than pointing at a door that is not there.
+test("explains a gateway that did not answer instead of implying sign-in is unconfigured", () => {
+  render(
+    <HardwareLandingPage
+      authConfig={{ clerk: { enabled: false, publishableKey: null }, gatewayReachable: false }}
+      clerk={null}
+    />,
+  );
+
+  expect(screen.getByText(/gateway is not answering/u)).toBeInTheDocument();
+  expect(screen.queryByText(/Sign-in is not configured/u)).not.toBeInTheDocument();
+});

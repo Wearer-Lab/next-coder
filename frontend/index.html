@@ -3,12 +3,48 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- The product: remote control for the coding agents you already run. The
+         description says exactly what Next Coder is and where the agent stays;
+         it makes no claim about user numbers, customers or speed. -->
+    <title>Next Coder — remote control for your own coding agents</title>
     <meta
       name="description"
-      content="Operate remote coding agents, T3 Code environments, and physical controllers from one high-trust console."
+      content="Next Coder gives you remote control of your own coding agents: a browser console, a phone and a hardware controller, all driving the T3 Code environment that stays on your own machine."
     />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f4f2" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111211" />
+    <!-- The console is deployed at the origin's root, so the canonical URL is
+         the origin itself. `vite-ignore` keeps the bundler from trying to
+         resolve "/" as a build asset. -->
+    <link rel="canonical" href="/" vite-ignore />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Next Coder" />
+    <meta property="og:title" content="Next Coder — remote control for your own coding agents" />
+    <meta
+      property="og:description"
+      content="Next Coder gives you remote control of your own coding agents: a browser console, a phone and a hardware controller, all driving the T3 Code environment that stays on your own machine."
+    />
+    <meta property="og:url" content="/" />
+    <meta property="og:image" content="/icons/social-card.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Next Coder" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Next Coder — remote control for your own coding agents" />
+    <meta
+      name="twitter:description"
+      content="Next Coder gives you remote control of your own coding agents: a browser console, a phone and a hardware controller, all driving the T3 Code environment that stays on your own machine."
+    />
+    <meta name="twitter:image" content="/icons/social-card.png" />
+    <meta name="twitter:image:alt" content="Next Coder" />
+
+    <!-- The palette is two tone: a black ground and white ink. The theme colour
+         follows the console's canvas token so the browser chrome never fights
+         the page. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f3" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070708" />
     <meta name="color-scheme" content="dark light" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -16,8 +52,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <title>Next Coder</title>
   </head>
   <body>
     <div id="root"></div>

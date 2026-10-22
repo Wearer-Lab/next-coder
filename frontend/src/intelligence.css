@@ -10,7 +10,9 @@
 
      1. the palette, as token overrides on the existing --ac-* scale, so every
         component that already reads a token follows the redesign without
-        being touched;
+        being touched. The palette is two tone — black ground, white ink, greys
+        for hierarchy — plus a closed set of semantic tones that only ever
+        appear on a badge, a dot or an error line;
      2. the shared primitives the workspaces compose from;
      3. the pixel display face, which the marketing pages also use.
 
@@ -28,6 +30,20 @@
 
 /* The palette ------------------------------------------------------------- */
 
+/*
+   Two tone, one ground.
+   ---------------------
+   The console is black and white. There is no brand hue left: the accent, the
+   focus ring, the live indicator, the selected state and the link colour are
+   all the same ink, and the greys carry the hierarchy.
+
+   The only colour that survives is a small, closed set of *semantic* tones. A
+   failed command, a revoked device, an unreachable environment and a pending
+   approval must never look like ordinary text, so those states keep a thin
+   accent on a badge, a dot or an error line. Nothing else may use them, and
+   they are muted so the page still reads as monochrome at a glance.
+*/
+
 :root {
   --ac-canvas: #070708;
   --ac-surface: #0e0f11;
@@ -41,8 +57,9 @@
   --ac-primary: #ffffff;
   --ac-primary-hover: #e6e6e4;
   --ac-primary-foreground: #0a0a0b;
-  --ac-accent: #b7a8ff;
-  --ac-focus: #b7a8ff;
+  /* The brand signal is ink, not a hue. */
+  --ac-accent: #ffffff;
+  --ac-focus: #ffffff;
   --ac-console: #050506;
   --ac-console-ink: #f2f2f0;
   --ac-console-muted: #8b8b8f;
@@ -57,6 +74,18 @@
   --ac-pill: #28282a;
   --ac-pill-hover: #323234;
   --ac-display: "Pixelify Sans", "Barlow", ui-monospace, monospace;
+
+  /* Semantic state — the only colour in the console.
+     `info` is deliberately grey: "informational" is not a state that needs a
+     hue, and a blue would put a fourth colour on the page. */
+  --ac-info: #7f7f84;
+  --ac-info-strong: #b9b9bd;
+  --ac-success: #63a883;
+  --ac-success-strong: #8fc2a5;
+  --ac-warning: #c99a52;
+  --ac-warning-strong: #dfbc85;
+  --ac-danger: #d95f57;
+  --ac-danger-strong: #eb9189;
 }
 
 html:not(.dark)[data-theme="light"] {
@@ -72,6 +101,9 @@ html:not(.dark)[data-theme="light"] {
   --ac-primary: #101012;
   --ac-primary-hover: #2a2a30;
   --ac-primary-foreground: #ffffff;
+  /* On a pale ground the brand signal is the darkest ink, not white. */
+  --ac-accent: #101012;
+  --ac-focus: #101012;
   --ac-sidebar: #efefed;
   --ac-sidebar-ink: #17171a;
   --ac-sidebar-muted: #6d6d72;
@@ -80,6 +112,17 @@ html:not(.dark)[data-theme="light"] {
   --ac-glass-strong: rgb(12 12 16 / 6%);
   --ac-pill: #e6e6e3;
   --ac-pill-hover: #dcdcd8;
+
+  /* The semantic set inverts with the theme: on white, the tone has to be
+     dark enough to carry the same reading. */
+  --ac-info: #5c5c63;
+  --ac-info-strong: #3d3d43;
+  --ac-success: #2f7350;
+  --ac-success-strong: #1f5c3f;
+  --ac-warning: #8a6524;
+  --ac-warning-strong: #6b4d18;
+  --ac-danger: #b23a33;
+  --ac-danger-strong: #8c2a25;
 }
 
 @layer components {

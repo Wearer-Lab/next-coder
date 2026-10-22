@@ -1,4 +1,4 @@
-import { LoaderCircle, TerminalSquare, type LucideIcon } from "lucide-react";
+import { LoaderCircle, type LucideIcon } from "lucide-react";
 import {
   useEffect,
   useRef,
@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { BrandMark } from "../brandMark";
 import type { MarketingRoute } from "../marketingRoute";
 import "./landing.css";
 
@@ -145,7 +146,7 @@ export function LandingNav({
     <header className="landing__bar">
       <div className="landing__bar-inner">
         <a className="landing__logo" href={brandHref} aria-label={brandLabel}>
-          <TerminalSquare className="landing__logo-glyph" aria-hidden="true" />
+          <BrandMark className="landing__logo-glyph" />
         </a>
 
         <nav className="landing__pill" aria-label="Page sections">
@@ -276,7 +277,7 @@ export function LandingBrand({ badge = "NIGHTLY" }: { badge?: string | null }) {
   return (
     <div className="landing__brand">
       <div className="brand-mark brand-mark--muted" aria-hidden="true">
-        <TerminalSquare className="size-3.5" />
+        <BrandMark className="size-3.5" />
       </div>
       <div className="brand-copy">
         <p className="brand-copy__name">Next Coder</p>

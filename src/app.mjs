@@ -8227,7 +8227,7 @@ function deviceThreadStatus(thread) {
 }
 
 // sw.js must stay at the root so the service worker's scope covers the whole app.
-const WEB_STATIC_FILES = new Set(["/manifest.webmanifest", "/sw.js"]);
+const WEB_STATIC_FILES = new Set(["/manifest.webmanifest", "/sw.js", "/robots.txt"]);
 
 // SPA routes that must fall back to index.html. /claim is where a scanned device QR lands.
 const WEB_APP_ROUTES = new Set(["/claim"]);
@@ -8277,6 +8277,8 @@ function contentTypeFor(filePath) {
       return "text/javascript; charset=utf-8";
     case ".json":
       return "application/json; charset=utf-8";
+    case ".txt":
+      return "text/plain; charset=utf-8";
     case ".webmanifest":
       return "application/manifest+json";
     case ".ico":

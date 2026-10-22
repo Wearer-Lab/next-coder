@@ -43,9 +43,29 @@ test("offers the account CTA in both the hero and the closing section", () => {
 });
 
 test("explains a gateway with no sign-in configured instead of showing a dead button", () => {
-  render(<DeveloperLandingPage authConfig={{ clerk: { enabled: false, publishableKey: null } }} clerk={null} />);
+  render(
+    <DeveloperLandingPage
+      authConfig={{ clerk: { enabled: false, publishableKey: null }, gatewayReachable: true }}
+      clerk={null}
+    />,
+  );
 
   expect(screen.getAllByText(/Sign-in is not configured/u).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("button", { name: /Create your account/u })).not.toBeInTheDocument();
+});
+
+// The gateway answering with an error is not the gateway saying "no sign-in here". The two states
+// get different copy, so an operator is not sent to set keys that are already bound.
+test("blames the deployment, not the keys, when the gateway did not answer", () => {
+  render(
+    <DeveloperLandingPage
+      authConfig={{ clerk: { enabled: false, publishableKey: null }, gatewayReachable: false }}
+      clerk={null}
+    />,
+  );
+
+  expect(screen.getAllByText(/gateway is not answering/u).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/Sign-in is not configured/u)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Create your account/u })).not.toBeInTheDocument();
 });
 

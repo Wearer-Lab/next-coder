@@ -20,6 +20,7 @@ import {
   Shot,
   marketingPageLinks,
 } from "./landingChrome";
+import { SignInNotice, signInAvailability } from "./signInNotice";
 
 interface HardwareLandingPageProps {
   authConfig: AuthConfig;
@@ -152,7 +153,8 @@ function RequestUnitForm({ onRequestUnit }: { onRequestUnit?: (email: string) =>
  * account. Someone who wants software today is pointed at the console section at the bottom.
  */
 export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: HardwareLandingPageProps) {
-  const clerkReady = Boolean(authConfig.clerk?.enabled && clerk);
+  const signIn = signInAvailability(authConfig, clerk);
+  const clerkReady = signIn === "ready";
   const checkingSession = clerkReady && !clerk?.loaded;
 
   return (
@@ -251,6 +253,8 @@ export function HardwareLandingPage({ authConfig, clerk, onRequestUnit }: Hardwa
                   See how the console works
                 </a>
               )}
+              {/* Without an account door the console path is a dead end, so the reason is stated. */}
+              {clerkReady ? null : <SignInNotice availability={signIn} />}
             </div>
             <div className="hardland__box">
               <p className="eyebrow">What ships in the box</p>

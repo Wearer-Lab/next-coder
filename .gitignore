@@ -13,12 +13,13 @@ firmware/*/include/controller_config*
 .wrangler/
 cloudflare/.wrangler/
 cloudflare-control-plane/.wrangler/
-.env
+
 .DS_Store
 coverage/
 dist/
 *.log
 
+.env
 .env.local
 .env.prod
 

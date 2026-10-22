@@ -15,17 +15,43 @@ import "./styles.css";
 // primitives win over the legacy sheet on equal specificity.
 import "./intelligence.css";
 
+/**
+ * How long the console waits for the gateway's auth configuration before it gives up and says the
+ * gateway is not answering. A gateway that never replies must not leave the front door spinning
+ * forever.
+ */
+const AUTH_CONFIG_TIMEOUT_MS = 8_000;
+
+/**
+ * The configuration used when the gateway could not be asked at all.
+ *
+ * `gatewayReachable: false` is the whole point: the console did not receive a configuration, so
+ * it must not claim that the gateway has no sign-in configured. The keys may be present and the
+ * service behind them may simply be down.
+ */
+function unreachableAuthConfig(): AuthConfig {
+  return {
+    authProvider: "clerk",
+    developmentTokens: { enabled: false },
+    clerk: { enabled: false, publishableKey: null },
+    gatewayReachable: false,
+  };
+}
+
 async function loadAuthConfig(): Promise<AuthConfig> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTH_CONFIG_TIMEOUT_MS);
   try {
-    const response = await fetch("/v1/auth/config");
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json() as AuthConfig;
+    const response = await fetch("/v1/auth/config", { signal: controller.signal });
+    // A non-2xx answer is not a configuration. The gateway refused or failed to produce one, and
+    // that is an availability problem, not a statement about Clerk.
+    if (!response.ok) return unreachableAuthConfig();
+    return { ...(await response.json() as AuthConfig), gatewayReachable: true };
   } catch {
-    return {
-      authProvider: "clerk",
-      developmentTokens: { enabled: false },
-      clerk: { enabled: false, publishableKey: null },
-    };
+    // Network failure or timeout: the gateway never answered.
+    return unreachableAuthConfig();
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -61,19 +87,21 @@ async function bootstrap() {
       publishableKey={authConfig.clerk.publishableKey}
       afterSignOutUrl="/"
       appearance={{
+        // The console's palette is two tone, and the account surfaces Clerk
+        // renders are part of it: black ground, white ink, greys for the rest.
         variables: {
-          colorPrimary: "#4f8f80",
-          colorPrimaryForeground: "#f7fbf9",
-          colorForeground: "#f2f5f4",
-          colorMutedForeground: "#98a29f",
-          colorBackground: "#171a19",
-          colorMuted: "#202523",
-          colorInput: "#111412",
-          colorInputForeground: "#f2f5f4",
-          colorNeutral: "#f2f5f4",
-          colorBorder: "#343a38",
-          colorRing: "#77a99c",
-          colorModalBackdrop: "#080a09",
+          colorPrimary: "#ffffff",
+          colorPrimaryForeground: "#0a0a0b",
+          colorForeground: "#f2f2f0",
+          colorMutedForeground: "#9b9b9e",
+          colorBackground: "#0e0f11",
+          colorMuted: "#141518",
+          colorInput: "#0a0a0b",
+          colorInputForeground: "#f2f2f0",
+          colorNeutral: "#f2f2f0",
+          colorBorder: "#2a2a30",
+          colorRing: "#ffffff",
+          colorModalBackdrop: "#070708",
           borderRadius: "0.625rem",
         },
       }}
