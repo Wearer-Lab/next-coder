@@ -89,6 +89,9 @@ export class ConnectorClient {
         heartbeatTimer = null;
         this.closeSubscriptions();
         if (this.socket === socket) this.socket = null;
+        if (error) {
+          try { socket.close(1011, "connection failed"); } catch {}
+        }
         if (error) reject(error); else resolve({ shutdownReason });
       };
       socket.addEventListener("open", () => {
@@ -100,8 +103,9 @@ export class ConnectorClient {
       socket.addEventListener("message", (event) => {
         void this.onMessage(socket, event.data).then((result) => {
           if (result?.shutdown) shutdownReason = result.shutdown;
-          if (result?.welcome) {
+          if (result?.welcome && !welcomed) {
             welcomed = true;
+            clearTimeout(welcomeTimer);
             this.connectionId = result.frame.connectionId || sessionId;
             this.state.lastConnectedAt = new Date().toISOString();
             this.state.lastConnectionError = null;

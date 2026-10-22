@@ -1531,7 +1531,7 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
     const activeLoad = Promise.all([
       selectedIsFresh
         ? loadHarnesses(selectedEnvironmentId).then(() => undefined)
-        : loadSnapshot(selectedEnvironmentId).then(() => undefined),
+        : loadSnapshotRef.current!(selectedEnvironmentId).then(() => undefined),
       loadCapabilities(selectedEnvironmentId).then(() => undefined),
     ]);
 
@@ -1561,7 +1561,6 @@ export function useController({ authConfig, clerk }: UseControllerOptions) {
     environmentBatchKey,
     loadHarnesses,
     loadCapabilities,
-    loadSnapshot,
     prefetchWorkspaces,
     selectedEnvironmentId,
   ]);

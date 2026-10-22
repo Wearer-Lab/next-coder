@@ -215,6 +215,33 @@ test("cloud welcome produces heartbeat and graceful once shutdown", async () => 
   assert.ok(rotatingState.credentialRotation.acknowledgedAt);
 });
 
+test("a welcomed cloud socket stays online beyond the handshake deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  let socket;
+  class MockSocket extends EventTarget {
+    constructor() { super(); socket = this; this.sent = []; queueMicrotask(() => this.dispatchEvent(new Event("open"))); }
+    send(value) {
+      this.sent.push(JSON.parse(value));
+      if (this.sent.at(-1).type === "hello") queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ protocolVersion: 1, type: "welcome", connectionId: "healthy", body: { serverTime: new Date().toISOString(), heartbeatIntervalMs: 1000, maxFrameBytes: 1048576, maxInFlight: 32 } }) })));
+    }
+    close(code = 1000) { queueMicrotask(() => this.dispatchEvent(new CloseEvent("close", { code }))); }
+  }
+  const connector = new ConnectorClient({ state: { ...state }, t3: stubT3(), WebSocketImpl: MockSocket,
+    fetchImpl: async () => Response.json({ ticket: "fixture-ticket" }), logger: quietLogger });
+  let welcome;
+  const welcomed = new Promise((resolve) => { welcome = resolve; });
+  let failure = null;
+  const connection = connector.connectOnce({ onWelcome: welcome }).catch((error) => { failure = error; });
+  await welcomed;
+  t.mock.timers.tick(20_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(failure, null);
+  assert.equal(connector.socket, socket);
+  assert.ok(socket.sent.filter((frame) => frame.type === "heartbeat").length >= 2);
+  connector.stop();
+  await connection;
+});
+
 test("cloud deployment close reconnects with a new ticket", async () => {
   let created = 0;
   class MockSocket extends EventTarget {

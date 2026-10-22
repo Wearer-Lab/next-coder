@@ -132,6 +132,9 @@ raw `node:http` request into a WHATWG `Request` for `@clerk/backend` and caches 
 The console pins Clerk's sign-in and sign-up return URLs to its current origin. The Clerk
 instance's dashboard defaults may point at the parent-domain marketing site, so relying on those
 defaults can send a successful OAuth flow away from the console. Keep deployment origins dynamic.
+Selected-workspace loading uses `loadSnapshotRef` so capability/presence updates cannot change its
+effect dependency and trigger another capabilities request. Key automatic reads to environment
+identity/status changes, not the projection objects those reads update.
 
 `authenticateUser()` takes an optional `url` argument, which enables `?token=` query-string auth for endpoints the
 browser cannot send headers on (SSE). That path only applies in non-Clerk mode — in Clerk mode the same-origin session
