@@ -59,13 +59,13 @@ constexpr uint32_t kRecoveryHoldMs = 10000;
 // The "intelligence design" palette, in the RGB565 words the ST7789 speaks. A black ground,
 // white ink, one lilac accent, and muted greys that carry every other distinction.
 //
-// The accent is the ONLY chromatic signal on the screen. It marks the live target, the active
-// row and the cursor, exactly the way the console's accent marks its live pill. Everything that
-// used to be a vendor colour - cyan titles, yellow state, blue rules, green body - collapses into
-// ink or grey, so the lilac is always the thing the eye lands on. Failures keep a semantic red:
-// a monochrome screen must never hide an error.
+// The palette is two tone: a black ground, white ink, and greys for hierarchy. The accent is the
+// ONE thing on the screen that matters, so it is the brightest ink rather than a colour - exactly
+// what the console does now that its own accent was folded back into ink. Everything that used to
+// be a vendor colour - cyan titles, yellow state, blue rules, green body - collapses into ink or
+// grey. Failures keep a semantic red: a monochrome screen must never hide an error.
 constexpr uint16_t kInk = ST77XX_WHITE;   // #ffffff, the console's --ac-ink
-constexpr uint16_t kAccent = 0xB55F;      // #b7a8ff, the console's --ac-accent
+constexpr uint16_t kAccent = 0xFFFF;      // white, the console's accent after the two-tone pass
 constexpr uint16_t kMuted = 0x9CD3;       // #9b9b9e, the console's --ac-ink-muted
 constexpr uint16_t kFaint = 0x6B4D;       // #6b6b6f, the console's --ac-ink-faint
 constexpr uint16_t kDanger = 0xE30D;      // #e2616e, the console's --ac-danger

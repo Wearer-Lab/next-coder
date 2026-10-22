@@ -54,12 +54,14 @@ inline uint16_t greyRgb(uint8_t g) {
   return (uint16_t)(((g & 0xF8) << 8) | ((g & 0xFC) << 3) | (g >> 3));
 }
 
-// The design system's accent: #b7a8ff, the same violet the console spends on its live state.
+// The design system is two tone: a black ground, white ink, and greys for hierarchy. The device
+// follows the same rule as the console, so the ONE thing on the screen that matters is the
+// brightest ink rather than a colour.
 //
-// 0xB55F is that colour in RGB565 (r5 = 22, g6 = 42, b5 = 31). It is the device's ONE chromatic
-// signal: the panel is otherwise monochrome on black, so anything violet on the glass is telling
-// the truth about state rather than decorating the screen.
-constexpr uint16_t kAccentRgb = 0xB55F;
+// 0xFFFF is white in RGB565. Text drawn on an accent-filled shape is cut out in the ground colour,
+// so a filled accent shape reads as a white pill with black type — the console's primary call to
+// action, on glass.
+constexpr uint16_t kAccentRgb = 0xFFFF;
 
 // The accent as bytes for the panel.
 inline uint16_t panelAccent() { return panelRgb(kAccentRgb); }
