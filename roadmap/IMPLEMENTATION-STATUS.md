@@ -34,8 +34,13 @@ September workstream tables remain the baseline for gates not explicitly superse
   `a96f65a`; **1,469 tests** pass, exact source CI `39904691295` is green, and all **15 firmware
   environments** compile. Secure Hosyond **0.2.18** was flashed and hash-verified, preserving
   NVS/OTA selection. It is online; a fresh physical voice/display test is requested.
-  Windows/Linux clean-host and hardware qualification remain
-  unverified. The bundled Parakeet checkpoint is English only.
+  Windows and Linux x64 execution plus further hardware qualification remain unverified.
+  The bundled Parakeet checkpoint is English only.
+- The exact release tarball also passed native Linux ARM64 execution in a disposable Node 22
+  container: fresh private Python/dependencies and an owned sidecar became ready in **9,936 ms**;
+  a synthetic 5.615-second clip returned HTTP 200 with **240 ms** inference. Verified public model
+  bytes were pre-copied, so this excludes model download time. The owned sidecar/container were
+  removed; this is software proof, not physical microphone or Linux desktop-service proof.
 - The user selected the existing npm organization `wearer-haitch`; the package and onboarding
   command now use `@wearer-haitch/connector`. The protected release candidate for `connector-v0.1.0`
   passed verification and its downloaded artifact hash was revalidated. First owner-bootstrap
