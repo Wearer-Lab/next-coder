@@ -3,7 +3,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { main } from "../src/cli.mjs";
+import { main as realMain } from "../src/cli.mjs";
 import { loadState, removeState, saveRuntimeState, saveState, STATE_VERSION } from "../src/config.mjs";
 import { CREDENTIAL_SERVICE, createCredentialStore, credentialAccounts, LEGACY_CREDENTIAL_SERVICE, runCredentialCommand } from "../src/credentialStore.mjs";
 
@@ -265,3 +265,5 @@ function memoryStore({ failWrite = false } = {}) {
 
 function ok(stdout = "") { return { code: 0, stdout, stderr: "" }; }
 function capture() { let value = ""; return { write(chunk) { value += chunk; }, value() { return value; }, clear() { value = ""; } }; }
+
+function main(args, dependencies = {}) { return realMain(args, { inspectVoiceRuntime: async () => ({ ready: true }), prepareVoiceRuntime: async () => ({ url: "http://127.0.0.1:8977/v1/transcribe", close: async () => {}, ensureReady: async () => {} }), ...dependencies }); }

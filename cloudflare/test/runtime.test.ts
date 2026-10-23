@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { evictDurableObject, reset, runDurableObjectAlarm } from "cloudflare:test";
+import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { RuntimeBindings } from "../src/env";
@@ -13,6 +13,60 @@ afterEach(async () => {
 });
 
 describe("Cloudflare connector runtime", () => {
+  it("routes scoped ASR privately, strips diagnostics, and loses only ephemeral text when transient memory is discarded", async () => {
+    const { socket, welcome } = await connectSocket("connector_asr", "environment_asr", ["t3:proxy", "media.transcribe"]);
+    const request = { connectorId: "connector_asr", requestId: "request_asr_12345", idempotencyKey: "media-transcribe:job_fixture:1",
+      method: "media.transcribe", payload: { jobId: "job_fixture", mediaId: "media_fixture" } };
+    const routedPromise = nextMessage(socket);
+    expect((await internalFetch("environment_asr", "/requests", { method: "POST", body: JSON.stringify(request) })).status).toBe(202);
+    const routed = await routedPromise as CloudRequestFrame;
+    expect(routed.body.payload).toEqual(request.payload);
+    const pendingResult = internalFetch("environment_asr", `/requests/${request.requestId}?waitMs=1000`);
+    socket.send(JSON.stringify({ protocolVersion: 1, type: "response.completed", connectionId: welcome.connectionId,
+      body: { requestId: request.requestId, completedAt: new Date().toISOString(),
+        result: { text: "fixture private ASR text", model: "parakeet-local", language: "en", durationMs: 1200,
+          debug: "private provider diagnostics", token: "private-token", timings: { raw: "private" } } } }));
+    await expect((await pendingResult).json()).resolves.toMatchObject({ status: "completed",
+      result: { text: "fixture private ASR text", model: "parakeet-local", language: "en", durationMs: 1200 } });
+    const duplicate = await (await internalFetch("environment_asr", "/requests", { method: "POST", body: JSON.stringify(request) })).json() as { result: unknown };
+    expect(duplicate.result).toEqual({ text: "fixture private ASR text", model: "parakeet-local", language: "en", durationMs: 1200 });
+    expect((await internalFetch("environment_other", `/requests/${request.requestId}`)).status).toBe(404);
+    const hub = bindings.ENVIRONMENT_CONNECTOR_HUB.get(bindings.ENVIRONMENT_CONNECTOR_HUB.idFromName("environment_asr"));
+    const durable = await runInDurableObject(hub, async (instance, state) => {
+      const stored = await state.storage.list();
+      (instance as unknown as { mediaResults: Map<string, unknown> }).mediaResults.clear();
+      return JSON.stringify([...stored]);
+    });
+    expect(durable).not.toContain("fixture private ASR text");
+    expect(durable).not.toContain("private provider diagnostics");
+    const lost = await (await internalFetch("environment_asr", `/requests/${request.requestId}`)).json();
+    expect(lost).toMatchObject({ status: "failed", failure: { code: "connector_transcription_result_unavailable", retryable: true } });
+    expect(JSON.stringify(lost)).not.toContain("fixture private ASR text");
+    expect(JSON.stringify(lost)).not.toContain("private provider diagnostics");
+    socket.close();
+  }, 15_000);
+
+  it("requires ASR capability and exact IDs, rejects another connector, and expires abandoned ASR", async () => {
+    const first = await connectSocket("connector_no_asr", "environment_no_asr");
+    const base = { connectorId: "connector_no_asr", requestId: "request_asr_blocked", idempotencyKey: "idempotency_asr_blocked",
+      method: "media.transcribe", payload: { jobId: "job_fixture", mediaId: "media_fixture" } };
+    expect((await internalFetch("environment_no_asr", "/requests", { method: "POST", body: JSON.stringify(base) })).status).toBe(503);
+    for (const payload of [{ ...base.payload, url: "http://private.test" }, { jobId: "job_fixture", mediaId: "../private" }]) {
+      expect((await internalFetch("environment_no_asr", "/requests", { method: "POST", body: JSON.stringify({ ...base, payload }) })).status).toBe(400);
+    }
+    first.socket.close();
+    const second = await connectSocket("connector_asr_timeout", "environment_asr_timeout", ["media.transcribe"]);
+    expect((await internalFetch("environment_asr_timeout", "/requests", { method: "POST", body: JSON.stringify(base) })).status).toBe(403);
+    const routed = nextMessage(second.socket);
+    const timed = { ...base, connectorId: "connector_asr_timeout", deadlineMs: 1000 };
+    expect((await internalFetch("environment_asr_timeout", "/requests", { method: "POST", body: JSON.stringify(timed) })).status).toBe(202);
+    await routed;
+    await new Promise((resolve) => setTimeout(resolve, 1050));
+    await runDurableObjectAlarm(bindings.ENVIRONMENT_CONNECTOR_HUB.get(bindings.ENVIRONMENT_CONNECTOR_HUB.idFromName("environment_asr_timeout")));
+    await expect((await internalFetch("environment_asr_timeout", `/requests/${base.requestId}`)).json()).resolves.toMatchObject({ failure: { code: "connector_timeout", retryable: true } });
+    second.socket.close();
+  });
+
   it("reports that the Node control-plane adapter is not yet integrated", async () => {
     const response = await workerFetch("/health");
     expect(response.status).toBe(200);
@@ -520,7 +574,7 @@ describe("Cloudflare connector runtime", () => {
   });
 });
 
-async function connectSocket(connectorId: string, environmentId: string): Promise<{ socket: WebSocket; welcome: CloudWelcomeFrame }> {
+async function connectSocket(connectorId: string, environmentId: string, capabilities = ["t3:proxy"]): Promise<{ socket: WebSocket; welcome: CloudWelcomeFrame }> {
   const { ticket } = await issueTicket(connectorId, environmentId);
   const upgrade = await workerFetch(`/v1/connectors/socket?ticket=${encodeURIComponent(ticket)}`, {
     headers: { upgrade: "websocket" },
@@ -539,7 +593,7 @@ async function connectSocket(connectorId: string, environmentId: string): Promis
         environmentId,
         connectorVersion: "0.1.0",
         platform: "darwin-arm64",
-        capabilities: ["t3:proxy"],
+        capabilities,
       },
     }),
   );

@@ -13,6 +13,13 @@ export interface ConnectorRouterService {
 export interface RuntimeBindings {
   AGENT_CONTROLLER_GATEWAY: DurableObjectNamespace<AgentControllerGatewayContainer>;
   CONNECTOR_ROUTER: ConnectorRouterService;
+  BACKGROUND_TASKS?: Queue;
+  CLOUD_MEDIA_QUEUE_URL?: string;
+  TRANSCRIPTION_PROVIDER?: string;
+  TRANSCRIPTION_LANGUAGE?: string;
+  TRANSCRIPTION_TIMEOUT_MS?: string;
+  TRANSCRIPTION_LEASE_MS?: string;
+  TRANSCRIPTION_BATCH_SIZE?: string;
 
   DEPLOYMENT_ENVIRONMENT: "local" | "staging" | "production";
   PUBLIC_BASE_URL?: string;

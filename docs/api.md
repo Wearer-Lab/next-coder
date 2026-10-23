@@ -2954,3 +2954,20 @@ curl -X POST http://127.0.0.1:8877/v1/t3/environments \
   -H 'authorization: Bearer PLATFORM_TOKEN' \
   -d '{"label":"Mock T3","baseUrl":"http://127.0.0.1:3999","pairingToken":"dev"}'
 ```
+
+### Connector-local voice processing
+
+With `TRANSCRIPTION_PROVIDER=connector`, durable transcription jobs route `media.transcribe` through
+an environment's authenticated outbound connector. Payload is exactly `{mediaId, jobId}`; neither
+audio, a local path, nor an arbitrary URL is accepted in this request. The active connector must
+advertise `media.transcribe` readiness. Results contain bounded transcript text and model/language/
+timing metadata. Transcription results are excluded from durable connector request caches; loss of
+the short-lived router result causes a retryable failure, not fabricated success.
+
+`GET /v1/connector/media/:mediaId?jobId=:jobId` belongs exclusively to the connector auth realm.
+It requires `t3:proxy`, the current connector for the job owner's environment, an active matching
+transcription lease, and the owned audio upload. Authorization is repeated after storage access.
+Success returns original audio bytes (at most 2 MiB), its content type, `x-media-sha256`, and
+`Cache-Control: no-store`. A caller must verify the digest and must not follow redirects. No media
+capability or device credential substitutes for connector authentication. See
+[local voice](local-voice.md) for runtime setup and delivery semantics.

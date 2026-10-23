@@ -132,6 +132,8 @@ interface SubscriptionItem {
 export class EnvironmentConnectorHub extends DurableObject<RuntimeBindings> {
   private readonly changeWaiters = new Map<string, Set<() => void>>();
   private activeLongPolls = 0;
+  // ASR text belongs in the media job, never the Durable Object result journal.
+  private readonly mediaResults = new Map<string, ConnectorTerminalResult>();
   private readonly runtime: RuntimeBindings;
 
   constructor(ctx: DurableObjectState, env: RuntimeBindings) {
@@ -290,6 +292,9 @@ export class EnvironmentConnectorHub extends DurableObject<RuntimeBindings> {
       }
     }
 
+    for (const [id, result] of this.mediaResults) {
+      if (result.expiresAt <= now) this.mediaResults.delete(id);
+    }
     await this.pruneExpiringIndex("terminal-index", "terminal:", now);
     await this.pruneExpiringIndex("idempotency-index", "idempotency:", now);
     const subscriptions = await this.ctx.storage.list<SubscriptionLease>({ prefix: "subscription:" });
@@ -431,6 +436,13 @@ export class EnvironmentConnectorHub extends DurableObject<RuntimeBindings> {
         continue;
       }
       if (item.connectorId !== attachment.connectorId) continue;
+      if (item.method === "media.transcribe" && !attachment.capabilities?.includes("media.transcribe")) {
+        await this.ctx.storage.delete(key);
+        await this.storeTerminal({ requestId: item.requestId, idempotencyKey: item.idempotencyKey,
+          status: "failed", failure: { code: "connector_capability_unavailable", retryable: true },
+          completedAt: now, expiresAt: now + TERMINAL_RESULT_RETENTION_MS });
+        continue;
+      }
       item.connectionId = attachment.connectionId;
       item.status = "dispatched";
       delete item.acceptedAt;
@@ -534,18 +546,47 @@ export class EnvironmentConnectorHub extends DurableObject<RuntimeBindings> {
       ...(terminal.result !== undefined ? { result: terminal.result } : {}),
       ...(terminal.failure ? { failure: terminal.failure } : {}),
     };
+    if (pending.method === "media.transcribe") {
+      if (stored.failure) {
+        const codes = new Set(["transcription_unconfigured", "transcription_unavailable", "transcription_invalid_audio", "transcription_empty", "transcription_timeout", "media_access_denied"]);
+        stored.failure = { code: codes.has(stored.failure.code) ? stored.failure.code : "connector_transcription_failed", retryable: stored.failure.retryable };
+      }
+      if (stored.status === "completed") {
+        const result = sanitizeMediaTranscriptionResult(stored.result);
+        if (result) {
+          for (const [id, item] of this.mediaResults) {
+            if (item.expiresAt <= Date.now()) this.mediaResults.delete(id);
+          }
+          while (this.mediaResults.size >= MAX_PENDING_REQUESTS) {
+            this.mediaResults.delete(this.mediaResults.keys().next().value!);
+          }
+          const transient = { ...stored, result, expiresAt: Date.now() + 60_000 };
+          this.mediaResults.set(requestId, transient);
+          // A hibernation/restart loses only this transient reply. The caller may
+          // safely transcribe again under a new media-job attempt identity.
+          delete stored.result;
+          stored.status = "failed";
+          stored.failure = { code: "connector_transcription_result_unavailable", retryable: true };
+        } else {
+          delete stored.result;
+          stored.status = "failed";
+          stored.failure = { code: "connector_transcription_result_invalid", retryable: false };
+        }
+      }
+    }
     await this.storeTerminal(stored);
     // Terminal result bodies and failure details are private T3/user content.
     // The private request waiter reads `stored` directly; Queue/event consumers
     // receive only bounded routing and observability metadata.
+    const delivered = this.withMediaResult(stored);
     await this.publish(attachment, "connector.response", {
       requestId,
-      status: stored.status,
+      status: delivered.status,
       completedAt: stored.completedAt,
       durationMs: Math.max(0, stored.completedAt - pending.createdAt),
-      ...(stored.failure ? {
-        failureCode: safeFailureCode(stored.failure.code),
-        retryable: stored.failure.retryable,
+      ...(delivered.failure ? {
+        failureCode: safeFailureCode(delivered.failure.code),
+        retryable: delivered.failure.retryable,
       } : {}),
     });
     await this.scheduleNextAlarm();
@@ -769,6 +810,15 @@ export class EnvironmentConnectorHub extends DurableObject<RuntimeBindings> {
       return json({ error: "connector_ownership_mismatch" }, 403);
     }
 
+    if (parsed.method === "media.transcribe") {
+      const mediaSocket = this.getActiveSocket();
+      if (!mediaSocket) return json({ error: "connector_offline", retryable: true }, 503);
+      const mediaAttachment = readAttachment(mediaSocket);
+      if (!mediaAttachment.scopes.includes("t3:proxy")) return json({ error: "connector_scope_denied" }, 403);
+      if (!mediaAttachment.capabilities?.includes("media.transcribe")) {
+        return json({ error: "connector_capability_unavailable", retryable: true }, 503);
+      }
+    }
     const existing = await this.resolveIdempotentRequest(parsed.requestId, parsed.idempotencyKey);
     if (existing) return existing;
 
@@ -841,14 +891,14 @@ export class EnvironmentConnectorHub extends DurableObject<RuntimeBindings> {
 
   private async resolveIdempotentRequest(requestId: string, idempotencyKey: string): Promise<Response | null> {
     const directTerminal = await this.ctx.storage.get<ConnectorTerminalResult>(terminalKey(requestId));
-    if (directTerminal) return json(directTerminal);
+    if (directTerminal) return json(this.withMediaResult(directTerminal));
     const directPending = await this.ctx.storage.get<PendingRequest>(pendingKey(requestId));
     if (directPending) return json(directPending, 202);
 
     const idempotency = await this.ctx.storage.get<IdempotencyRecord>(idempotencyKeyFor(idempotencyKey));
     if (!idempotency || idempotency.expiresAt <= Date.now()) return null;
     const terminal = await this.ctx.storage.get<ConnectorTerminalResult>(terminalKey(idempotency.requestId));
-    if (terminal) return json(terminal);
+    if (terminal) return json(this.withMediaResult(terminal));
     const pending = await this.ctx.storage.get<PendingRequest>(pendingKey(idempotency.requestId));
     if (pending) return json(pending, 202);
     // A count/byte bound may evict the private result before its 24-hour
@@ -883,10 +933,20 @@ export class EnvironmentConnectorHub extends DurableObject<RuntimeBindings> {
 
   private async readRequestResult(requestId: string): Promise<{ pending: boolean; response: Response }> {
     const terminal = await this.ctx.storage.get<ConnectorTerminalResult>(terminalKey(requestId));
-    if (terminal) return { pending: false, response: json(terminal) };
+    if (terminal) return { pending: false, response: json(this.withMediaResult(terminal)) };
     const pending = await this.ctx.storage.get<PendingRequest>(pendingKey(requestId));
     if (pending) return { pending: true, response: json(pending, 202) };
     return { pending: false, response: json({ error: "request_not_found" }, 404) };
+  }
+
+  private withMediaResult(terminal: ConnectorTerminalResult): ConnectorTerminalResult {
+    const result = this.mediaResults.get(terminal.requestId);
+    if (!result) return terminal;
+    if (result.expiresAt <= Date.now()) {
+      this.mediaResults.delete(terminal.requestId);
+      return terminal;
+    }
+    return result;
   }
 
   private async getStatus(): Promise<Response> {
@@ -1191,7 +1251,7 @@ export class EnvironmentConnectorHub extends DurableObject<RuntimeBindings> {
   }
 
   private async scheduleNextAlarm(): Promise<void> {
-    const candidates: number[] = [];
+    const candidates: number[] = [...this.mediaResults.values()].map((result) => result.expiresAt);
     for (const socket of this.ctx.getWebSockets("connector")) {
       const attachment = readAttachment(socket);
       candidates.push(attachment.lastHeartbeatAt + CONNECTOR_STALE_AFTER_MS);
@@ -1252,6 +1312,16 @@ function parseRequestInput(value: unknown): ConnectorRequestInput {
     value.method.length > 128
   ) {
     throw new ProtocolError("invalid_frame", "requestId, idempotencyKey, and method are invalid.");
+  }
+  if (value.method === "media.transcribe") {
+    const payload = value.payload;
+    if (!isRecord(payload) || Object.keys(payload).length !== 2 ||
+      ![payload.jobId, payload.mediaId].every((id) => typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(id))) {
+      throw new ProtocolError("invalid_frame", "media.transcribe requires only jobId and mediaId.");
+    }
+    if (typeof value.connectorId !== "string" || !value.connectorId) {
+      throw new ProtocolError("invalid_frame", "media.transcribe requires a scoped connector identity.");
+    }
   }
   return {
     ...(typeof value.connectorId === "string" ? { connectorId: value.connectorId } : {}),
@@ -1341,4 +1411,18 @@ function safeFailureCode(value: string): string {
 
 function json(value: unknown, status = 200): Response {
   return Response.json(value, { status, headers: { "cache-control": "no-store" } });
+}
+
+// Allowlist bounded ASR metadata; arbitrary provider diagnostics may contain user content.
+function sanitizeMediaTranscriptionResult(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value) || typeof value.text !== "string" || !value.text.trim() || value.text.length > 32_000) return null;
+  const result: Record<string, unknown> = { text: value.text };
+  for (const field of ["model", "language", "provider"] as const) {
+    const item = value[field];
+    if (typeof item === "string" && /^[A-Za-z0-9_.:/-]{1,128}$/u.test(item)) result[field] = item;
+  }
+  if (typeof value.durationMs === "number" && Number.isFinite(value.durationMs) && value.durationMs >= 0 && value.durationMs <= 300_000) {
+    result.durationMs = value.durationMs;
+  }
+  return result;
 }

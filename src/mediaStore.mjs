@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { HttpError, requireString } from "./http.mjs";
@@ -376,10 +376,24 @@ export async function storeUploadedMedia({ store, config, actor, payload }) {
   return stored;
 }
 
-export async function readStoredMedia(media, config = null) {
+export async function readStoredMedia(media, config = null, { maxBytes } = {}) {
   const objectStore = objectStoreFor(config);
-  if (objectStore) return (await objectStore.getObject({ key: media.storagePath })).body;
-  return readFile(media.storagePath);
+  const bounded = Number.isSafeInteger(maxBytes) && maxBytes >= 0;
+  if (objectStore) return (await objectStore.getObject({ key: media.storagePath, ...(bounded ? { maxBytes } : {}) })).body;
+  if (!bounded) return readFile(media.storagePath);
+  const handle = await open(media.storagePath, "r");
+  try {
+    if ((await handle.stat()).size > maxBytes) throw new HttpError(413, "Stored media exceeds the transfer limit.");
+    const buffer = Buffer.allocUnsafe(maxBytes + 1);
+    let received = 0;
+    while (received <= maxBytes) {
+      const { bytesRead } = await handle.read(buffer, received, buffer.length - received, null);
+      if (!bytesRead) break;
+      received += bytesRead;
+    }
+    if (received > maxBytes) throw new HttpError(413, "Stored media exceeds the transfer limit.");
+    return buffer.subarray(0, received);
+  } finally { await handle.close(); }
 }
 
 export async function deleteStoredMedia(media, config = null) {

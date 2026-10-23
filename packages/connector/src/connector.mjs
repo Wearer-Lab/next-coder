@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { arch, platform, release } from "node:os";
 import { cloudSocketUrl, CONNECTOR_VERSION, PROTOCOL_VERSION, requestSocketTicket } from "./cloud.mjs";
 import { CompletedRequestCache, decodeCloudFrame, encodeFrame, MAX_IN_FLIGHT, responseFailureFrame } from "./protocol.mjs";
+import { createLocalTranscriber } from "./localTranscription.mjs";
 import { safeError } from "./redact.mjs";
 
 const MAX_SUBSCRIPTIONS = 32;
@@ -20,6 +21,8 @@ export class ConnectorClient {
     minSubscriptionReconnectMs = 250,
     maxSubscriptionReconnectMs = 5_000,
     persistState = null,
+    localTranscriber = null,
+    ensureLocalTranscription = null,
   }) {
     if (typeof WebSocketImpl !== "function") throw new Error("Node WebSocket support is required (Node 22+).");
     this.state = state;
@@ -34,6 +37,7 @@ export class ConnectorClient {
     this.minSubscriptionReconnectMs = minSubscriptionReconnectMs;
     this.maxSubscriptionReconnectMs = maxSubscriptionReconnectMs;
     this.persistState = persistState;
+    this.localTranscriber = localTranscriber ?? createLocalTranscriber({ state, fetchImpl, ensureReady: ensureLocalTranscription });
     this.completed = new CompletedRequestCache({ entries: state.completedRequests });
     this.inFlight = new Map();
     this.inFlightByKey = new Map();
@@ -168,6 +172,7 @@ export class ConnectorClient {
     } catch (error) {
       t3Health = error?.code === "T3_AUTH_FAILED" ? "auth_failed" : "error";
     }
+    const localVoice = this.state.voice?.enabled === true ? await this.localTranscriber.health() : { ready: false };
     return {
       protocolVersion: PROTOCOL_VERSION,
       type: "hello",
@@ -179,12 +184,12 @@ export class ConnectorClient {
         environmentId: this.state.environmentId,
         ...(info?.version || info?.serverVersion ? { t3Version: info.version ?? info.serverVersion } : {}),
         t3Health,
-        capabilities: connectorCapabilities(
+        capabilities: [...connectorCapabilities(
           capabilityProbe,
           Boolean(this.state.t3AccessToken),
           typeof this.t3.capabilityProbe === "function",
           info != null,
-        ),
+        ), ...(localVoice.ready ? ["media.transcribe"] : [])],
         providerCatalogue: providers,
         ...(this.state.lastEventCursor != null ? { lastEventCursor: String(this.state.lastEventCursor) } : {}),
       },
@@ -241,7 +246,9 @@ export class ConnectorClient {
     // original request nor a concurrent duplicate can observe a terminal result before a
     // healthy runtime-state backend has durably recorded it.
     const terminalPromise = this.runRequest(frame, deadline, controller).then(async (terminal) => {
-      await this.rememberTerminal(body.idempotencyKey, terminal);
+      // A transcript is private job output, not a durable connector receipt. Overlapping
+      // deliveries still share this in-flight promise; the cloud owns durable completion.
+      if (body.method !== "media.transcribe") await this.rememberTerminal(body.idempotencyKey, terminal);
       return terminal;
     });
     this.inFlightByKey.set(body.idempotencyKey, { acceptedAt, promise: terminalPromise });
@@ -272,6 +279,7 @@ export class ConnectorClient {
       case "snapshot": return await this.t3.snapshot();
       case "threadDetail": case "thread.detail": return await this.t3.threadDetail(payload.threadId, { turnLimit: payload.turnLimit });
       case "dispatch": return await this.t3.dispatch(payload.command ?? payload, options);
+      case "media.transcribe": return await this.localTranscriber.transcribe(payload, options);
       case "callRpc": case "rpc.call": return await this.t3.callRpc(payload.tag, payload.payload ?? {}, options);
       default: throw Object.assign(new Error(`Unsupported connector method: ${method}`), { code: "UNSUPPORTED_METHOD", retryable: false });
     }

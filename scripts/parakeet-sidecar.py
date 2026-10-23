@@ -318,9 +318,8 @@ def handle_transcribe(recognizer: Recognizer, fields: dict[str, object], default
     inference_ms = (time.monotonic() - inference_started) * 1000
 
     log.info(
-        "transcribed %.2fs of audio in %.0fms (decode %.0fms, rtf %.2f): %r",
+        "transcribed %.2fs of audio in %.0fms (decode %.0fms, rtf %.2f)",
         duration, inference_ms, decode_ms, inference_ms / (duration * 1000) if duration else 0.0,
-        text[:120],
     )
     return {
         "text": text,
@@ -392,12 +391,12 @@ def build_handler(recognizer: Recognizer, route: str, api_key: str | None, langu
                 fields = parse_multipart(body, self.headers.get("content-type", ""))
                 self._send(200, handle_transcribe(recognizer, fields, language))
             except ClientError as error:
-                log.warning("rejected: %s", error)
+                log.warning("rejected audio request (status %s)", error.status)
                 self._send(error.status, {"error": str(error)})
             except Exception as error:  # noqa: BLE001
                 # Anything unexpected is the sidecar's fault, not the caller's, so it is a 5xx and
                 # the gateway is right to try the clip again.
-                log.exception("transcription failed")
+                log.error("transcription failed (%s)", type(error).__name__)
                 self._send(500, {"error": f"{type(error).__name__}: {error}"})
 
     return Handler
@@ -473,7 +472,7 @@ def main() -> None:
     model_dir = Path(args.model_dir).expanduser().resolve()
     require_model(model_dir, args.precision)
 
-    log.info("loading %s (%s) from %s", args.model_name, args.precision, model_dir)
+    log.info("loading %s (%s)", args.model_name, args.precision)
     try:
         recognizer = Recognizer(model_dir, args.precision, args.model_name)
     except Exception as error:  # noqa: BLE001

@@ -75,6 +75,7 @@ export function loadConfig(env = process.env) {
     transcriptionReviewRequired: normalizeBoolean(env.TRANSCRIPTION_REVIEW_REQUIRED, false),
     // Cloud consumers replace process timers one-for-one. Keeping these separate makes a partial
     // rollout fail closed instead of disabling every local runner because one Queue exists.
+    cloudMediaQueueUrl: env.CLOUD_MEDIA_QUEUE_URL ?? null,
     cloudMediaConsumerEnabled: normalizeBoolean(env.CLOUD_MEDIA_CONSUMER_ENABLED, false),
     cloudSnapshotConsumerEnabled: normalizeBoolean(env.CLOUD_SNAPSHOT_CONSUMER_ENABLED, false),
     cloudThreadStreamConsumerEnabled: normalizeBoolean(env.CLOUD_THREAD_STREAM_CONSUMER_ENABLED, false),

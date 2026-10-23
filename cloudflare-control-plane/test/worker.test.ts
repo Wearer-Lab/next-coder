@@ -112,7 +112,8 @@ describe("control-plane Worker boundary", () => {
   });
 
   it("passes strict Convex, Clerk, encryption, R2, and disabled-runner settings at startup", async () => {
-    const env = { ...productionBindings(), FACTORY_TOKEN: "private-factory-token", OTA_SIGNING_KEY: "private-ota-key" };
+    const env = { ...productionBindings(), FACTORY_TOKEN: "private-factory-token", OTA_SIGNING_KEY: "private-ota-key",
+      TRANSCRIPTION_PROVIDER: "connector", TRANSCRIPTION_TIMEOUT_MS: "25000" };
     const resolved = resolveRuntimeConfig(env);
     expect(resolved.containerEnv).toMatchObject({
       DEPLOYMENT_ENVIRONMENT: "production",
@@ -129,6 +130,9 @@ describe("control-plane Worker boundary", () => {
       SNAPSHOT_POLL_ENABLED: "0",
       THREAD_STREAM_ENABLED: "1",
       TRANSCRIPTION_WORKER_ENABLED: "0",
+      TRANSCRIPTION_PROVIDER: "connector",
+      TRANSCRIPTION_TIMEOUT_MS: "25000",
+      CLOUD_MEDIA_QUEUE_URL: "http://background.internal/v1/media/process",
       WEB_PUSH_WORKER_ENABLED: "0",
       CLOUD_SNAPSHOT_CONSUMER_ENABLED: "1",
       CLOUD_THREAD_STREAM_CONSUMER_ENABLED: "0",

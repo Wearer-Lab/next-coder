@@ -42,9 +42,16 @@ export function createCloudBackgroundWork({
   async function runOnce(input) {
     const task = normalizeTask(input);
     switch (task.kind) {
-      case "media.process":
+      case "media.process": {
         requireRunner(mediaJobRunner, task.kind);
-        return taskResult(task, await mediaJobRunner.runOnce());
+        const result = await mediaJobRunner.runOnce();
+        // Concurrent uploads each carry a wakeup. A busy runner has not consumed this one;
+        // acknowledging it could strand another user's queued recording until the Cron sweep.
+        if (result?.skipped) throw Object.assign(new Error("Media processor is busy."), {
+          code: "media_processor_busy", retryable: true,
+        });
+        return taskResult(task, result);
+      }
       case "media.retention":
         requireRunner(mediaRetentionRunner, task.kind);
         return taskResult(task, await mediaRetentionRunner.runOnce({

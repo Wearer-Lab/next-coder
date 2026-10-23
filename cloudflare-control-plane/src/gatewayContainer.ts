@@ -2,6 +2,7 @@ import { Container } from "@cloudflare/containers";
 
 import type { RuntimeBindings } from "./env";
 import { handleConnectorRouterOutbound } from "./connectorRouterOutbound";
+import { handleBackgroundOutbound } from "./backgroundOutbound";
 
 /** One explicitly bounded instance; all durable records live in Convex. */
 export class AgentControllerGatewayContainer extends Container<RuntimeBindings> {
@@ -9,6 +10,9 @@ export class AgentControllerGatewayContainer extends Container<RuntimeBindings> 
     // The SDK setter registers handlers for ContainerProxy. A static class field shadows that
     // setter and leaves intercepted requests falling through to public DNS for this private host.
     this.outboundByHost = {
+      "background.internal": async (request: Request, env: Cloudflare.Env) => {
+        return await handleBackgroundOutbound(request, env as unknown as RuntimeBindings);
+      },
       "connector-router.internal": async (request: Request, env: Cloudflare.Env) => {
         return await handleConnectorRouterOutbound(request, env as unknown as RuntimeBindings);
       },

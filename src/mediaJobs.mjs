@@ -38,6 +38,7 @@ export function createMediaJobRunner({
   // records whatever the caller says happened to it. Absent (as in every unit test here) the
   // transcript is simply written onto the media record and waits.
   dispatchTranscript = null,
+  onQueued = null,
   // Cleanup is replaceable, which is exactly why the guard below exists: a substitute that
   // rewrote the user's words instead of tidying them would otherwise dispatch as if they had
   // said it.
@@ -112,7 +113,7 @@ export function createMediaJobRunner({
       const startedAtMs = now();
       let result;
       try {
-        result = await transcriber.transcribe({ media, config });
+        result = await transcriber.transcribe({ media, job: current, config });
       } catch (error) {
         return await recordFailure(current, error);
       }
@@ -289,6 +290,10 @@ export function createMediaJobRunner({
     });
     await writeMediaProcessing(updated ?? job, stage === "failed" ? "failed" : "processing", lastError);
     publish(updated ?? job);
+    if (stage === "queued") {
+      try { await onQueued?.(updated ?? job); }
+      catch { logger?.warn?.("Cloud media scheduling unavailable; durable work awaits the recovery scheduler."); }
+    }
     return { jobId: job.id, mediaId: job.mediaId, stage, lastError, retryable, failureCause };
   }
 

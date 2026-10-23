@@ -303,3 +303,18 @@ function stubT3(overrides = {}) {
 }
 
 const quietLogger = { log() {}, error() {} };
+
+test("local transcription is advertised explicitly and never enters durable completed receipts", async () => {
+  let effects = 0; let writes = 0;
+  const connector = new ConnectorClient({ state: {...state, completedRequests:[], voice:{enabled:true}}, t3:stubT3(), WebSocketImpl:class {}, logger:quietLogger,
+    localTranscriber:{health:async()=>({ready:true}), transcribe:async()=>({text:`private transcript ${++effects}`})},
+    persistState:async()=>{writes++;} });
+  assert.ok((await connector.buildHello()).body.capabilities.includes('media.transcribe'));
+  connector.connectionId='connection';const sent=[];const socket={send:value=>sent.push(JSON.parse(value))};
+  const request={protocolVersion:1,type:'request',connectionId:'connection',body:{requestId:'voice1',idempotencyKey:'voice-job',method:'media.transcribe',deadlineAt:new Date(Date.now()+10000).toISOString(),payload:{mediaId:'media1',jobId:'job1'}}};
+  await connector.onMessage(socket,JSON.stringify(request));
+  assert.equal(sent.at(-1).body.result.text,'private transcript 1');
+  assert.equal(writes,0);assert.deepEqual(connector.state.completedRequests??[],[]);
+  await connector.onMessage(socket,JSON.stringify({...request,body:{...request.body,requestId:'voice2'}}));
+  assert.equal(effects,2,'settled transcript is recomputed, never read from a persisted receipt');
+});

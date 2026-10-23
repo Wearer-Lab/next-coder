@@ -14,7 +14,9 @@ import { createT3Client, discoverT3, exchangePairingToken } from "./t3.mjs";
 import { consumeT3Handoff, createLocalT3PairingToken, ensureLocalT3, inspectOwnedT3, requestT3Handoff, stopOwnedT3 } from "./t3Process.mjs";
 import { applyConnectorUpdate, checkConnectorUpdate } from "./update.mjs";
 
-const COMMANDS = new Set(["connect", "rotate", "status", "doctor", "disconnect", "start", "stop", "restart", "logs", "update"]);
+import { prepareVoiceRuntime, setupVoiceRuntime, inspectVoiceRuntime } from "./voiceRuntime.mjs";
+
+const COMMANDS = new Set(["connect", "rotate", "status", "doctor", "disconnect", "start", "stop", "restart", "logs", "update", "voice"]);
 const SERVICE_COMMANDS = new Set(["start", "stop", "restart", "logs"]);
 const CONNECTOR_CAPABILITIES = ["environmentInfo", "snapshot", "threadDetail", "dispatch", "callRpc", "threadStream"];
 
@@ -39,6 +41,7 @@ export async function main(argv, dependencies = {}) {
       if (resolve(parsed.serviceLog) !== resolve(paths.logPath)) throw usage("--service-log is reserved for the connector-owned managed service.");
       managedLogPath = paths.logPath;
     }
+    if (parsed.command === "voice") return await voiceCommand(parsed, { ...dependencies, stateDir, stdout, stderr });
     if (SERVICE_COMMANDS.has(parsed.command)) return await serviceCommand(parsed, { ...dependencies, stateDir, stdout, stderr });
     if (parsed.command === "update") return await updateCommand(parsed, { ...dependencies, stateDir, stdout, stderr });
     if (parsed.command === "rotate") return await rotateCommand(parsed, { ...dependencies, stateDir, stdout });
@@ -64,6 +67,10 @@ export function parseArgs(argv) {
     if (!COMMANDS.has(argv[0])) throw usage(`Unknown command: ${argv[0]}`);
     parsed.command = argv[0];
     index = 1;
+  }
+  if (parsed.command === "voice") {
+    parsed.voiceAction = argv[index] && !argv[index].startsWith("-") ? argv[index++] : "status";
+    if (!["setup", "status"].includes(parsed.voiceAction)) throw usage("Voice supports setup or status.");
   }
   const allowed = allowedFlags(parsed.command);
   for (; index < argv.length; index += 1) {
@@ -93,6 +100,10 @@ async function connectCommand(options, dependencies = {}) {
   if (options.startT3 && options.noStartT3) throw usage("--start-t3 and --no-start-t3 are mutually exclusive.");
   let runtime = null;
   let transferRuntime = false;
+  let voiceRuntime = null;
+  const voiceAbort = new AbortController();
+  const stopSetup = () => voiceAbort.abort();
+  process.once("SIGINT", stopSetup); process.once("SIGTERM", stopSetup);
   try {
     runtime = await prepareT3Runtime(options, existing, { ...dependencies, stateDir, env, fetchImpl });
     const baseUrl = validateHttpUrl(runtime.baseUrl, "T3 URL", { allowHttpLoopback: true });
@@ -145,10 +156,14 @@ async function connectCommand(options, dependencies = {}) {
     }
     const fileLogger = options.serviceLog ? createBoundedFileLogger(options.serviceLog, { secrets: [state.secret, state.credentialRotation?.pendingSecret, state.t3AccessToken] }) : null;
     const logger = fileLogger ?? { log: (...items) => write(stdout, `${items.join(" ")}\n`), error: (...items) => write(stderr, `${items.map(formatItem).join(" ")}\n`) };
+    write(stdout, "Preparing built-in voice on this machine. First use downloads the local speech model (about 660 MB) and its runtime. Audio processing stays on this machine.\n");
+    voiceRuntime = await (dependencies.prepareVoiceRuntime ?? prepareVoiceRuntime)({ stateDir, fetchImpl, logger, signal: voiceAbort.signal, onProgress: (stage) => logger.log(`Voice setup: ${stage}`) });
+    state = { ...state, voice: { enabled: true, url: voiceRuntime.url } };
+    await saveState(stateDir, state, { credentialStore });
     // Connection health/cursors live in a separate runtime projection so the
     // long-running service can never overwrite an atomic credential-rotation
     // journal written by a concurrent CLI process.
-    const connector = new Connector({ state, t3, fetchImpl, WebSocketImpl, logger, persistState: async (nextState) => await saveRuntimeState(stateDir, nextState) });
+    const connector = new Connector({ state, t3, fetchImpl, WebSocketImpl, logger, ensureLocalTranscription: (input) => voiceRuntime.ensureReady(input), persistState: async (nextState) => await saveRuntimeState(stateDir, nextState) });
     const stop = () => connector.stop();
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
@@ -156,6 +171,8 @@ async function connectCommand(options, dependencies = {}) {
     finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); await fileLogger?.flush(); }
     return 0;
   } finally {
+    process.removeListener("SIGINT", stopSetup); process.removeListener("SIGTERM", stopSetup);
+    await voiceRuntime?.close();
     // Consume a handoff marker even when this process reused a user-managed T3.
     // Otherwise a marker written for credential/service handoff can survive and
     // incorrectly affect a later connector-owned runtime.
@@ -282,6 +299,20 @@ async function boundedWait(promise, timeoutMs, message, code) {
   }
 }
 
+async function voiceCommand(options, dependencies) {
+  const { stateDir, stdout, fetchImpl = globalThis.fetch } = dependencies;
+  if (options.voiceAction === "setup") {
+    write(stdout, "Preparing built-in local voice; first use downloads about 660 MB of model data plus runtime dependencies.\n");
+    await (dependencies.setupVoiceRuntime ?? setupVoiceRuntime)({ stateDir, fetchImpl, onProgress: (stage) => write(stdout, `Voice setup: ${stage}\n`) });
+    write(stdout, "Local speech runtime installed. Connect starts and maintains it automatically.\n");
+    return 0;
+  }
+  const state = await loadState(stateDir, { credentialStore: dependencies.credentialStore });
+  const result = await (dependencies.inspectVoiceRuntime ?? inspectVoiceRuntime)({ fetchImpl, ...(state?.voice?.url ? { url: state.voice.url } : {}) });
+  write(stdout, options.json ? `${JSON.stringify(result)}\n` : result.ready ? "Built-in voice is ready.\n" : "Built-in voice is unavailable. Connect prepares it automatically; run voice setup to repair installation.\n");
+  return result.ready ? 0 : 1;
+}
+
 async function diagnosticCommand(options, dependencies = {}) {
   const { stateDir, stdout, fetchImpl = globalThis.fetch, WebSocketImpl = globalThis.WebSocket, exec, credentialStore = null } = dependencies;
   const state = await loadState(stateDir, { credentialStore });
@@ -304,6 +335,9 @@ async function diagnosticCommand(options, dependencies = {}) {
     credentialStore,
     ownedT3,
   });
+  const voice = await (dependencies.inspectVoiceRuntime ?? inspectVoiceRuntime)({ fetchImpl, ...(state?.voice?.url ? { url: state.voice.url } : {}) });
+  result.checks.push({ id: "voice", ok: voice.ready, detail: voice.ready ? "Built-in local speech runtime is ready." : "Local speech runtime is unavailable; connect prepares it automatically, or run voice setup to repair installation." });
+  result.healthy = result.healthy && voice.ready;
   const service = serviceOptions({ ...dependencies, stateDir });
   const managedServiceInstalled = await serviceInstalled(service);
   const managedServiceActive = managedServiceInstalled ? await serviceActive(service) : false;
@@ -475,6 +509,7 @@ function allowedFlags(command) {
   const common = ["--state-dir"];
   const map = {
     connect: [...common, "--server", "--code", "--label", "--t3-url", "--t3-token-file", "--t3-pairing-token", "--t3-base-dir", "--t3-port", "--t3-start-timeout-ms", "--start-t3", "--no-start-t3", "--once", "--replace", "--install-service", "--service-log"],
+    voice: [...common, "--json"],
     status: [...common, "--json"], doctor: [...common, "--json"], disconnect: [...common, "--yes", "--revoke-cloud", "--force-local"],
     rotate: [...common, "--server", "--code", "--yes"],
     start: common, stop: common, restart: common, logs: [...common, "--lines"], update: [...common, "--check", "--apply", "--yes", "--restart-service", "--health-timeout-ms", "--version"],
@@ -496,9 +531,10 @@ function serviceOptions({ stateDir, platform: platformOverride, env = process.en
 }
 
 function helpText(command) {
+  if (command === "voice") return "Usage: next-coder-connect voice setup [--state-dir PATH]\n       next-coder-connect voice status [--json]\n\nConnect prepares and maintains built-in voice automatically. Setup downloads the local model (about 660 MB), Python and inference dependencies in the per-user state directory. Status checks readiness without installing anything.\n";
   if (command === "connect") return `Usage: next-coder-connect connect --server URL --code CODE [options]\n\nOptions:\n  --t3-url URL            T3 URL (default discovery: http://127.0.0.1:3773)\n  --start-t3              Explicitly allow starting loopback T3 when absent (default behavior)\n  --no-start-t3           Never start T3; fail if the configured server is absent\n  --t3-port PORT          Loopback auto-start port (default 3773)\n  --t3-base-dir PATH      T3 state directory; never treated as a project\n  --t3-start-timeout-ms N Bounded readiness timeout (1000-300000)\n  --t3-token-file PATH    Read the T3 access token from a local file\n  --t3-pairing-token TOKEN Exchange a one-time local T3 pairing token\n  --label LABEL           Connector label\n  --once                  Connect through welcome once, then exit (diagnostics/tests)\n  --replace               Rotate by re-enrolling an existing environment\n  --install-service       Install and start an owned per-user launchd/systemd service\n  --state-dir PATH        Override the local config directory\n`;
   if (command === "update") return `Usage: next-coder-connect update --check [--version VERSION]\n       next-coder-connect update --apply --yes [--restart-service] [--version VERSION]\n\nOptions:\n  --check                 Query npm without changing local files\n  --apply                 Update only the connector-owned managed runtime\n  --version VERSION       Resolve and install this exact published version (upgrade or rollback)\n  --yes                   Confirm a managed runtime replacement\n  --restart-service       Explicitly permit restarting a running service\n  --health-timeout-ms N   Bounded service/T3/cloud verification timeout (default 30000)\n  --state-dir PATH        Override the local config directory\n`;
   if (command === "rotate") return `Usage: next-coder-connect rotate --code CODE --yes\n       next-coder-connect rotate --yes\n\nOptions:\n  --code CODE             Start a bounded rotation with a user-minted code\n  --yes                   Confirm credential rotation\n  --server URL            Must match the enrolled cloud server\n  --state-dir PATH        Override the local config directory\n\nThe no-code form resumes an interrupted local rotation journal. Atomic handoff requires an installed connector-owned managed service.\n`;
   if (command === "disconnect") return `Usage: next-coder-connect disconnect --revoke-cloud --yes\n       next-coder-connect disconnect --force-local --yes\n\nOptions:\n  --revoke-cloud          Revoke this connector with its own credential before local cleanup\n  --force-local           Permit local-only cleanup, including fallback after a revoke failure\n  --yes                   Confirm revocation and/or local credential removal\n  --state-dir PATH        Override the local config directory\n\nWithout --force-local, a failed cloud revocation leaves the service and all local credentials intact for a safe retry.\n`;
-  return `Next Coder connector ${CONNECTOR_VERSION}\n\nUsage:\n  next-coder-connect <command> [options]\n\nCommands:\n  connect       Enroll and run the outbound connector in the foreground\n  rotate        Atomically rotate the managed-service credential\n  status        Show cloud, local T3, authentication, and Tailscale status\n  doctor        Run actionable diagnostics without printing secrets\n  disconnect    Remove local service, logs, and credentials after confirmation\n  start         Start the installed per-user connector service\n  stop          Stop the exact installed per-user connector service\n  restart       Restart the exact installed per-user connector service\n  logs          Read bounded, redacted managed-service logs\n  update        Explicitly check or update the owned service runtime\n\nRun <command> --help for command options. Node 22+ is required.\n`;
+  return `Next Coder connector ${CONNECTOR_VERSION}\n\nUsage:\n  next-coder-connect <command> [options]\n\nCommands:\n  connect       Enroll and run the outbound connector in the foreground\n  rotate        Atomically rotate the managed-service credential\n  status        Show cloud, local T3, authentication, and Tailscale status\n  doctor        Run actionable diagnostics without printing secrets\n  disconnect    Remove local service, logs, and credentials after confirmation\n  start         Start the installed per-user connector service\n  stop          Stop the exact installed per-user connector service\n  restart       Restart the exact installed per-user connector service\n  logs          Read bounded, redacted managed-service logs\n  update        Explicitly check or update the owned service runtime\n  voice         Prepare or inspect built-in local speech processing\n\nRun <command> --help for command options. Node 22+ is required.\n`;
 }

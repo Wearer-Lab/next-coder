@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { loadState, saveState, STATE_VERSION } from "../src/config.mjs";
-import { main } from "../src/cli.mjs";
+import { main as realMain } from "../src/cli.mjs";
 import {
   installService,
   LEGACY_OWNERSHIP_MARKER,
@@ -412,3 +412,5 @@ function memoryCredentialStore() {
     async delete(account) { values.delete(account); },
   };
 }
+
+function main(args, dependencies = {}) { return realMain(args, { inspectVoiceRuntime: async () => ({ ready: true }), prepareVoiceRuntime: async () => ({ url: "http://127.0.0.1:8977/v1/transcribe", close: async () => {}, ensureReady: async () => {} }), ...dependencies }); }

@@ -3,7 +3,9 @@
   "name": "agent-controller-control-plane-local",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-22",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": false,
   "preview_urls": false,
   "observability": {
@@ -20,7 +22,10 @@
     }
   },
   "analytics_engine_datasets": [
-    { "binding": "TELEMETRY", "dataset": "agent_controller_control_plane_local" }
+    {
+      "binding": "TELEMETRY",
+      "dataset": "agent_controller_control_plane_local"
+    }
   ],
   "containers": [
     {
@@ -51,15 +56,21 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["AgentControllerGatewayContainer"]
+      "new_sqlite_classes": [
+        "AgentControllerGatewayContainer"
+      ]
     }
   ],
   "vars": {
     "DEPLOYMENT_ENVIRONMENT": "local",
     "CONNECTOR_TICKET_AUDIENCE": "agent-controller-connectors",
     "CONTAINER_STARTUP_TIMEOUT_MS": "20000",
-    "CONTAINER_RESPONSE_HEADER_TIMEOUT_MS": "30000",
-    "TELEMETRY_SUCCESS_SAMPLE_RATE": "0.05"
+    "CONTAINER_RESPONSE_HEADER_TIMEOUT_MS": "120000",
+    "TELEMETRY_SUCCESS_SAMPLE_RATE": "0.05",
+    "TRANSCRIPTION_PROVIDER": "connector",
+    "TRANSCRIPTION_TIMEOUT_MS": "90000",
+    "TRANSCRIPTION_LEASE_MS": "120000",
+    "TRANSCRIPTION_BATCH_SIZE": "1"
   },
   "env": {
     "staging": {
@@ -91,14 +102,29 @@
         }
       ],
       "analytics_engine_datasets": [
-        { "binding": "TELEMETRY", "dataset": "agent_controller_control_plane_staging" }
+        {
+          "binding": "TELEMETRY",
+          "dataset": "agent_controller_control_plane_staging"
+        }
       ],
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "staging",
         "CONNECTOR_TICKET_AUDIENCE": "agent-controller-connectors",
         "CONTAINER_STARTUP_TIMEOUT_MS": "20000",
-        "CONTAINER_RESPONSE_HEADER_TIMEOUT_MS": "30000",
-        "TELEMETRY_SUCCESS_SAMPLE_RATE": "0.05"
+        "CONTAINER_RESPONSE_HEADER_TIMEOUT_MS": "120000",
+        "TELEMETRY_SUCCESS_SAMPLE_RATE": "0.05",
+        "TRANSCRIPTION_PROVIDER": "connector",
+        "TRANSCRIPTION_TIMEOUT_MS": "90000",
+        "TRANSCRIPTION_LEASE_MS": "120000",
+        "TRANSCRIPTION_BATCH_SIZE": "1"
+      },
+      "queues": {
+        "producers": [
+          {
+            "binding": "BACKGROUND_TASKS",
+            "queue": "agent-controller-background-staging"
+          }
+        ]
       }
     },
     "production": {
@@ -130,15 +156,38 @@
         }
       ],
       "analytics_engine_datasets": [
-        { "binding": "TELEMETRY", "dataset": "agent_controller_control_plane_production" }
+        {
+          "binding": "TELEMETRY",
+          "dataset": "agent_controller_control_plane_production"
+        }
       ],
       "vars": {
         "DEPLOYMENT_ENVIRONMENT": "production",
         "CONNECTOR_TICKET_AUDIENCE": "agent-controller-connectors",
         "CONTAINER_STARTUP_TIMEOUT_MS": "20000",
-        "CONTAINER_RESPONSE_HEADER_TIMEOUT_MS": "30000",
-        "TELEMETRY_SUCCESS_SAMPLE_RATE": "0.05"
+        "CONTAINER_RESPONSE_HEADER_TIMEOUT_MS": "120000",
+        "TELEMETRY_SUCCESS_SAMPLE_RATE": "0.05",
+        "TRANSCRIPTION_PROVIDER": "connector",
+        "TRANSCRIPTION_TIMEOUT_MS": "90000",
+        "TRANSCRIPTION_LEASE_MS": "120000",
+        "TRANSCRIPTION_BATCH_SIZE": "1"
+      },
+      "queues": {
+        "producers": [
+          {
+            "binding": "BACKGROUND_TASKS",
+            "queue": "agent-controller-background-production"
+          }
+        ]
       }
     }
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "BACKGROUND_TASKS",
+        "queue": "agent-controller-background-local"
+      }
+    ]
   }
 }

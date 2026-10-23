@@ -88,19 +88,69 @@ function statusFailureCause(status) {
  * config whitelist and the "is anything configured?" check in app.mjs both read this list, and a
  * name missing from either of those degrades silently to `disabled`.
  */
-export const TRANSCRIPTION_PROVIDERS = ["disabled", "mock", "openai", "parakeet"];
+export const TRANSCRIPTION_PROVIDERS = ["disabled", "mock", "openai", "parakeet", "connector"];
 
 /** True for a provider that will actually attempt work, which is what gates enqueueing a job. */
 export function isTranscriptionProviderEnabled(name) {
   return TRANSCRIPTION_PROVIDERS.includes(name) && name !== "disabled";
 }
 
-export function createTranscriptionProvider(config = {}) {
+export function createTranscriptionProvider(config = {}, { transcribeWithConnector = null } = {}) {
   const name = config.transcriptionProvider ?? "disabled";
   if (name === "mock") return mockProvider(config);
   if (name === "openai") return openAiProvider(config);
   if (name === "parakeet") return parakeetProvider(config);
+  if (name === "connector") return connectorProvider(config, transcribeWithConnector);
   return disabledProvider(name);
+}
+
+function connectorProvider(config, transcribeWithConnector) {
+  return {
+    name: "connector",
+    model: config.transcriptionModel ?? null,
+    available: typeof transcribeWithConnector === "function",
+    async transcribe({ media, job }) {
+      if (typeof transcribeWithConnector !== "function") {
+        throw new TranscriptionError("Laptop transcription routing is not configured.", { failureCause: "configuration" });
+      }
+      if (!media?.id || !job?.id || !job.environmentId || job.mediaId !== media.id || job.userId !== media.userId) {
+        throw new TranscriptionError("This recording requires its paired laptop environment.", { failureCause: "configuration" });
+      }
+      const startedAt = Date.now();
+      let result;
+      try { result = await transcribeWithConnector({ media, job }); }
+      catch (error) {
+        if (error instanceof TranscriptionError) throw error;
+        const code = error?.code;
+        const inputCodes = new Set(["transcription_invalid_audio", "transcription_empty", "media_too_large", "audio_unsupported"]);
+        const configurationCodes = new Set(["transcription_unconfigured", "transcription_unavailable", "media_access_denied", "connector_offline", "connector_capability_missing", "connector_capability_unavailable", "connector_ownership_mismatch", "connector_scope_denied"]);
+        throw new TranscriptionError(inputCodes.has(code) ? "The laptop could not decode this recording."
+          : configurationCodes.has(code) ? "Laptop transcription is unavailable. Check the paired connector and Parakeet service."
+          : "Laptop transcription could not complete. Retry after the connection recovers.", {
+          retryable: inputCodes.has(code) || code === "transcription_unconfigured" || code === "media_access_denied" || code === "connector_capability_missing" || code === "connector_ownership_mismatch" || code === "connector_scope_denied"
+            ? false : error?.retryable !== false,
+          failureCause: inputCodes.has(code) ? "input" : configurationCodes.has(code) ? "configuration" : "provider",
+        });
+      }
+      if (typeof result?.text !== "string" || result.text.length > MAX_TRANSCRIPT_CHARS) {
+        throw new TranscriptionError("Laptop transcription returned an invalid result.", { retryable: true, failureCause: "provider" });
+      }
+      const text = result.text.trim();
+      if (!text) throw new TranscriptionError("Laptop transcription returned no speech.", { failureCause: "input" });
+      const timings = {};
+      for (const key of ["decodeMs", "inferenceMs", "modelLoadMs"]) {
+        if (Number.isFinite(result.timings?.[key]) && result.timings[key] >= 0) timings[key] = result.timings[key];
+      }
+      return {
+        text,
+        provider: "connector",
+        model: typeof result.model === "string" ? result.model.slice(0, 160) : null,
+        language: typeof result.language === "string" && /^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(result.language) ? result.language : null,
+        durationMs: Number.isFinite(result.durationMs) && result.durationMs >= 0 ? result.durationMs : Date.now() - startedAt,
+        timings,
+      };
+    },
+  };
 }
 
 function disabledProvider(name) {

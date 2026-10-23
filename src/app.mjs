@@ -90,6 +90,7 @@ import { mintDeviceThreadTitle, normalizeTitle } from "./threadNaming.mjs";
 import { deviceJobStatus, mediaJobEvent, voiceAutoSendEnabled } from "./deviceAudio.mjs";
 import {
   createTranscriptionProvider,
+  TranscriptionError,
   describeTranscriptChange,
   isTranscriptionProviderEnabled,
 } from "./transcription.mjs";
@@ -195,6 +196,7 @@ const WEB_DIST_DIR = join(__dirname, "..", "dist", "web");
 const t3TransportResolversByStore = new WeakMap();
 const notificationPublishersByStore = new WeakMap();
 const threadStreamHubsByStore = new WeakMap();
+const transcriptionProvidersByStore = new WeakMap();
 const defaultT3TransportResolver = createT3TransportResolver();
 
 async function resolveEnvironmentHarnessesWithTransport(environment, snapshot, transportResolver) {
@@ -228,6 +230,8 @@ export function createApp({
   t3CompatibilityRpc = undefined,
   t3TransportResolver = createT3TransportResolver(),
   connectorRouter = null,
+  scheduleMediaProcessing = null,
+  logger = console,
   remoteAccessControl = configurePrivateTailscaleServe,
 } = {}) {
   store ??= createStore({}, { t3TokenEncryptionKey: config.t3TokenEncryptionKey });
@@ -292,8 +296,41 @@ export function createApp({
   });
   threadStreamHubsByStore.set(store, threadStreams);
   // Constructed here, started from server.mjs. Tests drive runOnce() so nothing depends on a timer.
+  async function queueMediaProcessing(job, { delaySeconds = 0 } = {}) {
+    if (!job?.id || !scheduleMediaProcessing) return false;
+    try { return await scheduleMediaProcessing({ jobId: job.id, delaySeconds }); }
+    catch {
+      logger.warn?.("Cloud media scheduling unavailable; durable work awaits the recovery scheduler.");
+      return false;
+    }
+  }
+  const transcriptionProvider = createTranscriptionProvider(config, {
+    transcribeWithConnector: connectorRouter?.request ? async ({ media, job }) => {
+      if (!connectorRouter?.request) {
+        throw new TranscriptionError("Laptop transcription routing is unavailable.", { failureCause: "configuration" });
+      }
+      const current = await requireConnectorTranscriptionJob({
+        store, userId: job.userId, jobId: job.id, mediaId: media.id,
+        leaseOwner: job.leaseOwner, attempt: job.attempts,
+      });
+      const timeoutMs = Math.max(1000, Math.min(config.transcriptionTimeoutMs ?? 90000, 300000));
+      const result = await connectorRouter.request(current.environment, {
+        method: "media.transcribe", payload: { mediaId: media.id, jobId: job.id },
+      }, { timeoutMs, idempotencyKey: `media-transcribe:${job.id}:${job.attempts}` });
+      // A delayed inference may not publish a result after its lease, ownership or environment
+      // was replaced. This check is independent of the worker's later policy-controlled dispatch.
+      await requireConnectorTranscriptionJob({
+        store, userId: job.userId, jobId: job.id, mediaId: media.id,
+        leaseOwner: job.leaseOwner, attempt: job.attempts, connectorId: current.connector.id,
+      });
+      return result;
+    } : null,
+  });
+  transcriptionProvidersByStore.set(store, transcriptionProvider);
   const mediaJobRunner = createMediaJobRunner({
     store,
+    provider: transcriptionProvider,
+    onQueued: (job) => queueMediaProcessing(job, { delaySeconds: Math.min(900, 2 ** Math.min(9, Math.max(0, (job.attempts ?? 1) - 1))) }),
     config,
     events,
     notifications,
@@ -1233,6 +1270,45 @@ export function createApp({
           await store.completeConnectSession({ sessionId: session.id, error: error?.message || "Enrollment failed." });
           throw error;
         }
+      }
+
+      const connectorMediaMatch = url.pathname.match(/^\/v1\/connector\/media\/([^/]+)$/u);
+      if (req.method === "GET" && connectorMediaMatch) {
+        const connector = await authenticateConnector(req, store, config);
+        await enforceRateLimit(req, res, rateLimiter, config, {
+          scope: "connector:read", actorId: connector.id,
+          limit: config.rateLimits?.connectorRead ?? config.rateLimits?.deviceRead,
+        });
+        if (!connector.scopes?.includes("t3:proxy")) throw new HttpError(403, "Connector media access is unavailable.");
+        const jobId = requireString(url.searchParams.get("jobId"), "jobId");
+        const mediaId = connectorMediaMatch[1];
+        let access;
+        try { access = await requireConnectorTranscriptionJob({ store, userId: connector.userId, jobId, mediaId, connectorId: connector.id }); }
+        catch { throw new HttpError(404, "Transcription media is unavailable."); }
+        const media = await store.getMediaForUser(connector.userId, mediaId);
+        if (!media || media.kind !== "audio" || (media.environmentId && media.environmentId !== access.environment.id)) {
+          throw new HttpError(404, "Transcription media is unavailable.");
+        }
+        if (!Number.isSafeInteger(media.sizeBytes) || media.sizeBytes < 1 || media.sizeBytes > 2 * 1024 * 1024) {
+          throw new HttpError(413, "Recording exceeds the connector transfer limit.");
+        }
+        let buffer;
+        try { buffer = await readStoredMedia(media, config, { maxBytes: 2 * 1024 * 1024 }); }
+        catch (error) { throw new HttpError(error?.status === 413 ? 413 : 502, "Recording bytes are unavailable."); }
+        // Re-authorize after object storage waits; deletion, revocation and expired leases win.
+        try {
+          await authenticateConnector(req, store, config);
+          await requireConnectorTranscriptionJob({ store, userId: connector.userId, jobId, mediaId, connectorId: connector.id });
+        } catch { throw new HttpError(404, "Transcription media is unavailable."); }
+        if (!await store.getMediaForUser(connector.userId, mediaId)) throw new HttpError(404, "Transcription media is unavailable.");
+        if (buffer.length !== media.sizeBytes || createHash("sha256").update(buffer).digest("hex") !== media.sha256) {
+          throw new HttpError(502, "Recording integrity check failed.");
+        }
+        return sendBuffer(res, 200, buffer, {
+          "content-type": media.contentType, "cache-control": "private, no-store",
+          "x-media-id": media.id, "x-media-sha256": media.sha256,
+          "x-content-type-options": "nosniff",
+        });
       }
 
       if (req.method === "POST" && url.pathname === "/v1/connectors/ticket") {
@@ -3060,6 +3136,7 @@ export function createApp({
         const body = await readJson(req);
         return await retryConfigurationFailures({
           store,
+          scheduleMediaProcessing: queueMediaProcessing,
           config,
           res,
           userId: user.id,
@@ -3097,6 +3174,7 @@ export function createApp({
           failureKind: null,
           timings: { reviewedAt: new Date().toISOString() },
         });
+        await queueMediaProcessing(job);
         return sendJson(res, 200, { job: withTranscriptChange(job) });
       }
 
@@ -3106,6 +3184,7 @@ export function createApp({
         await enforceUserWrite(req, res, rateLimiter, config, user);
         return await enqueueTranscription({
           store,
+          scheduleMediaProcessing: queueMediaProcessing,
           config,
           userId: user.id,
           mediaId: mediaTranscribeMatch[1],
@@ -4326,6 +4405,7 @@ export function createApp({
         }
         const queued = await enqueueDeviceTranscription({
           store,
+          scheduleMediaProcessing: queueMediaProcessing,
           config,
           events,
           device,
@@ -4379,7 +4459,7 @@ export function createApp({
         // Audio is queued for transcription here rather than waiting for someone to ask. A
         // controller uploads and moves on, so the one identifier it gets back is the job id: it
         // polls /v1/device/media/jobs/:id and needs nothing else.
-        const queued = await enqueueDeviceTranscription({ store, config, events, device, media, body });
+        const queued = await enqueueDeviceTranscription({ store, config, events, device, media, body, scheduleMediaProcessing: queueMediaProcessing });
         return sendJson(res, 201, { media: queued.media, job: deviceJobStatus(queued.job) });
       }
 
@@ -6411,7 +6491,7 @@ function buildEnvironmentFailure({ environment, reason, message }) {
  * provider is still refused synchronously with 409 — queueing work that is guaranteed to fail
  * identically on every attempt would replace a clear error with a silent one.
  */
-async function enqueueTranscription({ store, config, userId, mediaId, res }) {
+async function enqueueTranscription({ store, config, userId, mediaId, res, scheduleMediaProcessing }) {
   const media = await store.getMediaForUser(userId, mediaId);
   if (!media) throw new HttpError(404, "Media upload not found.");
   if (media.kind !== "audio") throw new HttpError(400, "Only audio media can be transcribed.");
@@ -6448,6 +6528,7 @@ async function enqueueTranscription({ store, config, userId, mediaId, res }) {
     },
   });
 
+  await scheduleMediaProcessing?.(job);
   return sendJson(res, 202, {
     job,
     media: await nameMediaRecord(store, userId, withProcessing ?? publicMediaRecord(media), config),
@@ -6507,11 +6588,14 @@ function deviceCaptureTarget(device, body = {}) {
   return target;
 }
 
-async function enqueueDeviceTranscription({ store, config, events, device, media, body = {} }) {
+async function enqueueDeviceTranscription({ store, config, events, device, media, body = {}, scheduleMediaProcessing }) {
   if (media.kind !== "audio") return { job: null, media };
   const previous = (await store.listMediaJobs({ userId: device.userId, mediaId: media.id }))
     .find((job) => job.kind === "transcription" && job.deviceId === device.id);
-  if (previous) return { job: previous, media };
+  if (previous) {
+    if (["queued", "ready"].includes(previous.stage)) await scheduleMediaProcessing?.(previous);
+    return { job: previous, media };
+  }
   const captureTarget = media.environmentId || media.threadId
     ? { environmentId: media.environmentId ?? null, threadId: media.threadId ?? null }
     : deviceCaptureTarget(device, body);
@@ -6569,6 +6653,7 @@ async function enqueueDeviceTranscription({ store, config, events, device, media
     ...mediaJobEvent(job, new Date().toISOString()),
     terminal: false,
   });
+  await scheduleMediaProcessing?.(job);
   return { job, media: queued ?? media };
 }
 
@@ -6595,8 +6680,10 @@ async function enqueueDeviceTranscription({ store, config, events, device, media
  * has long stopped expecting. The grant means "send what I say as I say it" — it was never consent
  * for what was said last Tuesday.
  */
-async function retryConfigurationFailures({ store, config, res, userId, jobIds = null }) {
-  const provider = createTranscriptionProvider(config);
+async function retryConfigurationFailures({ store, config, res, userId, jobIds = null, scheduleMediaProcessing }) {
+  const provider = config.transcriptionProvider === "connector"
+    ? transcriptionProvidersByStore.get(store) ?? createTranscriptionProvider(config)
+    : createTranscriptionProvider(config);
   if (!isTranscriptionProviderEnabled(config.transcriptionProvider) || provider.available !== true) {
     throw new HttpError(
       409,
@@ -6654,6 +6741,7 @@ async function retryConfigurationFailures({ store, config, res, userId, jobIds =
         lastError: null,
       },
     });
+    await scheduleMediaProcessing?.(updated);
     requeued.push({
       jobId: updated.id,
       mediaId: updated.mediaId,
@@ -6721,6 +6809,7 @@ async function dispatchVoiceTranscript({ store, config, job, transcript }) {
       store,
       environment,
       body: {
+        clientRequestId: `voice:${job.id}`,
         threadId,
         environmentId,
         intent: { type: "audio_prompt", transcript, mediaUploadIds: [job.mediaId] },
@@ -7620,6 +7709,26 @@ function deviceCredentialRotationError(reason, rotation) {
     reason,
     rotation,
   });
+}
+
+async function requireConnectorTranscriptionJob({ store, userId, jobId, mediaId, connectorId, leaseOwner, attempt }) {
+  const job = await store.getMediaJobForUser(userId, jobId);
+  if (!job || job.kind !== "transcription" || job.mediaId !== mediaId || !job.environmentId
+      || job.stage !== "transcribing" || !job.leaseOwner || !(Date.parse(job.leaseExpiresAt) > Date.now())
+      || (leaseOwner !== undefined && job.leaseOwner !== leaseOwner)
+      || (attempt !== undefined && job.attempts !== attempt)) {
+    throw new TranscriptionError("The recording's processing lease is unavailable.", { retryable: true, failureCause: "provider" });
+  }
+  const environment = await store.getEnvironmentForUser(userId, job.environmentId);
+  const connector = environment?.connectorId ? await store.getConnectorForUser(userId, environment.connectorId) : null;
+  if (!environment || environment.transportMode !== "connector" || !connector || connector.revokedAt
+      || connector.environmentId !== environment.id || (connectorId && connector.id !== connectorId)) {
+    throw new TranscriptionError("This recording's paired laptop is unavailable.", { failureCause: "configuration" });
+  }
+  if (!connector.capabilities?.includes("media.transcribe")) {
+    throw new TranscriptionError("Update the paired connector and configure its local Parakeet service.", { failureCause: "configuration" });
+  }
+  return { job, environment, connector };
 }
 
 async function authenticateConnector(req, store, config = {}) {

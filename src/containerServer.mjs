@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createApp } from "./app.mjs";
 import { loadConfig } from "./config.mjs";
 import { createConnectorInternalService } from "./connectorInternalService.mjs";
+import { createCloudMediaQueuePublisher } from "./cloudMediaQueue.mjs";
 import { createCloudBackgroundWork } from "./cloudBackground.mjs";
 import { createCloudflareConnectorRouter } from "./cloudflareConnectorRouter.mjs";
 import { createRateLimiter, createRedisBackend } from "./rateLimit.mjs";
@@ -51,6 +52,8 @@ export async function createContainerServers({ env = process.env, logger = conso
   const app = createApp({
     config,
     rateLimiter,
+    logger,
+    scheduleMediaProcessing: createCloudMediaQueuePublisher({ url: config.cloudMediaQueueUrl, logger }),
     ...(store ? { store } : {}),
     ...(resolvedT3TransportResolver ? { t3TransportResolver: resolvedT3TransportResolver } : {}),
     ...(cloudflareConnectorRouter ? { connectorRouter: cloudflareConnectorRouter } : {}),

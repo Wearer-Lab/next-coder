@@ -109,6 +109,21 @@ test("queue adapter retries transient failures and acknowledges terminal malform
   assert.equal(result.outcomes[1].failure.terminal, true);
 });
 
+test("a concurrent media wakeup retries rather than acknowledging work the busy runner has not claimed", async () => {
+  const actions = [];
+  const work = createCloudBackgroundWork({
+    mediaJobRunner: { runOnce: async () => ({ skipped: true, processed: [] }) },
+    logger: { warn() {} },
+  });
+  const result = await work.handleQueueBatch({ messages: [{
+    id: "concurrent-recording",
+    body: { version: 1, kind: "media.process", payload: {} },
+    ack: () => actions.push("ack"), retry: () => actions.push("retry"),
+  }] });
+  assert.deepEqual(actions, ["retry"]);
+  assert.equal(result.outcomes[0].failure.code, "media_processor_busy");
+});
+
 test("maintenance targeting pages durable users in stable bounded order", async () => {
   const store = createStore();
   for (let index = 100; index >= 0; index -= 1) {

@@ -22,7 +22,7 @@ const PNG_BASE64 =
  * The worker is never started — `mediaJobRunner.runOnce()` is called explicitly, so no assertion
  * here depends on a timer firing.
  */
-async function setupLoop(t, { profile = "next-coder" } = {}) {
+async function setupLoop(t, { profile = "next-coder", scheduleMediaProcessing = null } = {}) {
   const mediaDir = await mkdtemp(join(tmpdir(), "next-coder-device-audio-"));
   t.after(() => rm(mediaDir, { recursive: true, force: true }));
 
@@ -40,9 +40,8 @@ async function setupLoop(t, { profile = "next-coder" } = {}) {
     globalThis.fetch = originalFetch;
   });
 
-  const { server, mediaJobRunner } = createApp({
-    config: { mediaDir, maxMediaBytes: 4096, transcriptionProvider: "mock", demoMode: false },
-  });
+  const appConfig = { mediaDir, maxMediaBytes: 4096, transcriptionProvider: "mock", demoMode: false };
+  const { server, mediaJobRunner, store } = createApp({ config: appConfig, scheduleMediaProcessing });
   await listen(server);
   t.after(() => server.close());
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -95,6 +94,8 @@ async function setupLoop(t, { profile = "next-coder" } = {}) {
     device: created.device,
     environment: environment.environment,
     mediaJobRunner,
+    store,
+    appConfig,
     dispatches,
     upload,
     enableAutoSend: (enabled = true) => call(`/v1/devices/${created.device.id}/voice-auto-send`, {
@@ -671,3 +672,37 @@ async function readStreamUntil(reader, pattern) {
 function jsonResponse(body, status) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
+
+test("device voice enqueue schedules durable work immediately and queue failure preserves the upload", async (t) => {
+  const scheduled = [];
+  const loop = await setupLoop(t, { scheduleMediaProcessing: async (request) => { scheduled.push(request); throw new Error("private failure"); } });
+  const uploaded = await loop.upload();
+  assert.equal((await loop.store.getMediaJobForUser("user_dev", uploaded.job.jobId)).stage, "queued");
+  assert.deepEqual(scheduled, [{ jobId: uploaded.job.jobId, delaySeconds: 0 }]);
+  assert.equal((await loop.call(`/v1/device/media/jobs/${uploaded.job.jobId}`, { headers: loop.deviceHeaders })).job.milestone, "transcribing");
+});
+
+test("voice dispatch survives a job-settlement failure and runner restart without a second T3 turn", async (t) => {
+  const scheduled = [];
+  const loop = await setupLoop(t, { scheduleMediaProcessing: async (request) => { scheduled.push(request); return true; } });
+  await loop.enableAutoSend(true);
+  const uploaded = await loop.upload();
+  const update = loop.store.updateMediaJob.bind(loop.store);
+  let failSettle = true;
+  loop.store.updateMediaJob = async (input) => {
+    if (input.stage === "dispatched" && failSettle) { failSettle = false; throw new Error("simulated process failure after T3 acknowledged"); }
+    return await update(input);
+  };
+  await loop.mediaJobRunner.runOnce();
+  assert.equal(loop.dispatches.length, 1);
+  assert.equal((await loop.store.getMediaJobForUser("user_dev", uploaded.job.jobId)).stage, "queued");
+  assert.ok(scheduled.some((item) => item.jobId === uploaded.job.jobId && item.delaySeconds > 0));
+  const restarted = createApp({ store: loop.store, config: loop.appConfig });
+  await restarted.mediaJobRunner.runOnce();
+  assert.equal(loop.dispatches.length, 1, "durable voice clientRequestId must replay the existing command");
+  const final = await loop.store.getMediaJobForUser("user_dev", uploaded.job.jobId);
+  assert.equal(final.stage, "dispatched");
+  const receipt = await loop.store.getCommandRequest({ userId: "user_dev", actorType: "device", actorId: loop.device.id,
+    operation: "intent.submit", clientRequestId: `voice:${uploaded.job.jobId}` });
+  assert.equal(receipt.commandId, final.commandId);
+});

@@ -73,6 +73,9 @@ export function resolveRuntimeConfig(env: RuntimeBindings): ResolvedRuntimeConfi
     CLOUD_SNAPSHOT_CONSUMER_ENABLED: "1",
     CLOUD_THREAD_STREAM_CONSUMER_ENABLED: "0",
     CLOUD_MEDIA_CONSUMER_ENABLED: "1",
+    // Native Queue wakes the durable runner immediately. Speech inference happens only on
+    // the paired user's machine through its authenticated outbound connector.
+    CLOUD_MEDIA_QUEUE_URL: "http://background.internal/v1/media/process",
   };
 
   copyDefined(containerEnv, env, [
@@ -104,6 +107,11 @@ export function resolveRuntimeConfig(env: RuntimeBindings): ResolvedRuntimeConfi
     "WEB_PUSH_VAPID_SUBJECT",
     "WEB_PUSH_ALLOWED_HOSTS",
     "WEB_PUSH_STORAGE_ENCRYPTION_KEY",
+    "TRANSCRIPTION_PROVIDER",
+    "TRANSCRIPTION_LANGUAGE",
+    "TRANSCRIPTION_TIMEOUT_MS",
+    "TRANSCRIPTION_LEASE_MS",
+    "TRANSCRIPTION_BATCH_SIZE",
   ]);
 
   return {

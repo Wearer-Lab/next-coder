@@ -476,7 +476,11 @@ For local audio transcription development, set:
 TRANSCRIPTION_PROVIDER=mock
 ```
 
-The mock provider produces deterministic transcripts for smoke tests. Production deployments should replace it with a real transcription worker/provider.
+The mock provider produces deterministic transcripts for smoke tests. Cloud deployments use
+`TRANSCRIPTION_PROVIDER=connector` to route audio to each user's paired computer for local Parakeet
+inference. Voice setup belongs to the connector package, without a repository checkout or public
+laptop port. See [local voice operation and verification](docs/local-voice.md), including the
+English-only model and first-install download requirements.
 
 ## Connect a T3 environment today
 

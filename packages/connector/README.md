@@ -193,3 +193,35 @@ npm run pack:smoke
 ```
 
 The package has no runtime dependencies and no imports outside its packed files.
+
+## Built-in local voice
+
+`connect` prepares and maintains the local speech runtime automatically. First use downloads an
+approximately 660 MB English Parakeet model, a managed Python runtime and inference dependencies
+into the per-user connector state directory. The packaged connector includes its own installer and
+sidecar source; no repository checkout or separately installed Python is required. Startup launches
+its owned sidecar on a private loopback port. Explicit bench configuration can reuse a compatible
+external service. An unhealthy runtime is repaired
+on the next transcription request; failure produces an actionable voice error.
+
+```bash
+next-coder-connect voice status --json
+next-coder-connect voice setup
+```
+
+`voice status` checks readiness without downloading anything. `voice setup` explicitly installs or
+repairs the runtime; the next `connect` starts it. Voice processes audio locally, then returns the
+transcript through the authenticated outbound connector channel. Cloud media downloads use a fixed,
+connector-authenticated route, a SHA-256 checksum and a 2 MiB limit. Only one local transcription can
+run at a time. Cancellation/deadline abort its fetches; transcript results are never written to the
+connector's completed-request disk cache. Native T3 dispatch still uses durable idempotency receipts.
+
+Clean-host Windows/Linux installation, model download and microphone-to-agent behavior require
+qualification on those systems; mocked lifecycle tests do not establish hardware support. The
+English model does not provide multilingual transcription.
+
+The NVIDIA Parakeet TDT 0.6B v2 model and
+[Istupakov ONNX conversion](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx)
+are distributed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+This package uses int8 inference at model revision
+`0bbb45a3365852604aef28b538a8f066f4ccaa85`; model terms are separate from its Apache-2.0 source license.

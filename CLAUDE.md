@@ -975,3 +975,22 @@ Capability freshness is a renewable lease, not a requirement to reconnect a heal
 Completion evidence is newer than dispatch start, not necessarily newer than its delayed acknowledgement or durable command row. The immutable `metrics.dispatchStartedAt` preserves that boundary through acknowledgement and completion updates, and anchors the device response cursor. Older commands fall back to the acknowledgement timestamp minus dispatch duration. After recording an acknowledged command, reconcile any real reply already collected by its leased stream; never equate the acknowledgement itself with completion.
 
 Protocol-2 shell snapshots contain no message bodies. The device response endpoint must read the selected thread detail (bounded to eight turns) when the shell row has no messages, while thread menus stay shell-only. The adapter thread-detail result may be the thread itself; do not assume an additional `{ thread }` envelope.
+
+### Connector-local speech boundary
+
+Cloud voice uses `TRANSCRIPTION_PROVIDER=connector`: the durable runner passes its leased job to
+an injected transcription provider, which routes only `{mediaId, jobId}` to that environment's
+current connector. Authenticated `/v1/connector/media/:id` rechecks account/environment ownership,
+lease, current connector and revocation before and after storage reads; bounded bytes and SHA-256
+are verified again by the laptop. Cloud never addresses the laptop's loopback speech port.
+
+The connector prepares and owns its private Python/Parakeet runtime by default. Only explicit
+bench configuration may reuse an external compatible sidecar. Owned sidecars watch their parent
+stdin pipe and exit on EOF as well as on ordinary shutdown, preventing orphaned inference processes
+after a connector crash. Transcripts never enter durable connector request caches or speech logs;
+the hub keeps bounded short-lived results and persists only retryable receipt metadata.
+
+Queue wakeups remove the five-minute Cron latency; a skipped busy media runner is retryable work,
+not an acknowledgement. Production uses one leased job per invocation with a timeout shorter than
+the lease and private request budget. Voice dispatch uses `voice:${job.id}` as its request identity,
+so a crash after T3 acceptance but before media-job settlement cannot create a second turn.

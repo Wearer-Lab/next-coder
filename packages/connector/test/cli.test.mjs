@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { main, parseArgs } from "../src/cli.mjs";
+import { main as realMain, parseArgs } from "../src/cli.mjs";
 import { loadState } from "../src/config.mjs";
 
 test("CLI parsing is strict", () => {
@@ -24,11 +24,14 @@ test("mock enrollment persists local-only T3 token and connects once", async () 
     if (String(url).endsWith("/v1/connectors/enroll")) return new Response(JSON.stringify({ connector: { id: "con" }, environment: { id: "env" }, secret: "standing" }), { status: 201 });
     throw new Error(`Unexpected URL: ${url}`);
   };
-  class MockConnector { constructor() {} async run() {} stop() {} }
+  let prepared = false; let closed = false;
+  class MockConnector { constructor(input) { assert.equal(prepared, true); assert.equal(input.state.voice.enabled, true); assert.equal(typeof input.ensureLocalTranscription, "function"); } async run() {} stop() {} }
   const code = await main(["connect", "--server", "http://127.0.0.1:8787", "--code", "enroll-code", "--t3-url", "http://127.0.0.1:3773", "--once"], {
     stateDir, stdout: output, stderr: output, env: { NEXT_CODER_T3_TOKEN: "local-token" }, fetchImpl, WebSocketImpl: class {}, Connector: MockConnector,
+    prepareVoiceRuntime: async ({ signal }) => { prepared = true; assert.equal(signal.aborted, false); return { url: "http://127.0.0.1:8977/v1/transcribe", close: async () => { closed = true; }, ensureReady: async () => {} }; },
   });
   assert.equal(code, 0);
+  assert.equal(closed, true);
   const state = await loadState(stateDir);
   assert.equal(state.t3AccessToken, "local-token");
   const enrollBody = requests.find((request) => request.url.endsWith("/v1/connectors/enroll")).options.body;
@@ -158,3 +161,16 @@ test("service commands refuse to operate before connector-owned installation", a
 });
 
 function capture() { let text = ""; return { write(value) { text += value; }, value() { return text; } }; }
+
+function main(args, dependencies = {}) { return realMain(args, { inspectVoiceRuntime: async () => ({ ready: true }), prepareVoiceRuntime: async () => ({ url: "http://127.0.0.1:8977/v1/transcribe", close: async () => {}, ensureReady: async () => {} }), ...dependencies }); }
+
+test("voice setup and status use managed runtime without connector enrollment", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "connector-voice-cli-")); const output = capture();
+  let installed = 0;
+  assert.equal(await main(["voice", "setup"], {stateDir,stdout:output,stderr:output,setupVoiceRuntime:async()=>{installed++;}}),0);
+  assert.equal(installed,1);
+  assert.equal(await main(["voice", "status", "--json"], {stateDir,stdout:output,stderr:output,inspectVoiceRuntime:async()=>({ready:false})}),1);
+  assert.equal(installed,1,"status must not install or start runtime");
+  assert.equal(parseArgs(["voice","setup"]).voiceAction,"setup");
+  assert.throws(()=>parseArgs(["voice","unknown"]),/Voice supports/);
+});
