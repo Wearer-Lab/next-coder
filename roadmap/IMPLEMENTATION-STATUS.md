@@ -5,8 +5,32 @@ Canonical progress ledger for
 This file records what the repository can do now; the roadmap records the target and sequence.
 Anything not marked **done** is not complete.
 
-Last verified: **2026-10-22** for the production recovery and firmware audit below. The
+Last verified: **2026-10-23** for connector-local voice and the production recovery below. The
 September workstream tables remain the baseline for gates not explicitly superseded here.
+
+## October 23 connector-local voice
+
+- Production `TRANSCRIPTION_PROVIDER=connector` routes each leased recording to its owner's
+  current environment connector. Account/environment/lease isolation, post-wait revocation checks,
+  bounded authenticated download, transcript privacy and stable T3 dispatch identity have tests.
+- Voice is prepared automatically by the packaged connector: private managed Python, pinned
+  dependencies and verified model, owned loopback sidecar, health checks and bounded recovery.
+  No repository checkout, system Python, exposed laptop port or cloud inference is required.
+- `npm test` passed **1,466 tests** with three intentional live-S3 skips; two separate Python
+  process/transport tests, container smoke, clean package installation and repository secret scan
+  passed. Exact code CI `39901775422` is green.
+- An empty-directory macOS install and generated-clip inference succeeded. The production Mac's
+  connector owns a healthy speech process and advertises `media.transcribe`; Hosyond 0.2.17 is
+  online with default voice auto-send enabled. This supersedes the disabled-transcription state
+  recorded in the October 22 audit.
+- Real Hosyond microphone → local transcription → T3 → physical screen verification remains
+  pending a fresh owner recording. Windows/Linux clean-host and hardware qualification remain
+  unverified. The bundled Parakeet checkpoint is English only.
+- The package is packable and installable, but public npm lookup returned 404. Public `npx`
+  distribution still requires first publication through the protected connector release flow;
+  deployment of the gateway does not publish that package.
+
+See [local voice operation](../docs/local-voice.md) for setup, boundaries and limitations.
 
 ## October 22 production and firmware evidence
 
@@ -31,8 +55,8 @@ September workstream tables remain the baseline for gates not explicitly superse
   `jn772qe7txpzz77vtzg4286c3d8gvbs2`, completed at 23:18:12 EDT on October 22, and the owner
   confirmed `HOSYOND_PRODUCTION_E2E_OK` visible on the physical screen. This replaces the earlier
   failed-attempt evidence for that path; it does not close outage, stress, voice or OTA gates.
-- Production transcription is disabled; real voice-to-T3 verification requires a production-reachable
-  transcription provider. Transcript editing, provider approvals and free-form user input currently
+- At this audit's cutoff production transcription was disabled; the October 23 connector-local
+  implementation above supersedes that deployment state. Transcript editing, provider approvals and free-form user input currently
   hand off explicitly to the console. Other boards have compile evidence, not equivalent silicon proof.
 
 ## Cloud control-plane and local connector workstream
