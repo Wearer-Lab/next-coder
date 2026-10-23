@@ -26,9 +26,11 @@ September workstream tables remain the baseline for gates not explicitly superse
   sample retention, and successful cloud/T3 thread creation with list insertion and binding adoption.
   The disposable thread was archived and the verification binding restored. All 15 environments
   built after shared repairs; all seven Hosyond environments were rebuilt after final board changes.
-- Physical Hosyond action-to-T3-to-screen completion remains unverified. Earlier physical attempts
-  failed before confirmation and produced no device-origin command. Build evidence must not be
-  substituted for the renewed physical workflow pass.
+- Physical Hosyond action-to-T3-to-screen completion is verified for the read-only Verify T3 action
+  on firmware 0.2.17: owner tap and Confirm produced device command
+  `jn772qe7txpzz77vtzg4286c3d8gvbs2`, completed at 23:18:12 EDT on October 22, and the owner
+  confirmed `HOSYOND_PRODUCTION_E2E_OK` visible on the physical screen. This replaces the earlier
+  failed-attempt evidence for that path; it does not close outage, stress, voice or OTA gates.
 - Production transcription is disabled; real voice-to-T3 verification requires a production-reachable
   transcription provider. Transcript editing, provider approvals and free-form user input currently
   hand off explicitly to the console. Other boards have compile evidence, not equivalent silicon proof.

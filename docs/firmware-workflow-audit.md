@@ -89,3 +89,17 @@ has native tests; a physical OTA power-cut/rollback rehearsal was not performed.
 Production boot capture is disabled by default; the explicit bench environment opts into the
 two-second microphone self-test. Normal startup therefore avoids recording ambient audio and
 waiting for that diagnostic. The final production image is 0.2.17.
+
+## Confirmed physical production round trip (2026-10-22 EDT)
+
+On production firmware 0.2.17, the owner tapped Verify T3 and Confirm on the Hosyond. The resulting
+device-origin command `jn772qe7txpzz77vtzg4286c3d8gvbs2` was created at 23:18:02 EDT and completed
+at 23:18:12 EDT (2026-10-23T03:18:12.894Z). Its durable result contained
+`HOSYOND_PRODUCTION_E2E_OK`, and the device reply endpoint returned HTTP 200 with the same marker
+after the command's immutable dispatch cursor. The owner then explicitly confirmed that the exact
+reply was visible on the physical Hosyond screen. This closes the saved-action confirmation, cloud
+routing, local T3 execution and on-device reply path for this test.
+
+The serial trace from the earlier session had expired before this tap, so the screen-delivery proof
+is the owner's observation, not a recorded render acknowledgement. Radio outage recovery, repeated
+confirmation stress, transcription and the other physical cases above remain separate gates.
