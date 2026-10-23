@@ -27,11 +27,20 @@ September workstream tables remain the baseline for gates not explicitly superse
   media job `ms703vnnm1szyh1x6bp1kj54as8gv0pb`, local ASR **1,997 ms**, queue wait **6,031 ms**,
   and command `jn7bn2vme8dyn17mq4e3gkfhd18gv755` completed at **00:53:01 EDT October 23**
   with `voice tests successful`. The device-authenticated reply endpoint returned HTTP 200 with
-  that reply; physical screen confirmation remains pending. Windows/Linux clean-host and hardware qualification remain
+  that reply; the owner reported it did **not** appear on the screen. This first voice attempt
+  therefore proves capture/local ASR/T3 completion, not display delivery.
+- The missing reply exposed a race: transient `ready`/`dispatching` stopped device polling before
+  `Sent` and its reply cursor. Gateway projection and defensive firmware polling were repaired in
+  `a96f65a`; **1,469 tests** pass, exact source CI `39904691295` is green, and all **15 firmware
+  environments** compile. Secure Hosyond **0.2.18** was flashed and hash-verified, preserving
+  NVS/OTA selection. It is online; a fresh physical voice/display test is requested.
+  Windows/Linux clean-host and hardware qualification remain
   unverified. The bundled Parakeet checkpoint is English only.
-- The package is packable and installable, but public npm lookup returned 404. Public `npx`
-  distribution still requires first publication through the protected connector release flow;
-  deployment of the gateway does not publish that package.
+- The user selected the existing npm organization `wearer-haitch`; the package and onboarding
+  command now use `@wearer-haitch/connector`. The protected release candidate for `connector-v0.1.0`
+  passed verification and its downloaded artifact hash was revalidated. First owner-bootstrap
+  publication returned `EOTP` and needs the owner's two-factor authentication in Terminal.
+  Public npm lookup still returns 404; gateway deployment does not publish that package.
 
 See [local voice operation](../docs/local-voice.md) for setup, boundaries and limitations.
 
