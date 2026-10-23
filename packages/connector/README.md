@@ -8,7 +8,8 @@ The package requires Node 22 or newer. Foreground operation and managed per-user
 implemented for macOS, Linux, and Windows. The Windows implementation is covered by platform-mocked
 tests but has not yet been exercised on a real Windows host. A manual, environment-protected npm
 trusted-publishing workflow now validates and can publish an exact tagged tarball with OIDC
-provenance, but no publication has been executed from this checkout. See
+provenance. Version 0.1.0 was published by an npm owner bootstrap on October 23, 2026 and verified
+through a fresh public-registry installation; that bootstrap does not claim OIDC provenance. See
 [`docs/npm-connector-release.md`](../../docs/npm-connector-release.md).
 
 ## Connect

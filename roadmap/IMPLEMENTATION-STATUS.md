@@ -33,7 +33,12 @@ September workstream tables remain the baseline for gates not explicitly superse
   `Sent` and its reply cursor. Gateway projection and defensive firmware polling were repaired in
   `a96f65a`; **1,469 tests** pass, exact source CI `39904691295` is green, and all **15 firmware
   environments** compile. Secure Hosyond **0.2.18** was flashed and hash-verified, preserving
-  NVS/OTA selection. It is online; a fresh physical voice/display test is requested.
+  NVS/OTA selection. A fresh physical voice test now passes: job
+  `ms759r198e6eac0vxkx55j026x8gvsvz` was transcribed locally, command
+  `jn7dysrs52fg7qg152010m9xr18gtkz9` completed at **01:31:35 EDT**, and the owner confirmed
+  `voice test successful` visible on the Hosyond. Its reply endpoint also returned HTTP 200.
+  This attempt measured **5,698 ms** queue wait, **21,717 ms** provider time, and about **43 seconds**
+  from gateway receipt to T3 reply; successful delivery does not close latency/soak gates.
   Windows and Linux x64 execution plus further hardware qualification remain unverified.
   The bundled Parakeet checkpoint is English only.
 - The exact release tarball also passed native Linux ARM64 execution in a disposable Node 22
@@ -43,9 +48,11 @@ September workstream tables remain the baseline for gates not explicitly superse
   removed; this is software proof, not physical microphone or Linux desktop-service proof.
 - The user selected the existing npm organization `wearer-haitch`; the package and onboarding
   command now use `@wearer-haitch/connector`. The protected release candidate for `connector-v0.1.0`
-  passed verification and its downloaded artifact hash was revalidated. First owner-bootstrap
-  publication returned `EOTP` and needs the owner's two-factor authentication in Terminal.
-  Public npm lookup still returns 404; gateway deployment does not publish that package.
+  passed verification and its downloaded artifact hash was revalidated. The owner completed the
+  two-factor bootstrap publication of **0.1.0**. Public metadata and tarball integrity match the
+  tested candidate; fresh-cache, unauthenticated `npm exec` outside the checkout passed. The Mac's
+  managed service now runs that public artifact, with fresh cloud connection and local T3 health.
+  This manual bootstrap does not claim OIDC provenance; trusted-publisher configuration remains.
 
 See [local voice operation](../docs/local-voice.md) for setup, boundaries and limitations.
 
@@ -81,7 +88,7 @@ See [local voice operation](../docs/local-voice.md) for setup, boundaries and li
 | Surface | State | Current evidence | Remaining gate |
 |---|---|---|---|
 | Connector backend | partial | Separate credential/ticket realm, Store/Convex parity, connector projections, `T3Transport`, private router, bounded 25-second immediate-wake result/subscription reads, credential-scoped idempotent self-revocation with fail-closed local cleanup, managed-topology exclusion of the local ticket issuer, and reconnect recovery; focused local gates cover these contracts | Deployed binding latency/call rate, machine sleep/WAN, and live T3 parity |
-| Connector package | partial | Real npm bin and clean pack/install; manual protected release automation binds exact stable version, annotated tag, source commit and confirmation, enforces dependency-free contents/size/executable plus npm dry-run, grants OIDC only to `npm-release`, refuses immutable version reuse, requests provenance, designs clean external exact-version verification, and emits redacted evidence; the package manifest now carries Apache-2.0, a package-local `LICENSE`, and the `spyhack225/next-coder` repository/homepage/bugs metadata; native credential adapters, cross-platform T3 ownership, transactional update rollback, rotation, and platform-mocked service lifecycle remain covered locally | Confirm the final public package scope/name, configure the npm trusted publisher/environment/tag rules, execute publication; then prove clean macOS/Linux/Windows install, service/T3/native-store/sleep/update/rotation handoff behavior |
+| Connector package | partial | Real npm bin and clean pack/install; manual protected release automation binds exact stable version, annotated tag, source commit and confirmation, enforces dependency-free contents/size/executable plus npm dry-run, grants OIDC only to `npm-release`, refuses immutable version reuse, requests provenance, designs clean external exact-version verification, and emits redacted evidence; the package manifest now carries Apache-2.0, a package-local `LICENSE`, and the `spyhack225/next-coder` repository/homepage/bugs metadata; native credential adapters, cross-platform T3 ownership, transactional update rollback, rotation, and platform-mocked service lifecycle remain covered locally | Public @wearer-haitch/connector 0.1.0 bootstrap and fresh npm exec verified; configure trusted publishing, then qualify remaining clean-host service/native-store/sleep/update/rotation behavior and Windows/Linux x64 execution |
 | Cloudflare edge | partial | Worker/Static Assets, per-environment Durable Object, bounded immediate-wake waits, Queue/Cron handlers, redacted terminal/exhaustion quarantine plus configured broker DLQs, revoke/reconnect recovery, and sampled privacy-safe Analytics Engine/log telemetry for request duration/outcome, DO capacity, Queue lag/retry/quarantine/DLQ risk, connector transitions, and rollouts; Wrangler/preflight sampling and binding policy plus hermetic telemetry tests are local-only | Execute isolated bootstrap and protected deploy/rollback; prove hosted ingestion/privacy, dashboards/alerts, native Queue/DLQ correlation, cron, rollover/load/security behavior |
 | Cloudflare control plane | partial | Private Worker + bounded Container wrapper + private edge-router/background joins; managed Web Push VAPID rotation/sealing secrets are name-preflighted and passed only to the private Container with its process timer disabled in favor of Queue/Cron; Container proxy telemetry distinguishes startup-wait candidates, startup timeout, and response-header timeout without request data; reproducible `linux/amd64` image (about 78 MiB as a gzip-compressed `docker save` archive under a 100 MiB budget; 227 MiB uncompressed) runs non-root and passes public/private/graceful-stop release smoke; protected bootstrap/release/rollback and redacted qualification harnesses have local coverage | Execute paid-plan bootstrap/deploy, live rollback rehearsal, qualification/binding/jobs/R2/Web Push provider, hosted telemetry privacy/alert delivery, and `standard-1` CPU/memory/cold-start/cost proof |
 | Capacity/SLO | partial | Provisional singleton budget and `npm run test:capacity`; local report qualifies 16 concurrent environments, 48 Container proxy requests, exact 32-request/16-lease/48-waiter DO bounds, fresh/warm/saturated latency, Node RSS/heap/CPU, and the process-local rate-limit restart caveat | Hosted `standard-1` saturation/soak/rollover, Redis continuity, per-hop WAN latency, availability, Cloudflare billing observation, and accepted singleton/partition decision |

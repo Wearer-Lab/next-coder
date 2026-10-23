@@ -5,9 +5,13 @@ publish `@wearer-haitch/connector`. It is manual-only, publishes one exact stabl
 one annotated `connector-vVERSION` tag, and enters the protected `npm-release` GitHub environment
 before receiving `id-token: write`. It never reads an npm token.
 
-The workflow exists, but no publication has been executed or verified from this checkout. Steps 1
-and 2 of the one-time setup below are now complete; steps 3 to 5 are npm and GitHub account
-operations that remain outstanding.
+On October 23, 2026, the owner bootstrapped public `@wearer-haitch/connector@0.1.0` with npm
+two-factor authentication using the exact candidate verified by workflow run `39904712857`.
+The public tarball matches SHA-256
+`a04cc494d48931116bf13b1af3477cc99949e704fa4c067ac37bb73a33cfcba9`; fresh-cache,
+unauthenticated `npm exec` outside the checkout succeeded. The waiting publication job was cancelled
+before this separate owner action. This bootstrap does not claim OIDC provenance. Steps 1 and 2
+below are complete; trusted publishing and the remaining account controls still require setup.
 
 ## One-time setup outside the repository
 

@@ -64,6 +64,13 @@ The source and a packed connector can be installed without a repository checkout
 [npm-connector-release.md](npm-connector-release.md). Do not claim registry availability based only
 on a local package test.
 
+Version **0.1.0** is public and its tarball matches the tested release candidate. A fresh-cache
+`npm exec --yes --package @wearer-haitch/connector@0.1.0 -- next-coder-connect --help` succeeded
+outside the checkout without registry credentials. Production Hosyond firmware **0.2.18** also
+completed a real recording through connector-local Parakeet and T3, with the owner confirming the
+reply on the device. This verifies that production path; Windows and Linux x64 execution, broader
+outage testing and latency qualification remain separate gates.
+
 Code/contract tests, clean installation, local inference, production routing, physical microphone
 capture, T3 completion, and visible device reply are separate verification steps. A generated clip
 is useful for inference preflight but does not prove the Hosyond microphone or display path.
