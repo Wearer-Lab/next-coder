@@ -426,7 +426,7 @@ flows with precise status, guided next actions, and no silent contract mismatch.
 ### First-run connection
 
 The console is now the starting point for the production flow. It creates a single-use pairing code
-and copyable `npx @next-coder/connector` command; the local connector discovers or starts T3,
+and copyable `npx @wearer-haitch/connector` command; the local connector discovers or starts T3,
 redeems the code over an outbound connection, and registers the environment without sending the T3
 token to the cloud. Layered readiness reports connector, T3, provider, project, and model state.
 

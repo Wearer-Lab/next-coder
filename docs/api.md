@@ -1251,7 +1251,7 @@ again:
   "session": { "id": "cxn_...", "status": "pending", "expiresAt": "..." },
   "code": "ABCDE-FGHIJ",
   "gatewayUrl": "https://gateway.example",
-  "command": "npx @next-coder/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'"
+  "command": "npx @wearer-haitch/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'"
 }
 ```
 

@@ -38,7 +38,7 @@ The repository contains the connector package and its `bin` entry. The eventual 
 has this shape:
 
 ```bash
-npx @next-coder/connector connect \
+npx @wearer-haitch/connector connect \
   --server 'https://controller.example.com' \
   --code 'one-time-code'
 ```

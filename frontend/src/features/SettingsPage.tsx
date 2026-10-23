@@ -256,7 +256,7 @@ export function SettingsPage({ controller: c }: { controller: Controller }) {
             <p className="ic-card text-sm text-ink-muted">No connector has enrolled yet. Connect a computer from Environments or Initial setup.</p>
           )}
           <div className="grid gap-2 sm:grid-cols-2">
-            {["npx @next-coder/connector status", "npx @next-coder/connector doctor"].map((command) => (
+            {["npx @wearer-haitch/connector status", "npx @wearer-haitch/connector doctor"].map((command) => (
               <button key={command} type="button" className="ic-command" onClick={() => void copyRemoteAccessCommand(command, "Connector command")}>{command}</button>
             ))}
           </div>

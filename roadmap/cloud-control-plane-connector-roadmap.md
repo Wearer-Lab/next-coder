@@ -173,9 +173,9 @@ These decisions unblock parallel implementation. Reversing one requires an ADR a
 
 ### 6.2 Connector packaging
 
-- Working package identity: `@next-coder/connector`.
+- Working package identity: `@wearer-haitch/connector`.
 - Binary name: `next-coder-connect`.
-- Primary UX: `npx @next-coder/connector connect --server https://<cloud-origin> --code <code>`.
+- Primary UX: `npx @wearer-haitch/connector connect --server https://<cloud-origin> --code <code>`.
 - Final registry naming may change, but the binary subcommands and wire protocol are stable contracts.
 - Connector requires Node 22+. macOS launchd, Linux systemd-user, Windows per-user Task Scheduler,
   and safe automatic T3 launch are implemented. The Windows path bypasses command shims, fingerprints

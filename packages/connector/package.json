@@ -1,5 +1,5 @@
 {
-  "name": "@next-coder/connector",
+  "name": "@wearer-haitch/connector",
   "version": "0.1.0",
   "description": "Outbound bridge between a local T3 Code environment and Next Coder",
   "license": "Apache-2.0",

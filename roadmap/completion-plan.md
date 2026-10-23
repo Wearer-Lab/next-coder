@@ -174,7 +174,7 @@ These are not blocked on code. Each has a default that lets work continue.
 | Decision | Default if undecided | Needed by |
 |---|---|---|
 | License ratification | **Apache-2.0, ratified 2026-09-09** | done |
-| npm package name and scope ownership | `@next-coder/connector` as committed | Phase 1.7 |
+| npm package name and scope ownership | `@wearer-haitch/connector` as committed | Phase 1.7 |
 | Where Parakeet inference runs | **Operator-run sidecar next to the Container.** Decided 2026-09-09; not a connector capability | Phase 4.6b |
 | Singleton Container versus partitioning versus admission queue | Singleton with the provisional 16-environment budget | Phase 4.4 |
 | Console realtime stays SSE or moves to WebSocket | SSE | After beta |

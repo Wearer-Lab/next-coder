@@ -1,6 +1,6 @@
 # Next Coder connector
 
-`@next-coder/connector` is the local, outbound bridge between T3 Code on a user's machine and
+`@wearer-haitch/connector` is the local, outbound bridge between T3 Code on a user's machine and
 the Next Coder cloud service. It does not expose T3 to the internet and does not send the T3
 access token to the cloud.
 
@@ -16,7 +16,7 @@ provenance, but no publication has been executed from this checkout. See
 Create an enrollment code in the Next Coder console, then run:
 
 ```bash
-npx @next-coder/connector connect \
+npx @wearer-haitch/connector connect \
   --server https://controller.example.com \
   --code YOUR-SHORT-LIVED-CODE \
   --t3-url http://127.0.0.1:3773

@@ -43,6 +43,11 @@ records transcription, normalization, review, dispatch, and failure separately. 
 new work promptly; the scheduled recovery sweep remains a fallback. A busy runner retries its
 wakeup rather than acknowledging another user's unprocessed recording.
 
+The transcript being ready is not a settled dispatch. Device polling remains active while the
+auto-send decision is pending; only a settled send exposes its command and immutable reply cursor.
+A terminal ready state means that auto-send was declined and the transcript is available in the
+console. Firmware also honors `done:false` on a ready milestone, so a timing race cannot hide Sent.
+
 A stable command request identity derived from the media job prevents a replay after dispatch from
 creating a second agent turn. Transcription retries do not authorize dispatch by themselves.
 Historical failed recordings are not automatically replayed after setup; explicit configuration
@@ -55,7 +60,7 @@ Do not expose the local sidecar to the internet as an outage workaround.
 ## Distribution and verification
 
 The source and a packed connector can be installed without a repository checkout. Public
-`npx @next-coder/connector` distribution additionally requires the protected npm publication flow in
+`npx @wearer-haitch/connector` distribution additionally requires the protected npm publication flow in
 [npm-connector-release.md](npm-connector-release.md). Do not claim registry availability based only
 on a local package test.
 

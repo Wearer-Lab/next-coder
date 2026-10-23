@@ -17,7 +17,8 @@ export const SYSTEMD_UNIT = "agent-controller-connector.service";
 export const WINDOWS_TASK_PREFIX = "AgentControllerConnector-";
 // A service definition written before the rename carries the legacy marker. It is still ours, so
 // it is still ours to update; only a definition carrying neither marker is refused.
-export const OWNERSHIP_MARKER = "Managed by @next-coder/connector. Do not edit.";
+export const OWNERSHIP_MARKER = "Managed by @wearer-haitch/connector. Do not edit.";
+const PREVIOUS_OWNERSHIP_MARKER = "Managed by @next-coder/connector. Do not edit.";
 export const LEGACY_OWNERSHIP_MARKER = "Managed by @agent-controller/connector. Do not edit.";
 
 // The runtime entry point. A managed service installed before the rename execs the legacy path, so
@@ -25,7 +26,8 @@ export const LEGACY_OWNERSHIP_MARKER = "Managed by @agent-controller/connector. 
 const RUNTIME_BIN = "next-coder-connect.mjs";
 const LEGACY_RUNTIME_BIN = "agent-controller-connect.mjs";
 const RUNTIME_BIN_ALIAS = `import "./${RUNTIME_BIN}";\n`;
-const CONNECTOR_PACKAGE_NAME = "@next-coder/connector";
+const CONNECTOR_PACKAGE_NAME = "@wearer-haitch/connector";
+const PREVIOUS_CONNECTOR_PACKAGE_NAME = "@next-coder/connector";
 const LEGACY_CONNECTOR_PACKAGE_NAME = "@agent-controller/connector";
 const CONNECTOR_BIN_ENTRY = "next-coder-connect";
 const LEGACY_CONNECTOR_BIN_ENTRY = "agent-controller-connect";
@@ -283,14 +285,14 @@ export async function readServiceRuntimeIdentity({ runtimeRoot, expectedVersion,
   try { manifest = JSON.parse(await fs.readFile(join(resolve(runtimeRoot), "package.json"), "utf8")); }
   catch { throw updateServiceError("The managed connector runtime package is missing or invalid.", "UPDATE_PACKAGE_INVALID"); }
   // A runtime installed before the rename is still a valid previous runtime to roll back to, so
-  // both package identities are accepted here. A freshly downloaded package is checked strictly
+  // previous package identities are accepted here. A freshly downloaded package is checked strictly
   // against the current identity in update.mjs.
   const binEntry = manifest.bin?.[CONNECTOR_BIN_ENTRY] === `./bin/${RUNTIME_BIN}`
     ? `./bin/${RUNTIME_BIN}`
     : manifest.bin?.[LEGACY_CONNECTOR_BIN_ENTRY] === `./bin/${LEGACY_RUNTIME_BIN}`
       ? `./bin/${LEGACY_RUNTIME_BIN}`
       : null;
-  if (![CONNECTOR_PACKAGE_NAME, LEGACY_CONNECTOR_PACKAGE_NAME].includes(manifest.name)
+  if (![CONNECTOR_PACKAGE_NAME, PREVIOUS_CONNECTOR_PACKAGE_NAME, LEGACY_CONNECTOR_PACKAGE_NAME].includes(manifest.name)
     || (expectedVersion && manifest.version !== expectedVersion)
     || !binEntry
     || manifest.engines?.node !== ">=22") {
@@ -587,7 +589,7 @@ function windowsArgQuote(value) {
 function hash(value) { return createHash("sha256").update(value).digest("hex"); }
 
 function isOwnedDefinition(contents) {
-  return String(contents).includes(OWNERSHIP_MARKER) || String(contents).includes(LEGACY_OWNERSHIP_MARKER);
+  return [OWNERSHIP_MARKER, PREVIOUS_OWNERSHIP_MARKER, LEGACY_OWNERSHIP_MARKER].some((marker) => String(contents).includes(marker));
 }
 
 function serviceOwnershipError(message, cause) {

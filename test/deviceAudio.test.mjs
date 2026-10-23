@@ -136,6 +136,47 @@ test("device audio is queued for transcription without anyone asking", async (t)
   assert.equal(owned.job.threadId, "thread_voice");
 });
 
+test("device polling stays active while T3 dispatch is pending, then receives Sent and its reply cursor", { timeout: 10000 }, async (t) => {
+  const loop = await setupLoop(t);
+  await loop.enableAutoSend(true);
+  const uploaded = await loop.upload();
+  let releaseDispatch;
+  let dispatchStarted;
+  const dispatchGate = new Promise((resolve) => { releaseDispatch = resolve; });
+  const started = new Promise((resolve) => { dispatchStarted = resolve; });
+  const mockFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (new URL(String(url)).pathname === "/api/orchestration/dispatch") {
+      dispatchStarted();
+      await dispatchGate;
+    }
+    return await mockFetch(url, init);
+  };
+  t.after(() => releaseDispatch());
+  const running = loop.mediaJobRunner.runOnce();
+  await started;
+  try {
+    const stored = await loop.store.getMediaJobForUser("user_dev", uploaded.job.jobId);
+    assert.equal(stored.stage, "dispatching");
+    // This used to report terminal Ready, causing the firmware to stop before Sent existed.
+    const pending = await loop.call(`/v1/device/media/jobs/${uploaded.job.jobId}`, { headers: loop.deviceHeaders });
+    assert.equal(pending.job.milestone, "transcribing");
+    assert.equal(pending.job.done, false);
+    assert.equal(pending.job.commandId, null);
+    assert.equal(pending.job.responseAfter, undefined);
+  } finally {
+    releaseDispatch();
+    await running;
+  }
+  const sent = await loop.call(`/v1/device/media/jobs/${uploaded.job.jobId}`, { headers: loop.deviceHeaders });
+  assert.equal(sent.job.milestone, "sent");
+  assert.equal(sent.job.done, true);
+  assert.equal(typeof sent.job.commandId, "string");
+  const receipt = await loop.call(`/v1/commands/${sent.job.commandId}/events`, { headers: loop.authHeaders });
+  assert.equal(sent.job.responseAfter, receipt.command.metrics.dispatchStartedAt);
+  assert.equal(loop.dispatches.length, 1);
+});
+
 test("replaying device finalize after auto-send returns the original job and never dispatches the capture twice", async (t) => {
   const loop = await setupLoop(t);
   await loop.heartbeat(["display", "buttons", "microphone"]);
@@ -602,8 +643,10 @@ test("the milestone projection collapses stages the way a small screen needs", (
   assert.equal(at({ stage: "transcribing" }), "transcribing");
   assert.equal(at({ stage: "normalizing" }), "transcribing");
   assert.equal(at({ stage: "review_required" }), "review");
-  assert.equal(at({ stage: "ready" }), "ready");
-  assert.equal(at({ stage: "dispatching" }), "ready");
+  assert.equal(at({ stage: "ready" }), "transcribing");
+  assert.equal(at({ stage: "dispatching" }), "transcribing");
+  assert.equal(deviceJobStatus({ ...base, stage: "ready" }).done, false);
+  assert.equal(deviceJobStatus({ ...base, stage: "dispatching" }).done, false);
   assert.equal(at({ stage: "dispatched" }), "ready");
   assert.equal(at({ stage: "failed" }), "failed");
 

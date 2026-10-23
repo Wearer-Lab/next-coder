@@ -206,7 +206,7 @@ Production user flow:
 1. User opens the web dashboard.
 2. The console mints a short-lived, single-use connector enrollment code and a copyable `npx`
    command.
-3. The user runs `npx @next-coder/connector connect --server <cloud-origin> --code <code>`.
+3. The user runs `npx @wearer-haitch/connector connect --server <cloud-origin> --code <code>`.
 4. The connector discovers or safely launches local T3, performs local T3 authentication, and keeps
    the resulting access material in the OS credential store or an explicit mode-`0600` fallback.
 5. The connector redeems the cloud code for an environment-scoped standing credential, exchanges it

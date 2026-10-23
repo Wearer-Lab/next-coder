@@ -12,6 +12,7 @@ import {
   LEGACY_OWNERSHIP_MARKER,
   OWNERSHIP_MARKER,
   readServiceLogs,
+  readServiceRuntimeIdentity,
   restartService,
   serviceActive,
   servicePaths,
@@ -60,7 +61,7 @@ test("systemd-user install is scoped, hardened, idempotent, and removable", asyn
   const options = { stateDir, platform: "linux", home: scratch, env: { XDG_CONFIG_HOME: join(scratch, "config") }, fs, run };
   const installed = await installService(options);
   const definition = await realFs.readFile(installed.paths.definitionPath, "utf8");
-  assert.match(definition, /Managed by @next-coder\/connector/);
+  assert.match(definition, /Managed by @wearer-haitch\/connector/);
   assert.match(definition, /NoNewPrivileges=true/);
   assert.match(definition, /UMask=0077/);
   assert.match(definition, /ProtectSystem=strict/);
@@ -105,6 +106,30 @@ test("a service definition carrying the legacy ownership marker is still ours to
   manifest.definitionSha256 = createHash("sha256").update(legacy).digest("hex");
   await realFs.writeFile(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   await startService({ stateDir, platform: "linux", home: scratch, env, run });
+});
+
+test("previous Next Coder scope remains an owned local service and rollback runtime", async (t) => {
+  const scratch = await mkdtemp(join(tmpdir(), "connector-previous-scope-"));
+  t.after(() => realFs.rm(scratch, { recursive: true, force: true }));
+  const stateDir = join(scratch, "state");
+  const env = { XDG_CONFIG_HOME: join(scratch, "config") };
+  const run = async () => ({ code: 0, stdout: "", stderr: "" });
+  const paths = (await installService({ stateDir, platform: "linux", home: scratch, env, run })).paths;
+  const definition = (await realFs.readFile(paths.definitionPath, "utf8"))
+    .replace(OWNERSHIP_MARKER, "Managed by @next-coder/connector. Do not edit.");
+  await realFs.writeFile(paths.definitionPath, definition, "utf8");
+  const manifest = JSON.parse(await realFs.readFile(paths.manifestPath, "utf8"));
+  manifest.definitionSha256 = createHash("sha256").update(definition).digest("hex");
+  await realFs.writeFile(paths.manifestPath, JSON.stringify(manifest));
+  await startService({ stateDir, platform: "linux", home: scratch, env, run });
+  const packagePath = join(paths.runtimeRoot, "package.json");
+  const previous = JSON.parse(await realFs.readFile(packagePath, "utf8"));
+  previous.name = "@next-coder/connector";
+  await realFs.writeFile(packagePath, JSON.stringify(previous));
+  assert.equal((await readServiceRuntimeIdentity({ runtimeRoot: paths.runtimeRoot })).name, "@next-coder/connector");
+  previous.name = "@foreign/connector";
+  await realFs.writeFile(packagePath, JSON.stringify(previous));
+  await assert.rejects(readServiceRuntimeIdentity({ runtimeRoot: paths.runtimeRoot }), { code: "UPDATE_PACKAGE_INVALID" });
 });
 
 test("foreign service definition is never overwritten", async () => {

@@ -22,8 +22,8 @@ import {
 } from "./service.mjs";
 
 const execFileAsync = promisify(execFile);
-const PACKAGE_NAME = "@next-coder/connector";
-const PACKAGE_SCOPE_DIRECTORY = "@next-coder";
+const PACKAGE_NAME = "@wearer-haitch/connector";
+const PACKAGE_SCOPE_DIRECTORY = "@wearer-haitch";
 const PACKAGE_BIN_ENTRY = "next-coder-connect";
 const PACKAGE_BIN_PATH = "./bin/next-coder-connect.mjs";
 

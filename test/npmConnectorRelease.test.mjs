@@ -69,7 +69,7 @@ function packed(overrides = {}) {
   return {
     name: CONNECTOR_PACKAGE_NAME,
     version,
-    filename: `next-coder-connector-${version}.tgz`,
+    filename: `wearer-haitch-connector-${version}.tgz`,
     size: 50_000,
     unpackedSize: 200_000,
     integrity: "sha512-example",

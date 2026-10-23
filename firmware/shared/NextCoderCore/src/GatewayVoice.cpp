@@ -121,7 +121,9 @@ void GatewayVoice::setLocalStage(VoiceStage stage) {
 
 bool GatewayVoice::tracking() const {
   if (jobId_.length() == 0) return false;
-  return !done_ && stage_ != VoiceStage::Ready && stage_ != VoiceStage::Sent
+  // Ready may be a transient pre-dispatch projection. Only the gateway done flag
+  // can settle it; otherwise a poll racing dispatch would never observe Sent/the reply cursor.
+  return !done_ && stage_ != VoiceStage::Sent
     && stage_ != VoiceStage::Failed && stage_ != VoiceStage::Review && stage_ != VoiceStage::Idle;
 }
 
@@ -252,6 +254,9 @@ bool GatewayVoice::poll() {
       detail = "Check the wording in the console";
       break;
     case VoiceStage::Ready:
+      if (!done_) { detail = "Sending to the agent"; break; }
+      detail = transcript_.length() > 0 ? transcript_ : String(job["label"] | "Ready in console");
+      break;
     case VoiceStage::Sent:
       detail = transcript_.length() > 0 ? transcript_ : String(job["label"] | "Sent");
       break;

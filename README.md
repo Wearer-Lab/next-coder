@@ -6,7 +6,7 @@
 Next Coder is a cloud control plane between remote controller hardware, a phone/web console,
 and [T3 Code](https://github.com/pingdotgg/t3code) environments running on users' machines. The
 production server should run in the cloud—preferably on Cloudflare—while T3 Code and Tailscale stay
-on each user's machine. The `@next-coder/connector` npm package pairs local T3 with that cloud
+on each user's machine. The `@wearer-haitch/connector` npm package pairs local T3 with that cloud
 service over an outbound authenticated WebSocket; publication and live-cloud validation remain.
 
 Next Coder does not run coding agents. It authenticates people, devices, and connectors;
@@ -128,11 +128,11 @@ The intended setup flow is:
 5. Controllers and the console send commands to the cloud service; the service routes them through
    the connector and streams results back.
 
-The connector package is `@next-coder/connector`; the generated one-time command has this
+The connector package is `@wearer-haitch/connector`; the generated one-time command has this
 shape:
 
 ```bash
-npx @next-coder/connector connect --server 'https://controller.example.com' --code 'one-time-code'
+npx @wearer-haitch/connector connect --server 'https://controller.example.com' --code 'one-time-code'
 ```
 
 The package exists and passes clean-pack/install tests in this repository. A protected manual

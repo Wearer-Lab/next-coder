@@ -111,3 +111,90 @@ int main() {
   const checked = spawnSync(executable, [], { encoding: "utf8" });
   assert.equal(checked.status, 0, checked.stderr);
 });
+
+test("actual voice tracking keeps a nonterminal Ready job alive until Sent and preserves terminal review", async (t) => {
+  const compiler = process.env.CXX || "c++";
+  if (spawnSync(compiler, ["--version"]).error?.code === "ENOENT") return t.skip("Native C++ compiler unavailable");
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile("firmware/shared/NextCoderCore/src/GatewayVoice.cpp", "utf8");
+  const header = await readFile("firmware/shared/NextCoderCore/src/GatewayVoice.h", "utf8");
+  const pollStart = source.indexOf("bool GatewayVoice::poll()");
+  const polledProjection = source.slice(source.indexOf("  JsonDocument doc;", pollStart), source.indexOf("\n}", pollStart));
+  const publication = source.slice(source.indexOf("void GatewayVoice::publish("), source.indexOf("\nvoid GatewayVoice::reset("));
+  const methods = source.slice(source.indexOf("bool GatewayVoice::tracking()"), source.indexOf("String GatewayVoice::upload("));
+  const enumeration = header.slice(header.indexOf("enum class VoiceStage"), header.indexOf("const char* voiceStageName"));
+  const directory = await mkdtemp(join(tmpdir(), "next-coder-voice-terminal-"));
+  t.after(() => rm(directory, {recursive:true,force:true}));
+  await writeFile(join(directory,"check.cpp"), `
+#include <cassert>
+#include <cstdint>
+#include <string>
+#include <map>
+#include <cstring>
+using String=std::string;
+struct Value {
+ String text; bool boolean=false;
+ const char* operator|(const char* fallback) const { return text.empty()?fallback:text.c_str(); }
+ bool operator|(bool) const { return boolean; }
+};
+std::map<String,Value> values;
+struct JsonObject { bool isNull() const {return false;} Value& operator[](const char* key){return values[key];} };
+struct JsonDocument { JsonObject operator[](const char*) {return {};} };
+bool deserializeJson(JsonDocument&,const String&){return false;}
+uint32_t millis(){return 500;}
+constexpr uint32_t kPollIntervalMs=2000;
+
+
+${enumeration}
+struct GatewayVoice {
+ String jobId_="job", responseAfter_,transcript_,detail_;
+ uint8_t failures_=0;
+ bool ok_=true;
+ uint32_t revision_=0;
+ VoiceStage stage_=VoiceStage::Transcribing;
+ bool done_=false;
+ uint32_t nextPollAt_=0;
+ bool tracking() const;
+ bool pollDue(uint32_t) const;
+ void publish(VoiceStage,const String&);
+ bool pollFailure(uint32_t,int){assert(false);return false;}
+ bool acceptProjection();
+};
+bool milestoneToStage(const String& milestone,VoiceStage& out){
+ if(milestone=="ready"){out=VoiceStage::Ready;return true;}
+ if(milestone=="sent"){out=VoiceStage::Sent;return true;}
+ return false;
+}
+${publication}
+${methods}
+bool GatewayVoice::acceptProjection(){
+ String response; const uint32_t now=millis();
+ ${polledProjection}
+}
+
+int main(){
+ GatewayVoice voice;
+ assert(voice.pollDue(10));
+ values["milestone"].text="ready"; values["done"].boolean=false;
+ assert(voice.acceptProjection()); assert(voice.stage_==VoiceStage::Ready && voice.tracking());
+ assert(voice.detail_=="Sending to the agent");
+ values["milestone"].text="sent"; values["done"].boolean=true;
+ values["responseAfter"].text="2026-10-23T04:52:45.962Z"; values["transcript"].text="fixture";
+ assert(voice.acceptProjection()); assert(voice.stage_==VoiceStage::Sent && !voice.tracking());
+ assert(voice.responseAfter_=="2026-10-23T04:52:45.962Z" && voice.revision_==2);
+
+ voice.stage_=VoiceStage::Ready; voice.done_=false; voice.nextPollAt_=2000;
+ assert(voice.tracking()); assert(!voice.pollDue(1999)); assert(voice.pollDue(2000));
+ voice.stage_=VoiceStage::Sent; voice.done_=true; assert(!voice.tracking());
+ voice.stage_=VoiceStage::Ready; assert(!voice.tracking());
+ voice.stage_=VoiceStage::Review; voice.done_=false; assert(!voice.tracking());
+ voice.stage_=VoiceStage::Failed; assert(!voice.tracking());
+ voice.stage_=VoiceStage::Idle; assert(!voice.tracking());
+ voice.stage_=VoiceStage::Transcribing; voice.jobId_=""; assert(!voice.tracking());
+}
+`);
+  const executable=join(directory,"check");
+  const compiled=spawnSync(compiler,["-std=c++17",join(directory,"check.cpp"),"-o",executable],{encoding:"utf8"});
+  assert.equal(compiled.status,0,compiled.stderr);
+  assert.equal(spawnSync(executable,[],{encoding:"utf8"}).status,0);
+});

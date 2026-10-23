@@ -53,9 +53,10 @@ export function milestoneForJob(job) {
   if (job.dispatchStatus === "blocked" || job.dispatchStatus === "failed") return "failed";
   if (job.stage === "failed") return "failed";
   if (job.stage === "review_required") return "review";
-  // `dispatching` is momentary and the transcript already exists by then, so it reads as ready
-  // rather than inventing a seventh milestone for a state that lasts one tick.
-  if (job.stage === "ready" || job.stage === "dispatching" || job.stage === "dispatched") return "ready";
+  // `ready` and `dispatching` precede the asynchronous auto-send decision. A controller must
+  // continue polling until that decision settles, or it can miss Sent and its reply cursor.
+  // A settled job with no dispatch outcome means auto-send was declined: its transcript is ready.
+  if (job.stage === "dispatched") return "ready";
   return "transcribing";
 }
 

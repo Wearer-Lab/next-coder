@@ -1733,8 +1733,12 @@ job reached a terminal state. It never starts a second auto-send of the same cap
 `GET /v1/device/media/jobs/:id` includes `job.responseAfter` when an owned command exists. It
 uses the immutable dispatch-start cursor, so an acknowledgement arriving after the reply cannot
 hide that reply. The firmware follows the server-owned job rather than submitting a second audio
-command after upload. Review and ready states stop polling and explicitly hand off to the console
-when on-device transcript editing or manual transcript sending is unavailable. Missing ASR
+command after upload. Internal `ready` and `dispatching` stages are still nonterminal and project
+as `transcribing` with `done:false`; the auto-send decision has not settled yet. Only settled
+`dispatched` without a send becomes terminal `ready`. Firmware must continue polling a `ready`
+milestone carrying `done:false` for compatibility, until it observes `sent` and the reply cursor.
+Review and terminal ready states hand off to the console when on-device transcript editing or
+manual transcript sending is unavailable. Missing ASR
 configuration is reported as unavailable; it must not become an empty audio dispatch.
 
 See [the firmware workflow audit](firmware-workflow-audit.md) for scope and verification limits.

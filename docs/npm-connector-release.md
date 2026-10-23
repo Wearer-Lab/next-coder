@@ -1,7 +1,7 @@
 # Protected npm connector release
 
 `.github/workflows/npm-connector-release.yml` is the only repository automation authorized to
-publish `@next-coder/connector`. It is manual-only, publishes one exact stable version from
+publish `@wearer-haitch/connector`. It is manual-only, publishes one exact stable version from
 one annotated `connector-vVERSION` tag, and enters the protected `npm-release` GitHub environment
 before receiving `id-token: write`. It never reads an npm token.
 
@@ -106,7 +106,7 @@ Dispatch **npm connector release** from the default branch with:
 - `version`: exact `X.Y.Z` from the package manifest;
 - `release_tag`: exact `connector-vX.Y.Z` annotated tag;
 - `target_commit_sha`: exact lowercase 40-character tagged commit;
-- `confirmation`: `publish:@next-coder/connector@X.Y.Z:TAG:COMMIT`.
+- `confirmation`: `publish:@wearer-haitch/connector@X.Y.Z:TAG:COMMIT`.
 
 The credential-free verification job checks the default-branch ancestry, tag object and target,
 authorization, repository secret gate, package tests, clean install, contents, and npm dry-run, then

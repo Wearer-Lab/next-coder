@@ -19,7 +19,7 @@ You should receive an acknowledgement within a few days. There is no bug bounty 
 
 ## Scope
 
-In scope: everything in this repository, including the `@next-coder/connector` package, the
+In scope: everything in this repository, including the `@wearer-haitch/connector` package, the
 Cloudflare edge and control-plane code, the Convex functions, and the firmware under `firmware/`.
 
 Out of scope: T3 Code itself, Clerk, Convex, Cloudflare, and other third-party services, which have

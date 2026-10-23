@@ -77,7 +77,7 @@ Create these before touching GitHub. Each row says what the later stages actuall
 | 1.4 | Convex — production deployment | Same | Same | Same, production-scoped |
 | 1.5 | Clerk — staging instance | Any | Platform user authentication; cloud mode disables dev tokens, so a real Clerk user is required from qualification level 2 onward | Secret key, publishable key, JWT issuer domain |
 | 1.6 | Clerk — production instance | Any | Same | Same |
-| 1.7 | npm — `@next-coder` organisation | Any | Owning the scope and registering `@next-coder/connector` before the first trusted-publisher release | Package ownership; **no token is ever added to GitHub** |
+| 1.7 | npm — `@wearer-haitch` organisation | Any | Owning the scope and registering `@wearer-haitch/connector` before the first trusted-publisher release | Package ownership; **no token is ever added to GitHub** |
 | 1.8 | GitHub | The repository itself | Environments, reviewers, protected dispatch | Four environments |
 | 1.9 | A **T3 host for staging** | Your own machine | Qualification levels 2 and 3 need a live T3 Code with an authenticated provider, reachable only through its own connector | The enrolled connector, an environment id, a project id, a provider instance and model |
 
@@ -133,7 +133,7 @@ printf '%s' "$CLOUDFLARE_STAGING_ACCOUNT_ID" | grep -Eq '^[0-9a-f]{32}$' && echo
 
 Confirm in each provider's own console that: the Cloudflare staging account shows the Workers Paid
 plan; the Convex staging deployment exists and you can see its URL; the Clerk staging instance shows
-both keys and its issuer domain; the `@next-coder` npm scope is owned by you.
+both keys and its issuer domain; the `@wearer-haitch` npm scope is owned by you.
 
 **Recovery (Stage 1).** Nothing is coupled yet. Delete the account, project, or token and start
 again. If a token leaked, roll it in the provider console before continuing.
@@ -816,7 +816,7 @@ Phases 4 to 6, and none of them may be inferred from a passing resource-name che
 | Staging origin | HTTPS, exact origin (no path, no trailing slash), not `localhost` |
 | Bootstrap confirmation | `bootstrap\|resume\|abort_cleanup` + `:staging:` + target SHA + `:` + bootstrap id |
 | Release confirmation | `deploy\|rollback` + `:staging:` + target SHA |
-| npm release confirmation | `publish:@next-coder/connector@X.Y.Z:connector-vX.Y.Z:<commit>` |
+| npm release confirmation | `publish:@wearer-haitch/connector@X.Y.Z:connector-vX.Y.Z:<commit>` |
 | Production confirmation | `promote:production:<target-commit>:<manifest-sha256>` |
 | Convex environment variables | `GATEWAY_CONVEX_SECRET` (set by bootstrap) and `CLERK_JWT_ISSUER_DOMAIN` (set by you, Stage 5) |
 
@@ -827,7 +827,7 @@ Phases 4 to 6, and none of them may be inferred from a passing resource-name che
 | License ratification | Apache-2.0, already in place | Stage 0 |
 | Staging origin: `workers.dev` or a custom domain | The repository config attaches no route, so `workers.dev` is what a deploy produces | Stage 1 |
 | Second reviewer identity (production only; staging and npm-release are solo-operable) | None recorded — needed before Phase 7, not before Phase 2 | Stage 4 |
-| npm package name and scope | `@next-coder/connector` as committed | Stage 4.3 |
+| npm package name and scope | `@wearer-haitch/connector` as committed | Stage 4.3 |
 | Which commit is the trivial follow-on **B** for the rollback proof | None recorded; it must not touch `convex/` or Worker topology | Stage 7 |
 | Where Parakeet inference runs | Operator-run sidecar next to the Container | Phase 4, not this document |
 | Container sizing: singleton versus partitioning | Singleton with the provisional 16-environment budget | Phase 4, not this document |

@@ -429,7 +429,7 @@ async function serviceCommand(options, dependencies) {
 
 async function updateCommand(options, dependencies) {
   const { stdout, stateDir } = dependencies;
-  write(stdout, `@next-coder/connector ${CONNECTOR_VERSION}\n`);
+  write(stdout, `@wearer-haitch/connector ${CONNECTOR_VERSION}\n`);
   if (!options.check && !options.apply) {
     write(stdout, "Use update --check for an explicit registry check, or update --apply --yes for the owned managed-service runtime.\n");
     return 0;

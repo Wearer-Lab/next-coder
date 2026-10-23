@@ -44,7 +44,7 @@ function controller(environments: Environment[] = []): Controller {
       session: pendingSession,
       code: "ABCDE-FGHIJ",
       gatewayUrl: "https://gateway.example",
-      command: "npx @next-coder/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'",
+      command: "npx @wearer-haitch/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'",
     })),
     fetchConnectSession: vi.fn(async () => ({ session: pendingSession, environment: null })),
     api: vi.fn(async (path: string, options?: { method?: string }) => {
@@ -95,7 +95,7 @@ test("hands an empty account a copyable connect command and waits for the host t
     environmentId: null,
   }));
 
-  const command = "npx @next-coder/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'";
+  const command = "npx @wearer-haitch/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'";
   expect(await screen.findByText(command)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Copy connect command" }));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith(command));

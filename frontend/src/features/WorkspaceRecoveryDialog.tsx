@@ -88,12 +88,12 @@ function recoveryContent(
           {
             title: "Inspect the installed connector",
             body: `This connector reports ${versionLabel(connector?.connectorVersion)} using protocol ${versionLabel(connector?.protocolVersion == null ? null : String(connector.protocolVersion))}.`,
-            command: "npx @next-coder/connector status",
+            command: "npx @wearer-haitch/connector status",
           },
           {
             title: "Install a current published release",
             body: "Use your normal npm or npx update workflow, then create a new enrollment if the connector says its credential is no longer valid.",
-            command: "npm view @next-coder/connector version",
+            command: "npm view @wearer-haitch/connector version",
           },
         ],
       };
@@ -113,12 +113,12 @@ function recoveryContent(
             : t3Health === "auth_failed"
               ? "The connector reached T3 but its local credential was rejected. Refresh that credential on the workspace computer; do not paste it into this console."
               : "The cloud has no current connector heartbeat. Wake the computer, restore its network, and inspect the local process.",
-          command: "npx @next-coder/connector status",
+          command: "npx @wearer-haitch/connector status",
         },
         {
           title: "Run local diagnostics",
           body: "Doctor checks the outbound cloud route and local T3 access without sending T3 or provider credentials to Next Coder.",
-          command: "npx @next-coder/connector doctor",
+          command: "npx @wearer-haitch/connector doctor",
         },
       ],
     };

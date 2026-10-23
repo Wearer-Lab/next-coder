@@ -3,7 +3,7 @@
 Next Coder is a cloud control plane between people, controller hardware, the web console, and
 [T3 Code](https://github.com/pingdotgg/t3code). The production server should run in the cloud,
 preferably on Cloudflare. T3 Code and optional Tailscale run on the user's machine, where the
-install-free `@next-coder/connector` CLI connects the local T3 runtime to Next Coder.
+install-free `@wearer-haitch/connector` CLI connects the local T3 runtime to Next Coder.
 The cloud service authenticates actors,
 applies policy, stores control-plane state, and routes work; it never runs coding agents itself.
 

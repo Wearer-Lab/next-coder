@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
-export const CONNECTOR_PACKAGE_NAME = "@next-coder/connector";
+export const CONNECTOR_PACKAGE_NAME = "@wearer-haitch/connector";
 export const CONNECTOR_BIN_NAME = "next-coder-connect";
 export const CONNECTOR_TAG_PREFIX = "connector-v";
 export const RELEASE_EVIDENCE_SCHEMA_VERSION = 1;
@@ -160,7 +160,7 @@ export function validatePackMetadata(packed, { version }) {
   if (!packed || packed.name !== CONNECTOR_PACKAGE_NAME || packed.version !== version) {
     throw new ConnectorReleaseError("npm pack returned an unexpected package identity or version.", "pack_identity_invalid");
   }
-  if (packed.filename !== `next-coder-connector-${version}.tgz`) {
+  if (packed.filename !== `wearer-haitch-connector-${version}.tgz`) {
     throw new ConnectorReleaseError("npm pack returned an unexpected tarball name.", "pack_filename_invalid");
   }
   if (!Number.isSafeInteger(packed.size) || packed.size <= 0 || packed.size > 1024 * 1024) {

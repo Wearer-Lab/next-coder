@@ -968,6 +968,7 @@ OrbPresentation presentationForState() {
       // a clip, and this is the first real trigger `searching` has ever had on this device.
       return {OrbMode::Globe, "Transcribing", false};
     case VoiceStage::Ready:
+      if (voice.tracking()) return {OrbMode::Ribbon, "Sending to agent", false};
       return {OrbMode::Ring, "Ready in console", true};
     case VoiceStage::Review:
       // A STOP. The normaliser changed something a person has to look at before it is dispatched,
@@ -2556,7 +2557,7 @@ void goTo(Screen next) {
   // capture the person has already walked away from. The outcome survives in `message`.
   if (screen == Screen::Send && voiceInJourney()
       && (voice.stage() == VoiceStage::Failed || voice.stage() == VoiceStage::Review
-          || voice.stage() == VoiceStage::Ready)) {
+          || (voice.stage() == VoiceStage::Ready && !voice.tracking()))) {
     message = voice.detail();
     voice.reset();
   }

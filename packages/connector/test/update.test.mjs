@@ -13,7 +13,7 @@ test("update check uses an exact npm registry query", async () => {
     findExecutable: async () => "/usr/local/bin/npm",
     run: async (file, args) => { call = { file, args }; return { stdout: '"0.2.0"\n', stderr: "", code: 0 }; },
   });
-  assert.deepEqual(call, { file: "/usr/local/bin/npm", args: ["view", "@next-coder/connector", "version", "--json"] });
+  assert.deepEqual(call, { file: "/usr/local/bin/npm", args: ["view", "@wearer-haitch/connector", "version", "--json"] });
   assert.equal(result.updateAvailable, true);
   assert.equal(result.direction, "upgrade");
 });
@@ -26,7 +26,7 @@ test("an explicit connector rollback resolves exactly the requested published ve
     run: async (file, args) => { call = { file, args }; return { stdout: '"0.0.9"\n', stderr: "", code: 0 }; },
   });
   assert.deepEqual(call, { file: "/usr/local/bin/npm",
-    args: ["view", "@next-coder/connector@0.0.9", "version", "--json"] });
+    args: ["view", "@wearer-haitch/connector@0.0.9", "version", "--json"] });
   assert.equal(result.updateAvailable, true);
   assert.equal(result.direction, "rollback");
   await assert.rejects(checkConnectorUpdate({ targetVersion: "latest", findExecutable: async () => "/npm" }),
@@ -55,10 +55,10 @@ test("apply verifies and replaces only the owned stopped-service runtime", async
     run: async (file, args) => {
       if (args[0] === "view") return { code: 0, stdout: '"0.2.0"', stderr: "" };
       assert.deepEqual(args.slice(0, 2), ["install", "--prefix"]);
-      const packageDir = join(args[2], "node_modules", "@next-coder", "connector");
+      const packageDir = join(args[2], "node_modules", "@wearer-haitch", "connector");
       await fs.mkdir(join(packageDir, "bin"), { recursive: true });
       await fs.mkdir(join(packageDir, "src"), { recursive: true });
-      await fs.writeFile(join(packageDir, "package.json"), JSON.stringify({ name: "@next-coder/connector", version: "0.2.0", type: "module", bin: { "next-coder-connect": "./bin/next-coder-connect.mjs" }, engines: { node: ">=22" } }));
+      await fs.writeFile(join(packageDir, "package.json"), JSON.stringify({ name: "@wearer-haitch/connector", version: "0.2.0", type: "module", bin: { "next-coder-connect": "./bin/next-coder-connect.mjs" }, engines: { node: ">=22" } }));
       await fs.writeFile(join(packageDir, "README.md"), "updated");
       await fs.writeFile(join(packageDir, "bin", "next-coder-connect.mjs"), "#!/usr/bin/env node\n");
       await fs.writeFile(join(packageDir, "src", "index.mjs"), "export {};\n");
@@ -319,7 +319,7 @@ function windowsUpdateControl() {
 function packageRunner(version) {
   return async (_file, args) => {
     if (args[0] === "view") return { code: 0, stdout: JSON.stringify(version), stderr: "" };
-    await writePackage(join(args[2], "node_modules", "@next-coder", "connector"), version);
+    await writePackage(join(args[2], "node_modules", "@wearer-haitch", "connector"), version);
     return { code: 0, stdout: "", stderr: "" };
   };
 }
@@ -327,7 +327,7 @@ function packageRunner(version) {
 async function writePackage(packageDir, version) {
   await fs.mkdir(join(packageDir, "bin"), { recursive: true });
   await fs.mkdir(join(packageDir, "src"), { recursive: true });
-  await fs.writeFile(join(packageDir, "package.json"), JSON.stringify({ name: "@next-coder/connector", version, type: "module", bin: { "next-coder-connect": "./bin/next-coder-connect.mjs" }, engines: { node: ">=22" } }));
+  await fs.writeFile(join(packageDir, "package.json"), JSON.stringify({ name: "@wearer-haitch/connector", version, type: "module", bin: { "next-coder-connect": "./bin/next-coder-connect.mjs" }, engines: { node: ">=22" } }));
   await fs.writeFile(join(packageDir, "README.md"), `connector ${version}`);
   await fs.writeFile(join(packageDir, "bin", "next-coder-connect.mjs"), "#!/usr/bin/env node\n");
   await fs.writeFile(join(packageDir, "src", "index.mjs"), "export {};\n");
