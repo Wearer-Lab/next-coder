@@ -126,6 +126,17 @@ class ThinkingOrb {
   // payload. Defined in the .cpp; a pointer to an incomplete type is all the header needs.
   struct Scratch;
   Scratch* scratch_ = nullptr;
+
+  // Exact caches of values that depend on indices alone (see emitGhostSphere / emitRibbon). Fixed
+  // arrays inside the object, so there is no allocation to fail and no pointer to outlive the
+  // instance; a size that does not fit simply takes the uncached path. ~2.1 KB per orb.
+  static constexpr int kGhostDots = 110;
+  static constexpr int kMaxRibbonSegs = 96;
+  float ghost_[kGhostDots * 3];
+  bool ghostReady_ = false;
+  float ribbonCos_[kMaxRibbonSegs];
+  float ribbonSin_[kMaxRibbonSegs];
+  uint8_t ribbonSegs_ = 0;
   uint16_t lineCount_ = 0;
   float cosYaw_ = 1.0f, sinYaw_ = 0.0f, cosTilt_ = 1.0f, sinTilt_ = 0.0f, scale_ = 1.0f;
   uint16_t capacity_ = 0;

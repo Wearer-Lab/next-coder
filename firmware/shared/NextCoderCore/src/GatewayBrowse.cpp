@@ -7,6 +7,7 @@
 
 #include "GatewayTls.h"
 #include "GatewayHttp.h"
+#include "GatewayWarm.h"
 #include "GatewayDeviceRequest.h"
 #include "OperateModel.h"
 
@@ -169,36 +170,16 @@ int GatewayBrowse::request(const char* method, const char* path, const String& b
 
   const String url = base + path;
 
-  // All board routes share one bounded TLS allocation gate and yielding chunk reader.
-  // The gate outlives HTTP/socket destruction on every return path.
-  if (!gateway_tls::lockTls()) return -1;
+  // All board routes share one bounded TLS allocation gate and the one warm foreground session
+  // (GatewayWarm.h), so a browse read right after a gateway poll reuses its connection instead of
+  // closing it and paying a handshake of its own. The gate outlives HTTP/socket use on every path.
+  const uint32_t gateWaitStart = millis();
+  if (!gateway_tls::lockTlsKeepWarm()) return -1;
   struct TlsGuard { ~TlsGuard() { gateway_tls::unlockTls(); } } tlsGuard;
-  gateway_http::YieldingClient<WiFiClientSecure> secure;
-  gateway_http::YieldingClient<WiFiClient> plain;
-  HTTPClient http;
-  http.setTimeout(kTimeoutMs);
-  http.setConnectTimeout(kTimeoutMs);
-  if (!gateway_tls::beginHttp(http, plain, secure, url, "browse")) return -1;
-  http.addHeader("content-type", "application/json");
-  http.addHeader("x-device-id", settings.deviceId);
-  http.addHeader("x-device-secret", settings.deviceSecret);
-  int code = String(method) == "POST" ? http.POST(body) : http.GET();
-  if (code > 0) {
-    const int length = http.getSize();
-    if (length > (int)kMaxResponseBodyBytes) {
-      response = "response too large";
-      code = HTTPC_ERROR_STREAM_WRITE;
-    } else {
-      gateway_http::BoundedBody sink(response, kMaxResponseBodyBytes);
-      const int read = http.writeToStream(&sink);
-      if (read < 0 || sink.failed()) {
-        response = "gateway response incomplete";
-        code = read < 0 ? read : HTTPC_ERROR_STREAM_WRITE;
-      }
-    }
-  }
-  http.end();
-  return code;
+  long retryAfter = 1;   // browse does not back off on 429; the caller shows the remedy
+  return gateway_warm::exchange("browse", method, path, url, settings.deviceId, settings.deviceSecret,
+                                body, response, retryAfter, kTimeoutMs, kTimeoutMs,
+                                millis() - gateWaitStart);
 }
 
 const BrowseEnvironment* GatewayBrowse::environment(size_t index) const {
@@ -661,14 +642,20 @@ bool GatewayBrowse::previewProject(size_t index) {
 }
 
 bool GatewayBrowse::refreshPreviewThreads() {
+  // A list that was already held (seedPreviewThreads) stays committable across a revalidation that
+  // merely FAILED to reach the gateway: the contract it was proved under has not changed, the rows
+  // are still on screen, and the commit is validated server-side anyway. Closing the gate on a
+  // dropped packet would turn "check this behind the list" into "the list stops working". A reply
+  // that arrives and breaks the contract (old gateway, wrong destination) closes it below.
+  const bool wasReady = previewContractReady_;
   previewContractReady_ = false;
   String response;
   const String path = String("/v1/device/threads?environmentId=")
     + encodePathSegment(previewEnvironmentId_) + "&projectId=" + encodePathSegment(previewProjectId_);
   const int code = request("GET", path.c_str(), "", response);
-  if (!ok(code)) { previewDetail_ = remedyFor(code); touch(); return false; }
+  if (!ok(code)) { previewContractReady_ = wasReady; previewDetail_ = remedyFor(code); touch(); return false; }
   JsonDocument doc;
-  if (deserializeJson(doc, response)) { previewDetail_ = "Bad thread JSON"; touch(); return false; }
+  if (deserializeJson(doc, response)) { previewContractReady_ = wasReady; previewDetail_ = "Bad thread JSON"; touch(); return false; }
   if (String(doc["destinationSelection"] | "") != "atomic-v1"
       || String(doc["environmentId"] | "") != previewEnvironmentId_
       || String(doc["projectId"] | "") != previewProjectId_

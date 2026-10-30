@@ -46,7 +46,7 @@ bool wifiShowSaved=false,wifiTargetSaved=true,wifiTargetSecured=true,wifiTargetS
 String voiceCaptureEnvironment="environment-original",voiceCaptureThread="thread-original",wifiTarget="network-fixture";
 struct{bool scanning=false;}wifiScan;
 struct{String activeSsid="other-network";bool joinPending=true;}wifiConnection;
-bool uiNetworkBusy(){return busy;}bool operable(){return claimed;}
+bool uiNetworkBusy(){return busy;}bool uiBarLocked(){return busy;}bool operable(){return claimed;}
 bool configScreen(){return screen==Screen::Wifi||screen==Screen::WifiDetails||screen==Screen::WifiPassword||screen==Screen::WifiJoining||screen==Screen::WifiPhone||screen==Screen::Device;}
 bool wifiJoinCanStart(){return joinAllowed;}
 void addAction(Act id,const char*label,bool,bool enabled=true){actions.push_back({id,label,enabled});++actionCount;}

@@ -1,4 +1,5 @@
 #include "ThinkingOrb.h"
+#include "OrbProfile.h"
 
 #include <algorithm>
 #include <math.h>
@@ -104,10 +105,26 @@ void fibDir(int i, int n, float& x, float& y, float& z) {
   z = rad * sinf(a);
 }
 
+// lroundf() without the libm call: round half away from zero, bit-for-bit the same answer.
+//
+// lroundf is a real function call on this core (the FPU has add/mul/madd and nothing for
+// rounding), and pushDot() makes five of them per dot — about 2 600 a frame on a 515-dot orb. The
+// replacement is exact, not approximate: `v - (float)t` is computed without rounding error for any
+// |v| below 2^23, so the half-way test sees the true fractional part, and a value at or past 2^23
+// is already an integer (its fraction is 0). Every input to it here is bounded well inside that.
+// test/orb-ab.test.mjs holds the output identical to the lroundf version at zero tolerance.
+inline long roundHalfAway(float v) {
+  const long t = (long)v;
+  const float frac = v - (float)t;
+  if (frac >= 0.5f) return t + 1;
+  if (frac <= -0.5f) return t - 1;
+  return t;
+}
+
 inline uint8_t clamp8(float v) {
   if (v <= 0.0f) return 0;
   if (v >= 255.0f) return 255;
-  return (uint8_t)lroundf(v);
+  return (uint8_t)roundHalfAway(v);
 }
 
 // `white` is ink-on-paper, 0 = darkest. The ground here is dark, so it mirrors.
@@ -121,7 +138,7 @@ inline int16_t toFixed(float px) {
   const float v = px * 16.0f;
   if (v < -32000.0f) return -32000;
   if (v > 32000.0f) return 32000;
-  return (int16_t)lroundf(v);
+  return (int16_t)roundHalfAway(v);
 }
 
 }  // namespace
@@ -224,7 +241,7 @@ void ThinkingOrb::pushDot(float px, float py, float z01, float radiusPx, float w
   if (alpha < kCullAlpha) return;
 
   float r = radiusPx < kRMin ? kRMin : radiusPx;
-  const long r16 = lroundf(r * 16.0f);
+  const long r16 = roundHalfAway(r * 16.0f);
   const long bounded = r16 < 5L ? 5L : (r16 > 160L ? 160L : r16);
 
   Scratch& s = scratch_[n++];
@@ -346,7 +363,10 @@ uint16_t ThinkingOrb::emitOrbits(float t) {
     for (uint16_t j = 0; j < perOrbit; ++j) {
       const float a = ((float)j / perOrbit) * 2.0f * kPi + t * (0.55f + o * 0.08f);
       float px, py, depth;
-      projectPoint(cosf(a), sinf(a) * sinI, sinf(a) * cosI, px, py, depth);
+      // sinf(a) was evaluated twice here. The calls are not merged by the compiler (libm functions
+      // are not pure while errno is observable), so the second was ~300 wasted cycles a dot.
+      const float ca = cosf(a), sa = sinf(a);
+      projectPoint(ca, sa * sinI, sa * cosI, px, py, depth);
       pushDot(px, py, depth,
               (p.rBase + p.rDepth * depth) * rs,
               p.inkFar - p.inkSpan * depth,
@@ -437,10 +457,16 @@ uint16_t ThinkingOrb::emitWeb(float t) {
 // --- Ghost sphere: the faint dotted shell braid and ribbon sit inside --------------------------
 uint16_t ThinkingOrb::emitGhostSphere(float t, float R, uint16_t& n) {
   const float rs = radiusScale();
-  constexpr int kGhost = 110;
+  constexpr int kGhost = kGhostDots;
+  // The 110 directions never change: fibDir() is a function of the index alone, and it costs a
+  // cos, a sin and two sqrt each. Computed once per instance with the very same function, so the
+  // table holds exactly the values the per-frame call used to produce.
+  if (!ghostReady_) {
+    for (int i = 0; i < kGhost; ++i) fibDir(i, kGhost, ghost_[i * 3], ghost_[i * 3 + 1], ghost_[i * 3 + 2]);
+    ghostReady_ = true;
+  }
   for (int i = 0; i < kGhost; ++i) {
-    float dx, dy, dz;
-    fibDir(i, kGhost, dx, dy, dz);
+    const float dx = ghost_[i * 3], dy = ghost_[i * 3 + 1], dz = ghost_[i * 3 + 2];
     float px, py, depth;
     projectPoint(dx, dy, dz, px, py, depth);
     // Very faint and very small: this is a hint of the surface the strands wrap, not a globe.
@@ -594,6 +620,21 @@ uint16_t ThinkingOrb::emitRibbon(float t, bool faceOn) {
   const int lanes = latRings_ > 0 ? latRings_ : 5;
   const int segs = lonDensity_ > 0 ? lonDensity_ : 88;
 
+  // cos(a) and sin(a) depend on the segment index and nothing else, yet the loop below evaluated
+  // each of them three times per dot (once per axis) and again for every lane: 6 of the 8 trig
+  // calls a dot made, ~2 400 a frame. A per-segment table removes all of them with the identical
+  // values. `a` is built by the same expression as in the loop, so the tabulated numbers are
+  // bit-for-bit what the inline calls returned.
+  const bool tabulated = segs <= kMaxRibbonSegs;
+  if (tabulated && ribbonSegs_ != segs) {
+    for (int k = 0; k < segs; ++k) {
+      const float a = ((float)k / segs) * 2.0f * kPi;
+      ribbonCos_[k] = cosf(a);
+      ribbonSin_[k] = sinf(a);
+    }
+    ribbonSegs_ = (uint8_t)segs;
+  }
+
   for (int w = 0; w < lanes; ++w) {
     const float laneOff = (w - (lanes - 1) / 2.0f) * 0.075f;
     const float edge = fabsf(w - (lanes - 1) / 2.0f) / fmaxf(1.0f, (lanes - 1) / 2.0f);
@@ -607,9 +648,11 @@ uint16_t ThinkingOrb::emitRibbon(float t, bool faceOn) {
       const float radial = faceOn ? 1.0f + wob : 1.0f;
       const float off = faceOn ? laneOff : laneOff + wob;
 
-      float x = ux * cosf(a) + vx * sinf(a) + nx * off;
-      float y = uy * cosf(a) + vy * sinf(a) + ny * off;
-      float z = uz * cosf(a) + vz * sinf(a) + nz * off;
+      const float ca = tabulated ? ribbonCos_[k] : cosf(a);
+      const float sa = tabulated ? ribbonSin_[k] : sinf(a);
+      float x = ux * ca + vx * sa + nx * off;
+      float y = uy * ca + vy * sa + ny * off;
+      float z = uz * ca + vz * sa + nz * off;
       const float l = fmaxf(1e-6f, sqrtf(x * x + y * y + z * z));
       const float rr = baseR * radial;
 
@@ -705,6 +748,8 @@ OrbFrame ThinkingOrb::render(uint32_t elapsedMs) {
   const Profile& p = profileFor(mode_);
   const float t = (elapsedMs / 1000.0f) * p.speed * speed_;
 
+  // Timing exists only under ORB_PROFILE (OrbProfile.h); a release frame does none.
+  ORB_PROBE(probe0);
   lineCount_ = 0;
   uint16_t n = 0;
   switch (mode_) {
@@ -720,9 +765,17 @@ OrbFrame ThinkingOrb::render(uint32_t elapsedMs) {
     default: break;
   }
 
+  ORB_PROBE(probe1);
   // Painter's order: far to near, so a near dot overwrites the one behind it.
   std::sort(scratch_, scratch_ + n, [](const Scratch& a, const Scratch& b) { return a.z < b.z; });
   for (uint16_t i = 0; i < n; ++i) dots_[i] = scratch_[i].dot;
+#if ORB_PROFILE
+  ORB_PROBE(probe2);
+  gOrbProfile.emitUs += probe1 - probe0;
+  gOrbProfile.sortUs += probe2 - probe1;
+  if (probe1 - probe0 > gOrbProfile.emitMaxUs) gOrbProfile.emitMaxUs = probe1 - probe0;
+  if (probe2 - probe1 > gOrbProfile.sortMaxUs) gOrbProfile.sortMaxUs = probe2 - probe1;
+#endif
 
   return {dots_, n, lines_, lineCount_};
 }

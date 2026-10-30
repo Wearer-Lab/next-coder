@@ -112,6 +112,31 @@ class GatewayBrowse {
   // Preview navigation is read-only. Only commitPreviewThread/createThread changes
   // the destination, in one server-confirmed write. Legacy select* stays compatible.
   void beginPreview(const String& environmentId, const String& projectId);
+
+  // Local-first entry: fills the preview list from rows the caller ALREADY HOLDS for exactly this
+  // environment and folder, so the screen paints at once and refreshPreviewThreads() only has to
+  // confirm it. `rowAt(i)` yields the i-th held row (or null).
+  //
+  // The caller owns the proof that the rows belong to this destination (GatewayClient::
+  // threadListMatches(): the gateway stamped them with this environment and project under the
+  // atomic-v1 contract). That is why the commit gate may open here without a fetch: the contract
+  // check refreshPreviewThreads() performs has already happened for these very rows. Committing is
+  // still one server write, validated against T3's live snapshot, so a thread that vanished since
+  // is refused with a 404 and nothing is bound locally until the gateway confirms.
+  //
+  // Call after beginPreview() or previewProject()/previewEnvironment(); it replaces the list.
+  template <typename RowAt>
+  void seedPreviewThreads(size_t count, RowAt&& rowAt) {
+    previewThreadCount_ = 0;
+    for (size_t i = 0; i < count && previewThreadCount_ < kMaxThreadOptions; ++i) {
+      const ThreadOption* row = rowAt(i);
+      if (!row || row->id.length() == 0) continue;
+      previewThreads_[previewThreadCount_++] = *row;
+    }
+    previewContractReady_ = true;
+    previewDetail_ = previewThreadCount_ ? String() : String("No threads; create one below");
+    touch();
+  }
   bool previewEnvironment(size_t index);
   bool previewProject(size_t index);
   bool refreshPreviewThreads();

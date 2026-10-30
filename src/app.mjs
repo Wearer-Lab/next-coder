@@ -17,6 +17,17 @@ import {
 } from "./connectorProtocol.mjs";
 import { buildDeviceDisplayState, buildUserDisplayState, invalidateDisplayCache } from "./displayState.mjs";
 import { createEventBroker } from "./events.mjs";
+import { createReadCoalescer } from "./readCoalescer.mjs";
+import {
+  createRequestTimer,
+  deviceRouteTemplate,
+  formatServerTiming,
+  instrumentStoreTiming,
+  isTimedDeviceRoute,
+  noteCacheSource,
+  runWithRequestTimer,
+  timedSpan,
+} from "./requestTiming.mjs";
 import {
   buildBackgroundLiveness,
   createNotificationPublisher,
@@ -200,6 +211,7 @@ const BILLING_WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIST_DIR = join(__dirname, "..", "dist", "web");
 const t3TransportResolversByStore = new WeakMap();
+const deviceReadSettingsByStore = new WeakMap();
 const notificationPublishersByStore = new WeakMap();
 const threadStreamHubsByStore = new WeakMap();
 const transcriptionProvidersByStore = new WeakMap();
@@ -242,6 +254,11 @@ export function createApp({
   remoteAccessControl = configurePrivateTailscaleServe,
 } = {}) {
   store ??= createStore({}, { t3TokenEncryptionKey: config.t3TokenEncryptionKey });
+  // Attribute store time to the request that spent it (see src/requestTiming.mjs). In place, so the
+  // store keeps its identity for the WeakMap registries below; a no-op outside a timed request.
+  instrumentStoreTiming(store);
+  deviceReadSettingsByStore.set(store, createDeviceReadSettings(config));
+  invalidateDeviceReadsOnEnvironmentWrites(store);
   // Cloud deployments must never turn a persisted legacy baseUrl into an outbound request. A
   // connector is the sole production transport; direct T3 remains available only to the
   // self-hosted compatibility adapter. Keeping this at the resolver boundary also covers jobs,
@@ -250,9 +267,6 @@ export function createApp({
   t3TransportResolversByStore.set(store, runtimeT3TransportResolver);
   const dispatchT3Command = (environment, command, options) => (
     dispatchT3CommandForStore(store, environment, command, options)
-  );
-  const fetchT3ThreadDetail = (environment, threadId, options) => (
-    runtimeT3TransportResolver.forEnvironment(environment).threadDetail(environment, threadId, options)
   );
   const readT3Snapshot = (environment, options = {}) => (
     readT3SnapshotWithTransport(environment, options, runtimeT3TransportResolver)
@@ -376,7 +390,31 @@ export function createApp({
     return remoteAccessCache;
   }
 
+  const deviceTimingLogMode = config.deviceTimingLog ?? process.env.DEVICE_TIMING_LOG ?? "off";
+
+  // Device-realm requests are timed end to end and answer with a standard `Server-Timing` header:
+  // phase names and millisecond durations only (see src/requestTiming.mjs for the privacy rule and
+  // for what each phase means). Everything else goes straight through untimed.
   async function handle(req, res) {
+    const pathname = String(req.url ?? "/").split("?", 1)[0];
+    if (!isTimedDeviceRoute(pathname)) return await handleRequest(req, res);
+    const timer = createRequestTimer();
+    const writeHead = res.writeHead;
+    res.writeHead = function timedWriteHead(...args) {
+      res.writeHead = writeHead;
+      try {
+        const summary = timer.summary();
+        if (!res.headersSent) res.setHeader("server-timing", formatServerTiming(summary));
+        logDeviceTiming(deviceTimingLogMode, logger, req.method, pathname, args[0], summary);
+      } catch {
+        // Instrumentation must never be the reason a response fails.
+      }
+      return writeHead.apply(this, args);
+    };
+    return await runWithRequestTimer(timer, () => handleRequest(req, res));
+  }
+
+  async function handleRequest(req, res) {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
@@ -3502,16 +3540,7 @@ export function createApp({
         const device = await authenticateDevice(req, store, url, config);
         await enforceDeviceRead(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
-        const gateway = await deviceGatewayResponse(store, device);
-        return sendJson(res, 200, {
-          deviceId: device.id,
-          config: {
-            ...device.config,
-            gatewayProfiles: gateway.profiles,
-            activeGatewayProfileId: gateway.activeProfileId,
-            gatewaySelection: gateway,
-          },
-        });
+        return sendJson(res, 200, await buildDeviceConfigBody(store, device));
       }
 
       if (req.method === "GET" && url.pathname === "/v1/device/gateway") {
@@ -3558,10 +3587,9 @@ export function createApp({
         const device = await authenticateDevice(req, store, url, config);
         await enforceDeviceRead(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
-        const stored = await store.getDeviceControls({ userId: device.userId, deviceId: device.id });
-        if (!stored?.explicit) throw new HttpError(404, "No protocol-v2 controls layout is assigned.");
-        const controls = await resolveDeviceControls({ store, device, stored, config, forFirmware: true });
-        return sendJson(res, 200, { revision: stored.revision, controls });
+        const body = await buildDeviceControlsBody({ store, device, config });
+        if (!body) throw new HttpError(404, "No protocol-v2 controls layout is assigned.");
+        return sendJson(res, 200, body);
       }
 
       if (req.method === "POST" && url.pathname === "/v1/device/controls/ack") {
@@ -3695,14 +3723,33 @@ export function createApp({
         const environment = await devicePreviewEnvironment(store, device, requestedEnvironmentId);
         const preview = Boolean(requestedEnvironmentId);
         const projectId = preview ? optionalString(url.searchParams.get("projectId")) : device.config?.projectId;
+        // Opt-in: `?include=environments,projects` also returns what the next two reads on the
+        // Threads screen would ask for. The snapshot is already in hand for `projects`, and the
+        // environments are the store reads the device would make next, started now so they overlap
+        // the T3 trip. Each section is byte-for-byte the body of its own route, for the same device,
+        // so nothing is added to what the hardware could already fetch.
+        const included = requestedBundleSections(url.searchParams.get("include"), THREADS_BUNDLE_SECTIONS);
+        const environmentsBody = included.includes("environments")
+          ? buildDeviceEnvironmentsBody(store, device)
+          : null;
+        environmentsBody?.catch(() => {});
         const snapshot = await fetchDeviceSnapshot(store, environment);
         const threads = deviceSelectableThreads(snapshot, device.config?.threadId, projectId);
+        const refined = await refineSelectedThreadVerb(store, environment, threads);
+        const bundle = {};
+        const bundleErrors = [];
+        if (environmentsBody) {
+          try { bundle.environments = await environmentsBody; } catch { bundleErrors.push("environments"); }
+        }
+        if (included.includes("projects")) bundle.projects = buildDeviceProjectsBody(device, environment, snapshot);
         return sendJson(res, 200, {
           destinationSelection: "atomic-v1",
           environmentId: environment.id,
           projectId: projectId ?? null,
           threadId: device.config?.threadId ?? null,
-          threads: await refineSelectedThreadVerb(store, environment, threads),
+          threads: refined,
+          ...(included.length ? { bundle } : {}),
+          ...(bundleErrors.length ? { bundleErrors } : {}),
         });
       }
 
@@ -3754,7 +3801,7 @@ export function createApp({
           });
         }
 
-        const snapshot = await fetchDeviceSnapshot(store, environment);
+        const snapshot = await fetchDeviceSnapshot(store, environment, "live");
         const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : [])
           .find((candidate) => optionalString(candidate?.id) === projectId);
         // Validated against the live snapshot for the same reason selection is: the bound project
@@ -3941,22 +3988,7 @@ export function createApp({
         const device = await authenticateDevice(req, store, url, config);
         await enforceDeviceRead(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
-        // Scoped to the owner, not to the platform: listEnvironments() is a per-user read,
-        // so a device can only ever see what the account that claimed it owns.
-        const [environments, connectors] = await Promise.all([
-          store.listEnvironments(device.userId),
-          store.listConnectors(device.userId),
-        ]);
-        const projection = deviceSelectableEnvironments(
-          environments,
-          device.config?.environmentId,
-          connectors,
-        );
-        return sendJson(res, 200, {
-          environmentId: device.config?.environmentId ?? null,
-          environments: projection.environments,
-          environmentsTruncated: projection.truncated,
-        });
+        return sendJson(res, 200, await buildDeviceEnvironmentsBody(store, device));
       }
 
       // Projects ("folders") inside the bound environment. 409 with no environment bound,
@@ -3967,12 +3999,7 @@ export function createApp({
         requireClaimedDevice(device);
         const environment = await devicePreviewEnvironment(store, device, optionalString(url.searchParams.get("environmentId")));
         const snapshot = await fetchDeviceSnapshot(store, environment);
-        return sendJson(res, 200, {
-          destinationSelection: "atomic-v1",
-          environmentId: environment.id,
-          projectId: device.config?.projectId ?? null,
-          projects: deviceSelectableProjects(snapshot, device.config?.projectId),
-        });
+        return sendJson(res, 200, buildDeviceProjectsBody(device, environment, snapshot));
       }
 
       // A controller receives only the currently selected thread's display-safe page.
@@ -4017,20 +4044,25 @@ export function createApp({
         // while the hardware is looking at it, and the subscription lapses on its own once the
         // device stops polling.
         threadStreams.watch({ userId: device.userId, environmentId: environment.id, threadId });
-        const snapshot = await fetchDeviceSnapshot(store, environment);
+        // The controls are a store-and-capability read that depends on neither T3 call below, so it
+        // runs alongside them instead of after. The no-op catch is load-bearing: if the snapshot
+        // throws first this promise is never awaited, and an unobserved rejection would take the
+        // process down. Whoever does await it still sees the error.
+        const controlsPromise = readDeviceControlsOrEmpty({ store, device, config });
+        controlsPromise.catch(() => {});
+        // "live": the reply screen must show what T3 says now, so this only joins a read already in
+        // flight and never serves a stored answer.
+        const snapshot = await fetchDeviceSnapshot(store, environment, "live");
         let thread = (Array.isArray(snapshot?.threads) ? snapshot.threads : [])
           .find((candidate) => optionalString(candidate?.id) === threadId);
         if (!thread) throw new HttpError(404, "Selected thread was not found in the bound environment.");
         // T3 protocol 2 shell snapshots omit message bodies. Hydrate only the selected thread
         // when its response screen is requested; list/device menus remain compact.
         if (!Array.isArray(thread.messages) || thread.messages.length === 0) {
-          const detail = await fetchT3ThreadDetail(environment, threadId, { turnLimit: 8 });
+          const detail = await fetchDeviceThreadDetail(store, environment, threadId, { turnLimit: 8 });
           thread = detail?.thread ?? detail ?? thread;
         }
-        const stored = await store.getDeviceControls({ userId: device.userId, deviceId: device.id });
-        const controls = stored?.explicit
-          ? await resolveDeviceControls({ store, device, stored, config, forFirmware: true })
-          : [];
+        const controls = await controlsPromise;
         return sendJson(res, 200, buildDeviceThreadOutput({
           thread,
           controls,
@@ -4053,7 +4085,9 @@ export function createApp({
         const environment = await devicePreviewEnvironment(store, device,
           explicitDestination ? requireString(body.environmentId, "environmentId") : null);
         const projectId = explicitDestination ? (optionalString(body.projectId) ?? null) : optionalString(device.config?.projectId);
-        const snapshot = await fetchDeviceSnapshot(store, environment);
+        const snapshot = await fetchDeviceSnapshotProving(store, environment, (candidate) => (
+          deviceSelectableThreads(candidate, device.config?.threadId, projectId).some((thread) => thread.id === threadId)
+        ));
         const threads = deviceSelectableThreads(snapshot, device.config?.threadId, projectId);
         // Validated against the live snapshot, so a device cannot invent a thread id
         // or reach one belonging to a different environment — or, once a project is
@@ -4076,7 +4110,16 @@ export function createApp({
           actorId: device.id,
         });
         if (!updated) throw new HttpError(404, "Device not found.");
-        return sendJson(res, 200, { deviceId: updated.id, config: updated.config });
+        // Opt-in: `include: ["config", "controls", "approvals"]` returns what the controller asks for
+        // next (it clears and refetches all three after a selection, one request each, serialised).
+        // They are computed for the device AS IT NOW IS, concurrently, and each section is exactly the
+        // body of its own route; a section that fails is named in `bundleErrors` so the firmware
+        // falls back to the standalone request instead of trusting a hole.
+        const sections = requestedBundleSections(body.include, SELECTION_BUNDLE_SECTIONS);
+        const bundled = sections.length
+          ? await buildSelectionBundle({ store, device: { ...device, config: updated.config }, config, sections })
+          : {};
+        return sendJson(res, 200, { deviceId: updated.id, config: updated.config, ...bundled });
       }
 
       // Binding an environment is the one place the hardware may move its own boundary.
@@ -4120,7 +4163,9 @@ export function createApp({
         const body = await readJson(req);
         const projectId = requireString(body.projectId, "projectId");
         const environment = await boundDeviceEnvironment(store, device);
-        const snapshot = await fetchDeviceSnapshot(store, environment);
+        const snapshot = await fetchDeviceSnapshotProving(store, environment, (candidate) => (
+          deviceSelectableProjects(candidate, device.config?.projectId).some((project) => project.id === projectId)
+        ));
         const projects = deviceSelectableProjects(snapshot, device.config?.projectId);
         if (!projects.some((project) => project.id === projectId)) {
           throw new HttpError(404, "Project not found in the bound environment.");
@@ -4326,31 +4371,7 @@ export function createApp({
         const device = await authenticateDevice(req, store, url, config);
         await enforceDeviceRead(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
-        const commands = await store.listCommands(device.userId);
-        const capabilities = capabilitiesForProfile(
-          await resolveActorProfile(store, device.userId, device.profile),
-        );
-        const [provider, userInput] = await Promise.all([
-          readDeviceProviderApprovals({ store, device, capabilities }),
-          readDeviceUserInputRequests({ store, device }),
-        ]);
-        return sendJson(res, 200, {
-          commands: commands
-            .filter((command) => command.status === "approval_required")
-            .map((command) => ({ ...command, kind: "gateway" })),
-          providerApprovals: provider.approvals,
-          // The third key, and the third question. Each entry carries `answerable`: true means the
-          // device may POST /v1/device/user-input/:requestId, false means it should render the
-          // question and the `hint` and offer no buttons. Both are better than "Working" forever.
-          userInputRequests: userInput.requests,
-          // A read-only controller sees what is waiting and is offered nothing to press. Hiding
-          // the request would be worse: the owner walking past the device would have no idea the
-          // agent was blocked.
-          allowedDecisions: allowedProviderApprovalDecisions(capabilities),
-          canAnswerUserInput: capabilities.has("user_input_response"),
-          ...(provider.error ? { providerApprovalsError: provider.error } : {}),
-          ...(userInput.error ? { userInputError: userInput.error } : {}),
-        });
+        return sendJson(res, 200, await buildDeviceApprovalsBody({ store, device }));
       }
 
       // Answering a T3 provider approval from hardware. Separate route from the gateway-approval
@@ -4988,15 +5009,25 @@ async function validateDeviceControlAssignments({ store, device, items, config }
 
 async function resolveDeviceControls({ store, device, stored, config, forFirmware = false }) {
   const capabilityEnvironments = new Map();
+  // Resolved once for the whole layout. Every control used to look the profile up again, which for
+  // a custom profile is a store round trip per control.
+  const actorProfile = resolveActorProfile(store, device.userId, device.profile);
+  actorProfile.catch(() => {});
   const labelCharacters = Math.max(1, Math.min(80, Number(device.status?.limits?.labelCharacters) || 18));
   const resolvedLabel = (label) => forFirmware
     ? Array.from(String(label)).slice(0, labelCharacters).join("")
     : String(label);
-  const controls = [];
-  for (const item of stored.items ?? []) {
+  // Controls are independent of one another, so they resolve concurrently. They were awaited one by
+  // one, which made a six-control layout six sequential store round trips (plus their nested
+  // lookups) on every controls poll and every reply read. Order is preserved by Promise.all, and
+  // the per-environment capability probe is memoised as a promise in `capabilityEnvironments`, so
+  // concurrency still probes each environment once.
+  return await Promise.all((stored.items ?? []).map(async (item) => {
     if (!item.actionId) {
-      const availability = await systemControlAvailability({ store, device, kind: item.kind, config, capabilityEnvironments });
-      controls.push({
+      const availability = await systemControlAvailability({
+        store, device, kind: item.kind, config, capabilityEnvironments, actorProfile,
+      });
+      return {
         id: item.id,
         label: resolvedLabel(item.label),
         kind: item.kind,
@@ -5005,23 +5036,23 @@ async function resolveDeviceControls({ store, device, stored, config, forFirmwar
         requiresConfirmation: ["stop", "reset"].includes(item.kind),
         enabled: availability.enabled,
         ...(availability.reason ? { reason: availability.reason } : {}),
-      });
-      continue;
+      };
     }
     const action = await store.getActionForUser(device.userId, item.actionId);
     if (!action) {
-      controls.push({
+      return {
         id: item.id,
         label: resolvedLabel(item.label ?? "Unavailable action"),
         kind: "remote_action",
         actionId: item.actionId,
         enabled: false,
         reason: "The saved action was deleted.",
-      });
-      continue;
+      };
     }
-    const availability = await savedActionAvailability({ store, device, action, config, capabilityEnvironments });
-    controls.push({
+    const availability = await savedActionAvailability({
+      store, device, action, config, capabilityEnvironments, actorProfile,
+    });
+    return {
       id: item.id,
       label: resolvedLabel(item.label ?? action.label),
       kind: actionControlKind(action),
@@ -5033,9 +5064,8 @@ async function resolveDeviceControls({ store, device, stored, config, forFirmwar
       requiresConfirmation: true,
       enabled: availability.enabled,
       ...(availability.reason ? { reason: availability.reason } : {}),
-    });
-  }
-  return controls;
+    };
+  }));
 }
 
 async function savedActionAvailability({
@@ -5047,6 +5077,7 @@ async function savedActionAvailability({
   inheritedEnvironmentId = null,
   inheritedThreadId = null,
   capabilityEnvironments = new Map(),
+  actorProfile = null,
 }) {
   if (seen.has(action.id)) return { enabled: false, reason: "This macro contains a reference cycle." };
   if (action.disabled) return { enabled: false, reason: disabledRecordMessage("action", action) };
@@ -5086,6 +5117,7 @@ async function savedActionAvailability({
         inheritedEnvironmentId: environmentId,
         inheritedThreadId: threadId,
         capabilityEnvironments,
+        actorProfile,
       });
       if (!result.enabled) return result;
     }
@@ -5093,7 +5125,7 @@ async function savedActionAvailability({
   }
   const representativeRuntime = action.type === "media" ? { mediaUploadId: "availability-check" } : {};
   const policy = evaluateIntentPolicy({
-    device: { profile: await resolveActorProfile(store, device.userId, device.profile) },
+    device: { profile: await (actorProfile ?? resolveActorProfile(store, device.userId, device.profile)) },
     intent: actionIntent(action, representativeRuntime),
     environment,
     ...(config.policyAllowedHours ? { allowedHours: config.policyAllowedHours } : {}),
@@ -5103,7 +5135,9 @@ async function savedActionAvailability({
   return { enabled: false, reason: policy.reason };
 }
 
-async function systemControlAvailability({ store, device, kind, config, capabilityEnvironments = new Map() }) {
+async function systemControlAvailability({
+  store, device, kind, config, capabilityEnvironments = new Map(), actorProfile = null,
+}) {
   if (kind === "reset") return { enabled: true, reason: null };
   const environmentId = device.config?.environmentId;
   if (!environmentId) return { enabled: false, reason: "No T3 environment is selected." };
@@ -5121,7 +5155,7 @@ async function systemControlAvailability({ store, device, kind, config, capabili
     ? { type: "session_control", action: "stop" }
     : { type: "status" };
   const policy = evaluateIntentPolicy({
-    device: { profile: await resolveActorProfile(store, device.userId, device.profile) },
+    device: { profile: await (actorProfile ?? resolveActorProfile(store, device.userId, device.profile)) },
     intent,
     environment,
     ...(config.policyAllowedHours ? { allowedHours: config.policyAllowedHours } : {}),
@@ -5136,8 +5170,8 @@ async function controlCapabilityEnvironment(store, userId, environmentId, cache)
     const environment = await store.getEnvironmentForUser(userId, environmentId);
     if (!environment || capabilityManifestIsFresh(environment.health?.capabilities)) return environment;
     try {
-      const manifest = ownerSafeT3CapabilityProjection(await transportForStore(store, environment)
-        .capabilities(environment, { allowStale: true }));
+      const manifest = ownerSafeT3CapabilityProjection(await timedSpan("t3", () => transportForStore(store, environment)
+        .capabilities(environment, { allowStale: true })));
       if (capabilityManifestIsFresh(manifest)) await store.updateEnvironmentHealth({
         userId, environmentId, health: { capabilities: manifest },
       });
@@ -6062,9 +6096,14 @@ function toPublicProfile(profile) {
  * Deliberately unwindowed: `turnLimit` would bound the read to the newest turn, and being wrong
  * about whether something is still waiting for the owner is worse than one larger response.
  */
-async function readProviderApprovals({ store, userId, environment, threadId }) {
+async function readProviderApprovals({ store, userId, environment, threadId, coalesce = false }) {
+  // `coalesce` is for LISTING (the device's approvals poll, which also asks for agent questions
+  // against the same detail). The answer paths leave it off on purpose: deciding whether an
+  // approval is still open must not rest on a read that began before the request did.
   const [thread, decisions] = await Promise.all([
-    fetchT3ThreadDetailForStore(store, environment, threadId),
+    coalesce
+      ? fetchDeviceThreadDetail(store, environment, threadId)
+      : fetchT3ThreadDetailForStore(store, environment, threadId),
     store.listProviderApprovalDecisions({ userId, environmentId: environment.id, threadId }),
   ]);
   const byRequestId = new Map((decisions ?? []).map((row) => [row.requestId, row]));
@@ -6084,18 +6123,26 @@ async function readProviderApprovals({ store, userId, environment, threadId }) {
  * approvals the same response carries — those are held here and have nothing to do with T3's
  * reachability — so a failure is reported alongside them rather than instead of them.
  */
-async function readDeviceProviderApprovals({ store, device, capabilities }) {
+async function readDeviceProviderApprovals({
+  store,
+  device,
+  capabilities,
+  resolveEnvironment = () => boundDeviceEnvironment(store, device),
+}) {
   const threadId = optionalString(device.config?.threadId);
   if (!threadId) return { approvals: [], error: null };
   try {
-    const environment = await boundDeviceEnvironment(store, device);
+    const environment = await resolveEnvironment();
     assertEnvironmentTokenActive(environment);
     const approvals = await readProviderApprovals({
       store,
       userId: device.userId,
       environment,
       threadId,
+      coalesce: true,
     });
+    // May be a promise: the profile lookup runs alongside the T3 read instead of before it.
+    const resolvedCapabilities = await capabilities;
     return {
       approvals: approvals
         .filter((approval) => approval.status === "pending" && !approval.localDecision)
@@ -6104,7 +6151,7 @@ async function readDeviceProviderApprovals({ store, device, capabilities }) {
           // Per request, so the controller draws only buttons this request accepts (see
           // `offeredDecisions` in src/providerApprovals.mjs). The top-level list stays
           // capability-only for firmware already in the field.
-          allowedDecisions: allowedProviderApprovalDecisions(capabilities, approval, { realm: "device" }),
+          allowedDecisions: allowedProviderApprovalDecisions(resolvedCapabilities, approval, { realm: "device" }),
         })),
       error: null,
     };
@@ -6304,9 +6351,11 @@ async function answerProviderApproval({
  * from. Deliberately unwindowed — a `turnLimit` would bound the read to the newest turn, and being
  * wrong about whether the agent is still waiting is worse than one larger response.
  */
-async function readUserInputRequests({ store, userId, environment, threadId }) {
+async function readUserInputRequests({ store, userId, environment, threadId, coalesce = false }) {
   const [thread, answers] = await Promise.all([
-    fetchT3ThreadDetailForStore(store, environment, threadId),
+    coalesce
+      ? fetchDeviceThreadDetail(store, environment, threadId)
+      : fetchT3ThreadDetailForStore(store, environment, threadId),
     store.listProviderUserInputAnswers({ userId, environmentId: environment.id, threadId }),
   ]);
   const byRequestId = new Map((answers ?? []).map((row) => [row.requestId, row]));
@@ -6326,17 +6375,18 @@ async function readUserInputRequests({ store, userId, environment, threadId }) {
  * Never throws, for the same reason `readDeviceProviderApprovals()` does not: a device that cannot
  * reach T3 must still be able to see and answer the GATEWAY approvals the same response carries.
  */
-async function readDeviceUserInputRequests({ store, device }) {
+async function readDeviceUserInputRequests({ store, device, resolveEnvironment = () => boundDeviceEnvironment(store, device) }) {
   const threadId = optionalString(device.config?.threadId);
   if (!threadId) return { requests: [], error: null };
   try {
-    const environment = await boundDeviceEnvironment(store, device);
+    const environment = await resolveEnvironment();
     assertEnvironmentTokenActive(environment);
     const requests = await readUserInputRequests({
       store,
       userId: device.userId,
       environment,
       threadId,
+      coalesce: true,
     });
     return {
       // Unanswerable questions are INCLUDED on purpose. An owner walking past a controller that
@@ -7919,13 +7969,148 @@ function commandResponse(variants) {
   return { command: variants.command, commands: variants.commands, commandUniversal: variants.universal };
 }
 
-async function deviceGatewayResponse(store, device, suppliedSelection = null) {
-  const profiles = (await store.listGatewayProfiles(device.userId)).map(publicGatewayProfile);
-  const byId = new Map(profiles.map((profile) => [profile.id, profile]));
-  const selection = suppliedSelection ?? await store.getDeviceGatewaySelection({
-    userId: device.userId,
+// ---------------------------------------------------------------------------------------------
+// Response bundles. A controller's tap used to cost a chain of single-purpose requests, each with
+// its own TLS exchange; these let one response carry what the next reads would have asked for.
+//
+// Two rules keep them from widening anything. Every section is produced by the SAME builder as the
+// route it replaces, for the same authenticated device, so it contains exactly what that route
+// would have returned to that device. And they are opt-in by name: firmware that does not ask gets
+// the unchanged response, and unknown names are ignored rather than rejected.
+// ---------------------------------------------------------------------------------------------
+const SELECTION_BUNDLE_SECTIONS = ["config", "controls", "approvals"];
+const THREADS_BUNDLE_SECTIONS = ["environments", "projects"];
+
+function requestedBundleSections(raw, allowed) {
+  const names = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(",") : [];
+  return [...new Set(names.map((name) => String(name).trim()).filter((name) => allowed.includes(name)))];
+}
+
+async function buildSelectionBundle({ store, device, config, sections }) {
+  const builders = {
+    config: () => buildDeviceConfigBody(store, device),
+    controls: () => buildDeviceControlsBody({ store, device, config }),
+    approvals: () => buildDeviceApprovalsBody({ store, device }),
+  };
+  const results = await Promise.all(sections.map(async (name) => {
+    try {
+      return { name, value: await builders[name]() };
+    } catch {
+      return { name, failed: true };
+    }
+  }));
+  const bundle = {};
+  const bundleErrors = [];
+  for (const result of results) {
+    if (result.failed) bundleErrors.push(result.name);
+    // `controls: null` is an answer ("no protocol-v2 layout is assigned"), unlike an absent key.
+    else bundle[result.name] = result.value;
+  }
+  return { bundle, ...(bundleErrors.length ? { bundleErrors } : {}) };
+}
+
+// The body of GET /v1/device/environments. Scoped to the owner, not to the platform:
+// listEnvironments() is a per-user read, so a device can only ever see what the account that
+// claimed it owns.
+async function buildDeviceEnvironmentsBody(store, device) {
+  const [environments, connectors] = await Promise.all([
+    store.listEnvironments(device.userId),
+    store.listConnectors(device.userId),
+  ]);
+  const projection = deviceSelectableEnvironments(
+    environments,
+    device.config?.environmentId,
+    connectors,
+  );
+  return {
+    environmentId: device.config?.environmentId ?? null,
+    environments: projection.environments,
+    environmentsTruncated: projection.truncated,
+  };
+}
+
+function buildDeviceProjectsBody(device, environment, snapshot) {
+  return {
+    destinationSelection: "atomic-v1",
+    environmentId: environment.id,
+    projectId: device.config?.projectId ?? null,
+    projects: deviceSelectableProjects(snapshot, device.config?.projectId),
+  };
+}
+
+// The body of GET /v1/device/config, shared with the select-response bundle so the two cannot drift.
+async function buildDeviceConfigBody(store, device) {
+  const gateway = await deviceGatewayResponse(store, device);
+  return {
     deviceId: device.id,
-  });
+    config: {
+      ...device.config,
+      gatewayProfiles: gateway.profiles,
+      activeGatewayProfileId: gateway.activeProfileId,
+      gatewaySelection: gateway,
+    },
+  };
+}
+
+// The body of GET /v1/device/controls, or null when no protocol-v2 layout is assigned (the route
+// answers that with a 404; a bundle simply omits the section).
+async function buildDeviceControlsBody({ store, device, config }) {
+  const stored = await store.getDeviceControls({ userId: device.userId, deviceId: device.id });
+  if (!stored?.explicit) return null;
+  const controls = await resolveDeviceControls({ store, device, stored, config, forFirmware: true });
+  return { revision: stored.revision, controls };
+}
+
+// The controls array thread-output embeds: empty when there is no explicit layout.
+async function readDeviceControlsOrEmpty({ store, device, config }) {
+  return (await buildDeviceControlsBody({ store, device, config }))?.controls ?? [];
+}
+
+// The body of GET /v1/device/approvals. The reads below are independent — the gateway holds, the
+// profile, and the two T3-backed lists — so they overlap instead of queueing, and the two lists
+// share one environment lookup and (via the coalescer) one unwindowed thread-detail trip.
+async function buildDeviceApprovalsBody({ store, device }) {
+  const capabilities = resolveActorProfile(store, device.userId, device.profile).then(capabilitiesForProfile);
+  capabilities.catch(() => {});
+  let environmentLookup = null;
+  const resolveEnvironment = () => (environmentLookup ??= boundDeviceEnvironment(store, device));
+  const [commands, resolvedCapabilities, provider, userInput] = await Promise.all([
+    store.listCommands(device.userId),
+    capabilities,
+    readDeviceProviderApprovals({ store, device, capabilities, resolveEnvironment }),
+    readDeviceUserInputRequests({ store, device, resolveEnvironment }),
+  ]);
+  return {
+    commands: commands
+      .filter((command) => command.status === "approval_required")
+      .map((command) => ({ ...command, kind: "gateway" })),
+    providerApprovals: provider.approvals,
+    // The third key, and the third question. Each entry carries `answerable`: true means the
+    // device may POST /v1/device/user-input/:requestId, false means it should render the
+    // question and the `hint` and offer no buttons. Both are better than "Working" forever.
+    userInputRequests: userInput.requests,
+    // A read-only controller sees what is waiting and is offered nothing to press. Hiding
+    // the request would be worse: the owner walking past the device would have no idea the
+    // agent was blocked.
+    allowedDecisions: allowedProviderApprovalDecisions(resolvedCapabilities),
+    canAnswerUserInput: resolvedCapabilities.has("user_input_response"),
+    ...(provider.error ? { providerApprovalsError: provider.error } : {}),
+    ...(userInput.error ? { userInputError: userInput.error } : {}),
+  };
+}
+
+async function deviceGatewayResponse(store, device, suppliedSelection = null) {
+  // Two independent reads: awaiting them one after the other cost a store round trip on every
+  // config and gateway poll for no reason.
+  const [storedProfiles, selection] = await Promise.all([
+    store.listGatewayProfiles(device.userId),
+    suppliedSelection ?? store.getDeviceGatewaySelection({
+      userId: device.userId,
+      deviceId: device.id,
+    }),
+  ]);
+  const profiles = storedProfiles.map(publicGatewayProfile);
+  const byId = new Map(profiles.map((profile) => [profile.id, profile]));
   return {
     deviceId: device.id,
     revision: selection?.revision ?? 0,
@@ -7942,7 +8127,13 @@ async function deviceGatewayResponse(store, device, suppliedSelection = null) {
   };
 }
 
+// Timed as one unit: the credential check is dominated by the store's own authentication write, so
+// the `auth` figure in Server-Timing is the answer to "what does proving who I am cost?".
 async function authenticateDevice(req, store, url = null, config = {}, options = {}) {
+  return await timedSpan("auth", () => authenticateDeviceUntimed(req, store, url, config, options));
+}
+
+async function authenticateDeviceUntimed(req, store, url = null, config = {}, options = {}) {
   // A device secret travels on every one of these requests.
   assertSecureTransport(req, config, "Device authentication");
   const deviceId = optionalString(req.headers["x-device-id"])
@@ -8103,11 +8294,11 @@ async function enforceDeviceWrite(req, res, rateLimiter, config, device) {
 
 async function enforceRateLimit(req, res, rateLimiter, config, { scope, actorId, limit }) {
   const windowMs = config.rateLimits?.windowMs ?? 60_000;
-  const result = await rateLimiter.check({
+  const result = await timedSpan("rate", () => rateLimiter.check({
     key: `${scope}:${actorId}`,
     limit: limit ?? 0,
     windowMs,
-  });
+  }));
   if (Number.isFinite(result.limit) && result.limit > 0) {
     res.setHeader("x-ratelimit-limit", String(result.limit));
     res.setHeader("x-ratelimit-remaining", String(result.remaining));
@@ -8323,7 +8514,7 @@ async function refineSelectedThreadVerb(store, environment, threads) {
   if (!selected) return threads;
   let detail = null;
   try {
-    detail = await fetchT3ThreadDetailForStore(store, environment, selected.id, { turnLimit: 1 });
+    detail = await fetchDeviceThreadDetail(store, environment, selected.id, { turnLimit: 1 });
   } catch {
     return threads;
   }
@@ -8610,7 +8801,15 @@ async function dispatchT3CommandForStore(store, environment, command, options = 
   const feature = capabilityForT3Command(command);
   const manifest = await requireFreshT3CapabilityForStore(store, environment, feature);
   validateT3CommandAttachments(command, manifest);
-  return await transportForStore(store, environment).dispatch(environment, command, options);
+  try {
+    return await timedSpan("t3", () => transportForStore(store, environment).dispatch(environment, command, options));
+  } finally {
+    // T3 is about to look different (a new thread, a new turn, a changed session). Whatever the
+    // device read cache holds for this environment predates that, and a read still in flight when
+    // the dispatch settles is barred from storing or sharing its answer. In `finally` because a
+    // dispatch that failed after T3 accepted it has changed things just as much.
+    invalidateDeviceReads(store, environment?.userId, environment?.id);
+  }
 }
 
 const capabilityAdapters = new WeakMap();
@@ -8627,7 +8826,7 @@ async function requireFreshT3CapabilityForStore(store, environment, feature) {
   }
   let manifest;
   try {
-    manifest = await adapter.capabilities(environment, { allowStale: true });
+    manifest = await timedSpan("t3", () => adapter.capabilities(environment, { allowStale: true }));
   } catch {
     throw new HttpError(503, "T3 capabilities could not be verified.", {
       code: "t3_capabilities_unavailable", action: "CHECK T3 CODE",
@@ -8758,9 +8957,32 @@ function deriveClientRequestId(clientRequestId, scope) {
 
 // Every device route that reads T3 reports an unreachable host the same way, so the
 // firmware has one error contract to branch on instead of four.
-async function fetchDeviceSnapshot(store, environment) {
+//
+// Reads go through a per-environment coalescer (src/readCoalescer.mjs). The snapshot describes T3,
+// not the device, so it is shared by every device of the same owner reading the same environment;
+// each request still authenticates, rate-limits and re-resolves its own device record first and
+// projects the shared value through that record afterwards.
+//
+// Freshness is chosen by the CALLER through `mode`, because the three kinds of read have different
+// costs for being wrong:
+//   "list"      a picker the device already tolerates being 30 s stale (`threads`, `projects`)
+//   "validate"  a check that an id exists before a write (`config/thread`, `config/project`);
+//               an id absent from a stored answer is re-checked fresh, so a thread created a second
+//               ago can never 404 because of the cache
+//   "live"      the reply path and anything feeding a decision: never serves stored data, only
+//               joins a flight already in the air
+// `fresh` skips both the stored answer and other callers' flights (a validation's second look).
+async function fetchDeviceSnapshot(store, environment, mode = "list", { fresh = false, report = null } = {}) {
+  const settings = deviceReadSettings(store);
+  const maxAgeMs = mode === "live" ? 0 : mode === "validate" ? settings.validateTtlMs : settings.listTtlMs;
   try {
-    return await readT3SnapshotForStore(store, environment);
+    return await coalescedDeviceRead(store, environment, {
+      key: "snapshot",
+      maxAgeMs,
+      fresh,
+      report,
+      load: () => readT3SnapshotForStore(store, environment),
+    });
   } catch (error) {
     throw new HttpError(502, "T3 environment is unavailable.", {
       code: "t3_unreachable",
@@ -8768,6 +8990,176 @@ async function fetchDeviceSnapshot(store, environment) {
       cause: errorMessage(error),
     });
   }
+}
+
+// One thread's detail, shared between callers that ask for the SAME window at the same moment —
+// `approvals` asks for the unwindowed detail twice in parallel (provider approvals and agent
+// questions). Never stored (`maxAgeMs: 0, retain: false`): the reply and approval screens show what
+// T3 says now, so this only removes duplicate in-flight trips.
+async function fetchDeviceThreadDetail(store, environment, threadId, options = {}) {
+  return await coalescedDeviceRead(store, environment, {
+    key: `detail:${threadId}:${options.turnLimit ?? "all"}`,
+    maxAgeMs: 0,
+    retain: false,
+    load: () => fetchT3ThreadDetailForStore(store, environment, threadId, options),
+  });
+}
+
+async function coalescedDeviceRead(store, environment, { key, maxAgeMs, fresh = false, retain = true, report = null, load }) {
+  const { coalescer } = deviceReadSettings(store);
+  // Without both ids there is no safe scope: read straight through, caching nothing.
+  if (!environment?.userId || !environment?.id) return await timedSpan("t3", load);
+  return await timedSpan("t3", async () => {
+    const result = await coalescer.read({
+      scope: deviceReadScope(environment.userId, environment.id),
+      // The transport fingerprint is part of the KEY, so re-pairing an environment or pointing it
+      // at another connector can never be answered from what the previous target said.
+      key: `${key}:${environmentTransportFingerprint(environment)}`,
+      maxAgeMs,
+      fresh,
+      retain,
+      load,
+    });
+    noteCacheSource(result.source);
+    if (report) report.source = result.source;
+    return result.value;
+  });
+}
+
+// "Does this id exist?" asked of a snapshot. A stored answer can confirm presence but can never
+// prove absence — the thread may have been created since — so a miss on a STORED answer is
+// re-checked once against T3 before anyone is told 404. A miss on a fresh read or a shared flight
+// is already as current as the request that asked.
+async function fetchDeviceSnapshotProving(store, environment, isPresent) {
+  const report = {};
+  const snapshot = await fetchDeviceSnapshot(store, environment, "validate", { report });
+  if (isPresent(snapshot) || report.source !== "hit") return snapshot;
+  return await fetchDeviceSnapshot(store, environment, "validate", { fresh: true });
+}
+
+function deviceReadScope(userId, environmentId) {
+  return `${userId}\u0000${environmentId}`;
+}
+
+function environmentTransportFingerprint(environment) {
+  return createHash("sha256")
+    .update(JSON.stringify([
+      environment.transportMode ?? null,
+      environment.connectorId ?? null,
+      environment.baseUrl ?? null,
+      environment.accessToken ?? null,
+    ]), "utf8")
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/** T3 changed (or is about to look different): nothing stored for this environment may be served. */
+function invalidateDeviceReads(store, userId, environmentId) {
+  if (!userId || !environmentId) return;
+  deviceReadSettings(store).coalescer.invalidate(deviceReadScope(userId, environmentId));
+}
+
+// Anything that re-pairs, revokes, archives or removes an environment or its connector makes every
+// stored answer about it suspect — and "revocation stays immediate" has to hold for the cache too,
+// not only for authentication. Rather than remember to call an invalidator at each of the route
+// handlers (and the retention runner, and connector self-revocation) that reach these writes, the
+// store methods themselves are wrapped, in place: whoever performs the write drops the cache. The
+// scope is the whole cache rather than one user because these are rare and the connector-realm
+// ones do not name a user.
+const ENVIRONMENT_STORE_WRITES = [
+  "upsertEnvironment", "archiveEnvironment", "restoreEnvironment", "purgeEnvironment", "deleteEnvironment",
+  "createConnector", "revokeConnector", "revokeConnectorByCredential",
+];
+const READ_INVALIDATION_MARK = Symbol.for("next-coder.device-read-invalidation");
+
+function invalidateDeviceReadsOnEnvironmentWrites(store) {
+  if (store[READ_INVALIDATION_MARK]) return;
+  for (const name of ENVIRONMENT_STORE_WRITES) {
+    const original = store[name];
+    if (typeof original !== "function") continue;
+    try {
+      store[name] = function invalidatingStoreWrite(...args) {
+        const drop = () => deviceReadSettings(store).coalescer.invalidatePrefix("");
+        let result;
+        try {
+          result = original.apply(this, args);
+        } catch (error) {
+          drop();
+          throw error;
+        }
+        if (result && typeof result.then === "function") {
+          return result.then(
+            (value) => { drop(); return value; },
+            (error) => { drop(); throw error; },
+          );
+        }
+        drop();
+        return result;
+      };
+    } catch {
+      // A frozen store method cannot be wrapped; its writes are then bounded by the TTL alone.
+    }
+  }
+  try {
+    Object.defineProperty(store, READ_INVALIDATION_MARK, { value: true, enumerable: false });
+  } catch {
+    // Unmarkable: at worst wrapped twice, which only invalidates twice.
+  }
+}
+
+// How long a stored T3 answer may be reused by a device read, and why those numbers.
+//
+// The controller's own cadence (firmware/shared/NextCoderCore GatewayClient.cpp): threads,
+// controls and approvals every 30 s, config every 60 s, heartbeat 30 s, display every 5 s (and
+// display never reads T3). So a lone device's STEADY-STATE polls are 30 s apart and no TTL under
+// 30 s changes them; this cache exists for the bursts, which are what a person feels:
+//   - entering Threads then choosing a row: list, then validate, seconds apart;
+//   - after a selection: config, controls, approvals and the reply read land within about a second
+//     (each is a separate serialised request), and
+//   - two controllers on one account, or a controller plus the console, reading together.
+// "list" is 2 s: shorter than the 5 s display poll, so thread status (which feeds the orb) is never
+// older than the screen refresh it appears on. "validate" is 5 s: an existence check can tolerate
+// more because a miss is re-verified fresh and a hit on a thread deleted seconds ago only means the
+// next reply read says "not found" instead of this write doing so. Both are far below the 30 s
+// staleness the device already accepts for its own warm thread list. `DEVICE_SNAPSHOT_CACHE_TTL_MS`
+// (or `config.deviceReadCache`) overrides both; 0 leaves single-flight on and storage off.
+const DEVICE_LIST_SNAPSHOT_TTL_MS = 2_000;
+const DEVICE_VALIDATE_SNAPSHOT_TTL_MS = 5_000;
+
+function createDeviceReadSettings(config) {
+  const envOverride = process.env.DEVICE_SNAPSHOT_CACHE_TTL_MS;
+  const parsedOverride = envOverride === undefined || envOverride === "" ? NaN : Number(envOverride);
+  const override = Number.isFinite(parsedOverride) && parsedOverride >= 0 ? parsedOverride : null;
+  const configured = config?.deviceReadCache ?? {};
+  const bounded = (value, fallback) => (
+    Number.isFinite(value) && value >= 0 ? Math.min(value, 30_000) : fallback
+  );
+  return {
+    coalescer: createReadCoalescer(),
+    listTtlMs: bounded(configured.listTtlMs, bounded(override, DEVICE_LIST_SNAPSHOT_TTL_MS)),
+    validateTtlMs: bounded(configured.validateTtlMs, bounded(override, DEVICE_VALIDATE_SNAPSHOT_TTL_MS)),
+  };
+}
+
+function deviceReadSettings(store) {
+  let settings = deviceReadSettingsByStore.get(store);
+  if (!settings) {
+    settings = createDeviceReadSettings(null);
+    deviceReadSettingsByStore.set(store, settings);
+  }
+  return settings;
+}
+
+// One line per device request, and only when asked for: a route template, a status, and the same
+// numbers the Server-Timing header carries. No path parameter, header, body or error text.
+function logDeviceTiming(mode, logger, method, pathname, status, summary) {
+  const slow = summary.totalMs >= 1000;
+  if (mode !== "all" && !(mode === "slow" && slow)) return;
+  const line = `[device-timing] ${deviceRouteTemplate(method, pathname)} ${status} total=${summary.totalMs}`
+    + ` auth=${summary.authMs} rate=${summary.rateMs} store=${summary.storeMs}(n=${summary.storeCalls})`
+    + ` t3=${summary.t3Ms}(n=${summary.t3Calls} hit=${summary.cache.hit} join=${summary.cache.join} miss=${summary.cache.miss})`
+    + ` app=${summary.appMs}`;
+  (logger?.info ?? logger?.log ?? console.log).call(logger ?? console, line);
 }
 
 // The five words this list has always spoken. Refinement into an agent verb happens in

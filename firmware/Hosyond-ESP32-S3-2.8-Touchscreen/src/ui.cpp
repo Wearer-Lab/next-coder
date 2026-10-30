@@ -8,6 +8,8 @@
 #include <GatewayBrowse.h>
 #include <GatewayVoice.h>
 #include <MediaUpload.h>
+#include <OrbProfile.h>
+#include <UiProfile.h>
 #include <ThinkingOrb.h>
 #include <ResponseLayout.h>
 #include <SetupQr.h>
@@ -15,6 +17,9 @@
 #include "audio.h"
 #include "display.h"
 #include "gatewayProbe.h"
+#include "ui_content_job.h"
+#include "ui_gesture_queue.h"
+#include "ui_held_reply.h"
 #include "ui_paint.h"
 #include "wifi_keyboard.h"
 
@@ -82,9 +87,26 @@ constexpr int16_t kContentTop = 56;
 // which is twice per appearance rather than once per frame.
 constexpr int16_t kBarH = 58;
 
-// ~30 fps. The orb maths and the panel blit together measure ~27 ms on this board, so this is the
-// cadence the hardware can actually hold rather than an aspiration.
-constexpr uint32_t kFrameMs = 33;
+// The frame target: 16 ms, ~62 fps (millis() cannot express 16.7).
+//
+// This rests on a MEASUREMENT, not an aspiration. Instrumented on the board at 80 MHz SPI (0.2.22),
+// a steady HOME frame did tick=6.4 ms of work (orb 6.2 of it: emit 3.1, raster 1.2, blit+other
+// 1.7) and then slept 25.8 ms to land on the old 33 ms cap, i.e. 78% idle. Typical work therefore
+// fits a 16 ms frame with ~9 ms to spare. The previous "~27 ms" figure this comment carried was
+// wrong; it conflated a content repaint frame with a steady one.
+//
+// What does NOT fit is any single frame that repaints a whole region: a full-width content compose
+// measured 40 ms, chrome ~12 ms and the action bar ~18 ms. Those are bounded separately — content
+// is painted in time-budgeted slices (kPaintBudgetUs) so no frame blows this target by more than
+// one band — and the numbers to re-check after any change here (in a HOSYOND_UI_PROFILE build) are
+// [frame-split] tick/sleep and the [content-split] line. Raising the target back up is the safe direction if sleep reaches 0.
+constexpr uint32_t kTargetFrameMs = 16;
+
+// Per-frame cap on band-composition time for a content repaint, measured from the start of the
+// tick (so it already includes anything painted before it this frame). The frame target minus the
+// ~6.4 ms steady cost minus slack for the orb's own variance. A slice always paints at least one
+// band so a repaint cannot stall, and overshoots by at most the cost of that band (~4 ms measured).
+constexpr uint32_t kPaintBudgetUs = 9000;
 
 // Slide durations. Both are deliberately shorter than a beat and longer than a frame: under about
 // 120 ms an eased slide is indistinguishable from a jump, and over about 300 ms the device feels
@@ -325,6 +347,13 @@ constexpr uint32_t kPickerSlideMs = 190;
 // itself whoever asked for it. threadListKnown() is what the UI consults; the flag only settles the
 // one case data cannot, which is "we asked and there genuinely are none".
 bool threadsFetched = false;
+// True from the moment THREADS asks the gateway to confirm a list until the answer is published. It
+// only changes what an EMPTY list says ("Loading" rather than "No threads in this folder"): a list
+// that is already on screen is never replaced by a loading card, it is revalidated behind itself.
+bool threadsLoading = false;
+// The reply screen was opened and its first read has not finished. With nothing held to show, it
+// reads "Loading the latest reply" instead of the misleading "No response open".
+bool replyLoadPending = false;
 // Native discovery is bounded to twelve rows and uses the existing scrolling destination view.
 uint8_t agentBrowseMode = 0; // threads / agents-models / native sessions
 int selectedAgentRow = -1;
@@ -424,6 +453,41 @@ float barT = 0.0f;
 bool barReserved = false;
 bool barDirty = false;
 
+// ---------------------------------------------------------------------------------------------
+// Content repaint as a bounded job
+// ---------------------------------------------------------------------------------------------
+//
+// A content repaint is composed in 22 px strips (displayComposeScene), each strip replaying the
+// screen's whole painter once and then publishing 22 rows over SPI. Measured on the board that is
+// ~4 ms a strip, so the ~206 px content area is ~40 ms in ONE frame — two to four frames' worth of
+// stall at the old 33 ms cadence, and the reason a scroll or a model refresh felt like the device
+// froze. The strips are independent opaque full-width bands, so nothing requires them to be
+// published in the same frame: this spreads them across frames under a time budget.
+//
+// Rules that keep it honest:
+//  * It is level-triggered by `contentDirty`, exactly as before. A new request while a job is
+//    running RESTARTS it from the top with the fresh state; the painter reads current state per
+//    strip, so a half-finished job is never allowed to finish with stale layout.
+//  * The orb is not drawn while a full job is active. The strips cover the orb's area; drawing it
+//    between strips would show it, then wipe it, then show it (this is what the one-frame hole in
+//    the old single-frame repaint already did, just longer).
+//  * The picker's carousel motion paints straight onto the panel and would be overwritten by the
+//    later strips, so it waits for the job to finish. It is time-based, so it does not slow down.
+//  * A strip that cannot be composed (no band canvas) falls back to the old direct paint.
+ContentJob contentJob;
+
+// HOME repaint requested only because the model moved. See markContentForModelChange().
+bool homeTextDirty = false;
+
+// Why a repaint happened, for the [content-split] line. First cause since the last arming wins.
+// `kCauseOther` is everything that sets contentDirty directly (touch handlers, picker, message).
+// The names stay in every build because the call sites that pass them are product code; only the
+// recording of the cause (pendingContentCause, and the counters that consume it) is profile-only.
+enum : uint8_t { kCauseOther, kCauseRevision, kCauseBrowse, kCauseScreen, kCauseLink, kCauseReserve,
+                 kCauseArrival, kCauseCount };
+constexpr uint8_t kNoCause = 0xFF;
+UI_PROFILE(uint8_t pendingContentCause = kNoCause;)
+
 // A finger that came down in the header is pulling the drawer, wherever it ends up. Decided on the
 // press rather than on each drag, because a drag that starts in a list and wanders into the header
 // is a scroll, not a pull.
@@ -485,6 +549,38 @@ struct FrameStats {
 };
 
 FrameStats stats;
+
+#if HOSYOND_UI_PROFILE
+// MEASUREMENT (HOSYOND_UI_PROFILE only, with the [frame-split]/[orb-split] lines): where a painted
+// frame's time goes, in microseconds. `draw<=` in [fps] is one number that adds all of this up; it cannot say
+// whether the orb, the chrome or the bookkeeping before the first pixel is the long pole.
+//
+//   pre      uiTick() entry -> drawStart: retained-touch replay, network-job completion, Wi-Fi/phone
+//            polling, the model-lock observe block. Nothing here paints.
+//   logic    drawStart -> first paint: picker motion, drawer/bar easing, buildActions(), the
+//            action signature, clearForArrival(). Computation, plus the arrival clear when a screen changed.
+//   chrome / bar / drawer / content / picker   the compose-and-publish stages, each only when it ran.
+//   orb      displayDrawOrb()/displayDrawMiniOrb() in full: geometry + raster + blit.
+//   status   the shimmer label and the header dot.
+//   tick     uiTick() entry -> the end of the last paint, for a painted frame (= pre + logic + the
+//            paint stages). The voice-poll enqueue after it is not included.
+//   sleep    time spent inside uiSleepUntilNextFrame(): HEADROOM. If sleep is ~0 the loop is
+//            saturated; if it is large the frame cap, not the work, is what limits fps.
+//   rest     period - tick - sleep: loop() work outside uiTick (touchPoll, provisioning.poll,
+//            qualification, early-return passes).
+struct FrameSplit {
+  uint32_t frames = 0;
+  uint32_t pre = 0, logic = 0, chrome = 0, bar = 0, drawer = 0, content = 0, picker = 0, orb = 0, status = 0;
+  uint32_t tick = 0, sleep = 0, period = 0;
+  uint32_t tickMax = 0, orbMax = 0, preMax = 0, contentMax = 0, periodMax = 0;
+  uint32_t orbFrames = 0, contentFrames = 0, chromeFrames = 0, barFrames = 0;
+  uint32_t lastTickEnterUs = 0;
+  // Content repaint jobs (see ContentJob). cause[] indexes the k*Cause enum.
+  uint32_t jobs = 0, partialJobs = 0, strips = 0, jobUs = 0, jobUsMax = 0, jobFramesMax = 0, restarts = 0;
+  uint32_t cause[8] = {};
+  uint8_t lastJobScreen = 0;
+} split;
+#endif  // HOSYOND_UI_PROFILE
 uint32_t lastFrameAt = 0;
 uint32_t nextFrameAt = 0;
 
@@ -1306,6 +1402,54 @@ void paintHome() {
   drawHomePickerVisual(homePickerVisual(pickerSlot(), pickerPending()), 0);
 }
 
+
+// Records why the next content repaint was asked for, unless something already asked.
+void noteContentCause(uint8_t cause) {
+  UI_PROFILE(if (!contentDirty && pendingContentCause == kNoCause) pendingContentCause = cause;)
+  (void)cause;
+}
+void markContentDirty(uint8_t cause) {
+  noteContentCause(cause);
+  contentDirty = true;
+}
+
+// The rows paintHome() actually has to rewrite when only the MODEL moved: the two text lines and
+// the OPEN button. Everything above them is the orb's box (rewritten by the orb every frame, with
+// 12 px of gap before line 1 by construction in layOutStack()) and plain ground, so repainting it
+// is 60% of a content compose spent re-publishing pixels that cannot have changed. A 4 px margin
+// each side covers the button's anti-aliased edge.
+bool homeTextRows(int16_t& top, int16_t& end) {
+  top = (int16_t)max<int>(kContentTop, stack.line1Y - 4);
+  end = (int16_t)min<int>(contentBottom(), stack.actionY + kActionRowBand + 4);
+  return end > top;
+}
+
+// A model change (gateway revision, browse revision) used to mean a full content repaint on every
+// screen, however little had changed. On HOME the model can only change the text and the button,
+// and only if the STRUCTURE is the same: if the layout inputs moved (the action bar appeared and
+// re-centred the composition) the whole block moved and the answer is a full repaint.
+//
+// Safe because every other reason to repaint — arrival, drawer retraction, modal, picker commit,
+// message — still sets contentDirty directly and wins. This path only ever REPLACES a full request
+// that would have been the bare "model moved" kind, and it falls back to the full request whenever
+// anything is unsettled.
+void markContentForModelChange(uint8_t cause) {
+  if (contentDirty) return;                                   // a full repaint is already pending
+  if (contentJob.active && !contentJob.partial) { markContentDirty(cause); return; }  // restart fresh
+  const bool settledHome = screen == Screen::Home && modal == Modal::None && !pickerMotion.active
+    && drawerT <= 0.001f && viewKey() == paintedViewKey;
+  if (settledHome) {
+    const Stack now = homeStack();
+    if (now.orbCy == stack.orbCy && now.line1Y == stack.line1Y && now.line2Y == stack.line2Y
+        && now.actionY == stack.actionY) {
+      noteContentCause(cause);
+      homeTextDirty = true;
+      return;
+    }
+  }
+  markContentDirty(cause);
+}
+
 bool homePickerSlotPending(int slot) {
   return slot >= 0 && slot < (int)threadRowCount() && slot != boundThreadIndex();
 }
@@ -1971,13 +2115,81 @@ void stepReplyPage(int direction);
 constexpr Rect kFollowLeft = {12, kContentTop + 160, 106, 34};
 constexpr Rect kFollowRight = {122, kContentTop + 160, 106, 34};
 
+// ---------------------------------------------------------------------------------------------
+// The reply is local-first
+// ---------------------------------------------------------------------------------------------
+//
+// GatewayClient clears its reply model whenever the thread moves, so reopening a thread read a
+// minute ago painted "No response open" for the whole of a gateway round trip while the text sat on
+// the device. The UI keeps its own labelled copy of what it last SAW (ui_held_reply.h) and paints
+// it while the real model revalidates. It is shown only for the bound thread, only while the live
+// model has nothing readable of its own, and always as "UPDATING" with its age - never as live truth.
+
+HeldReplies heldReplies;
+uint32_t heldReplyCapturedRevision = 0;
+uint32_t replyRefreshedAt = 0;
+// A reply opened again within this long of its last read is not re-read just for being opened.
+constexpr uint32_t kReplyFreshMs = 5000;
+
+String heldReplyRealm;
+
+// A reply is content from one gateway and one device identity. If either changes (a transfer reset,
+// a re-claim, a gateway switch) nothing held may survive it to be shown to whoever uses it next.
+void sealHeldRepliesToRealm() {
+  const DeviceRequestSnapshot snapshot = store->pendingRequestSnapshot();
+  const String realm = snapshot.gatewayUrl + "|" + snapshot.deviceId;
+  if (realm == heldReplyRealm) return;
+  heldReplies.clear();
+  heldReplyRealm = realm;
+}
+
+// Remembers the reply the person is looking at, for the next time this thread is opened. Cheap to
+// call every frame: it does nothing until the model's revision moves.
+void captureHeldReply() {
+  if (screen != Screen::Response || !gw->responseOpen() || !gw->hasThread()) return;
+  const uint32_t revision = gw->revision();
+  if (revision == heldReplyCapturedRevision) return;
+  heldReplyCapturedRevision = revision;
+  sealHeldRepliesToRealm();
+  heldReplies.keep(gw->context().environmentId, gw->context().threadId, gw->response(), millis());
+}
+
+// The held copy to paint in place of an empty or still-loading reply, or null.
+const HeldReply* heldReplyToShow() {
+  if (!gw->hasThread()) return nullptr;
+  const ThreadResponse& r = gw->response();
+  if (gw->responseOpen() && !(r.state == "loading" && r.lineCount == 0)) return nullptr;
+  return heldReplies.find(gw->context().environmentId, gw->context().threadId);
+}
+
+void paintHeldResponse(const HeldReply& held) {
+  String lines[kReplyMaxLines];
+  const ResponseLayout layout = layoutResponsePage(held.lines, held.lineCount, kCols2,
+    kReplyMaxLines, 0, lines, kReplyMaxLines);
+  for (size_t i = 0; i < layout.lineCount; ++i) {
+    uip::text(10, (int16_t)(kReplyTextTop + (int16_t)i * kReplyLineH), 2, kText, lines[i]);
+  }
+  uip::divider(20, kContentTop + 138, (int16_t)(kW - 40));
+  uip::pixel(14, kContentTop + 145, 6, kHair);
+  uip::text(26, kContentTop + 146, 1, kText, "UPDATING");
+  uip::textRight((int16_t)(kW - 14), kContentTop + 146, 1, kHair,
+                 HeldReplies::ageLabel(millis() - held.seenAt));
+}
+
 void paintResponse() {
   clearContent();
   const ThreadResponse& r = gw->response();
 
+  if (const HeldReply* held = heldReplyToShow()) { paintHeldResponse(*held); return; }
+
   if (!gw->responseOpen()) {
-    uip::textCentered(kContentTop + 70, 1, kMuted, "No response open");
-    uip::textCentered(kContentTop + 90, 1, kHair, "Load the latest below");
+    if (replyLoadPending) {
+      uip::textCentered(kContentTop + 70, 1, kMuted, "Loading the latest reply");
+      uip::textCentered(kContentTop + 90, 1, kHair, "One moment");
+    } else {
+      uip::textCentered(kContentTop + 70, 1, kMuted, "No response open");
+      uip::textCentered(kContentTop + 90, 1, kHair, "Load the latest below");
+    }
     return;
   }
 
@@ -1989,7 +2201,8 @@ void paintResponse() {
   }
   if (count == 0) {
     const String waiting = r.state == "waiting" || r.state == "streaming"
-      ? String("Waiting for the agent") : String("Nothing to show yet");
+      ? String("Waiting for the agent")
+      : r.state == "loading" ? String("Loading the latest reply") : String("Nothing to show yet");
     uip::textCentered(kReplyTextTop + 40, 1, kMuted, waiting);
   }
 
@@ -2541,12 +2754,17 @@ void addAction(Act id, const char* label, bool primary, bool enabled = true) {
 // not drawn and those 58 pixels belong to the content. A permanent strip of five tabs, four of them
 // inert, was the opposite of that.
 bool uiNetworkBusy();
+// Busy for the purposes of the action bar. A job that only REVALIDATES what is already on screen
+// (see submitUiJob) does not lock the bar: the buttons stay live, and a press during it is held and
+// replayed when the job ends (pendingGesture), instead of the bar saying WORKING for the length of
+// a request the person is not waiting on.
+bool uiBarLocked();
 extern bool deferredStopPending;
 
 void buildActions() {
   actionCount = 0;
   if (!gw) return;
-  if (uiNetworkBusy() && !(screen==Screen::Wifi || screen==Screen::WifiDetails || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) {
+  if (uiBarLocked() && !(screen==Screen::Wifi || screen==Screen::WifiDetails || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) {
     if (modal == Modal::ConfirmControl && (pendingControl.kind == "stop"
         || (pendingControl.kind == "legacy" && pendingControl.id == "stop"))) {
       addAction(Act::ConfirmNo, "CANCEL", false);
@@ -2802,6 +3020,59 @@ bool replayingTouches = false;
 TouchPerformanceWindow touchPerformance;
 uint32_t touchPerformanceReportAt = 0;
 
+#if HOSYOND_UI_PROFILE
+// MEASUREMENT (HOSYOND_UI_PROFILE only, with the [touch-funnel] report).
+//
+// `input_n` in [ui-perf] is counted only AFTER the model lock is taken and AFTER a retained event
+// passed its age/generation/revision check, and it ignores drags. Zero there therefore cannot tell
+// "the glass was never sampled" from "events were sampled and then dropped before dispatch", which
+// are opposite diagnoses. This funnel counts the same input at every stage so the stage where it
+// disappears is visible:
+//
+//   contacts    new finger-down edges the driver itself recorded (touchContactId() delta). Read
+//               from the driver's own monotonic sequence, so it is exact even if uiTick skipped
+//               frames. 0 here with a finger on the glass = the controller/bus/driver, not the UI.
+//   discrete    non-Drag, non-None events that reached uiHandleTouch (Press/Tap/Release/Swipe/Long).
+//   drags       Drag events that reached uiHandleTouch.
+//   held        uiTick entries on which the driver reported the glass touched.
+//   retained    discrete events parked because the model lock was busy (or a replay was pending).
+//   overflow    retained queue full: the whole pending sequence was cancelled.
+//   stale       retained events that failed TouchEventBuffer::current() on replay (older than
+//               750 ms, or navigation generation / model revision moved) and were thrown away.
+//   dispatched  discrete events that ran the dispatch (same population as [ui-perf] input_n).
+//   tick_gap_max  longest gap between consecutive uiTick entries. Input is sampled at most once
+//               per loop() pass, so this is the worst-case age a touch can have before it is read.
+// What a uiTick() pass turned out to be, recorded by an exit guard so every return path is covered.
+enum : uint8_t { kTickNotDue, kTickLockSkip, kTickRecording, kTickPainted };
+const char* const kTickKindName[] = {"not-due", "lock-skip", "recording", "painted"};
+uint32_t lastTickDurUs = 0, lastSleepUs = 0;
+uint8_t lastTickKind = kTickNotDue;
+
+struct TouchFunnel {
+  uint32_t contacts = 0, discrete = 0, drags = 0, held = 0, retained = 0, overflow = 0, stale = 0;
+  uint32_t dispatched = 0, ticks = 0, lockSkips = 0, painted = 0;
+  // Taps that reached for the gateway job slot while it was taken (see pendingGesture):
+  //   queued    held for replay; superseded replaces an earlier held tap, which is counted in lost
+  //   replayed  held taps that ran when the slot freed
+  //   lost      held taps that expired, went stale, or were superseded (the person was told)
+  //   refused   gestures that found the slot taken and could not be held (the person was told)
+  // A non-zero `refused` after this change is a call path that still starts work behind a tap.
+  uint32_t queued = 0, replayed = 0, lost = 0, refused = 0;
+  // The longest gap between tick entries and what it was made of: the previous tick's own duration
+  // (and what kind of pass it was), the sleep after it, and the remainder, which is loop() work
+  // outside uiTick (touchPoll, provisioning.poll, qualification, the boot button).
+  uint32_t gapMaxUs = 0, gapTickUs = 0, gapSleepUs = 0;
+  uint8_t gapKind = 0;
+  uint32_t ageSum = 0, ageMax = 0;
+  uint32_t lastContactId = 0, lastTickAt = 0, windowAt = 0, quietWindows = 0, lastTickEnterUs = 0;
+  bool primed = false;
+} touchFunnel;
+#endif  // HOSYOND_UI_PROFILE
+
+// Defined after the queue below. Declared here so queueResponsePage(), the first job starter after
+// the queue, can use it without moving text the queue's native test slices by name.
+bool submitUiJob(std::function<void()> work, std::function<void()> completion, bool background = false);
+
 bool uiNetworkReady = false;
 std::atomic<unsigned> uiJobState{0}; // idle / queued / complete
 std::function<void()> uiJobWork;
@@ -2846,11 +3117,14 @@ void completeUiNetworkJob() {
   contentDirty = true;
 }
 
-void queueResponsePage(int page, bool open = false, const String& after = String()) {
+// Reads one page of the reply, or opens the reply when `open`. `background` marks a read that only
+// revalidates what the screen already shows (see submitUiJob). A refused job leaves the screen as
+// it was and says so: nothing may keep waiting on a read that is not going to run.
+void queueResponsePage(int page, bool open = false, const String& after = String(), bool background = false) {
   const uint32_t generation = navigationGeneration;
   const String environment = gw->context().environmentId;
   const String thread = gw->context().threadId;
-  enqueueUiNetworkJob([page, open, after, environment, thread] {
+  if (!submitUiJob([page, open, after, environment, thread] {
     gw->lockState();
     if (environment == gw->context().environmentId && thread == gw->context().threadId) {
       if (open) gw->openResponse(after);
@@ -2858,8 +3132,57 @@ void queueResponsePage(int page, bool open = false, const String& after = String
     }
     gw->unlockState();
   }, [generation] {
+    replyLoadPending = false;
     if (generation == navigationGeneration) contentDirty = true;
-  });
+  }, background)) {
+    replyPendingRemotePage = -1;
+    replyLoadPending = false;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The job slot, and the taps that reach for it
+// ---------------------------------------------------------------------------------------------
+//
+// There is one gateway job at a time. Every way of reaching for it must end in exactly one of: it
+// runs; it is held and runs when the slot frees (pendingGesture, below); or the person is told it
+// did not run. "Silently nothing" is the one outcome that is never acceptable, because from the
+// glass it is indistinguishable from a button that is broken.
+
+// The in-flight job only revalidates something already painted. Meaningful only while busy, and
+// refreshed by every submitUiJob() (the sole caller that can change it while a job is in flight).
+bool uiJobBackground = false;
+PendingGesture pendingGesture;
+bool uiJobKicked = false;
+
+bool uiBarLocked() { return uiNetworkBusy() && !uiJobBackground; }
+
+// Whether a gesture may begin work that stages state for a job. Checked BEFORE anything is staged or
+// painted: the staged browser copy (uiStagedBrowse) is owned by the in-flight job's network thread
+// until it completes, so even assigning to it from a second gesture is a data race, never mind
+// the dropped enqueue that follows.
+bool uiJobSlotFree() { return uiNetworkReady && !uiNetworkBusy(); }
+
+// The one visible answer to a gesture that found the slot taken. It also repaints, which retires any
+// pending-state card the gesture drew on its way in.
+void gestureRefused() {
+  UI_PROFILE(++touchFunnel.refused;)
+  if (!uiNetworkReady) return;   // enqueueUiNetworkJob() has already said the worker is unavailable
+  message = "Busy; tap again";
+  contentDirty = true;
+}
+
+// Every gesture job starts here. Returns false, with the refusal already visible, when the slot is
+// not free. `background` is for a read that merely refreshes data already on screen (thread list
+// revalidation, reply refresh): the action bar stays live during it, and a button pressed meanwhile
+// is held by the touch router and replayed when the job ends.
+bool submitUiJob(std::function<void()> work, std::function<void()> completion, bool background) {
+  if (!enqueueUiNetworkJob(std::move(work), std::move(completion))) {
+    gestureRefused();
+    return false;
+  }
+  uiJobBackground = background;
+  return true;
 }
 
 // Local subpages are read without a network request; only crossing a gateway page starts HTTP.
@@ -2910,6 +3233,29 @@ void goTo(Screen next) {
   modal = Modal::None;
   chromeDirty = true;
   contentDirty = true;
+}
+
+// Opening the reply: the screen change and its first paint are local, and the gateway is asked
+// behind them. With a held copy (or an already-open model) the person is reading before the network
+// has been touched; with neither, the screen says it is loading instead of claiming nothing is open.
+// A read that only refreshes something already on screen is a background job, so the bar stays live.
+void openReply() {
+  if (!haveThread()) { goTo(Screen::Response); return; }
+  goTo(Screen::Response);
+  sealHeldRepliesToRealm();
+  if (!gw->responseOpen()) {
+    const bool havePaint = heldReplies.find(gw->context().environmentId, gw->context().threadId) != nullptr;
+    replyLoadPending = true;
+    replyRefreshedAt = millis();
+    queueResponsePage(0, true, String(), havePaint);
+    return;
+  }
+  // Open already (the model survives leaving the screen). Revalidate unless it is a live turn the
+  // poll is already following, or was read moments ago.
+  if (gw->responseInFlight()) return;
+  if (millis() - replyRefreshedAt < kReplyFreshMs) return;
+  replyRefreshedAt = millis();
+  queueResponsePage(gw->response().page, false, String(), true);
 }
 
 void refreshProjects();
@@ -2976,13 +3322,15 @@ void dispatchControl(const DeviceControl& c) {
   const bool quiet = c.kind == "status" || c.kind == "stop"
     || (c.kind == "legacy" && (c.id == "status" || c.id == "stop"));
   const bool expectReply = !quiet;
+  // Before painting a pending card for it: a send that cannot start must not look as if it did.
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   showBusy(c.label, "Sending to selected task");
   const DeviceControl control = c;
   const String environment = gw->context().environmentId;
   const String thread = gw->context().threadId;
   const uint32_t generation = navigationGeneration;
   const uint32_t layout = gw->controlsRevision();
-  enqueueUiNetworkJob([control, environment, thread, layout] {
+  submitUiJob([control, environment, thread, layout] {
     gw->lockState();
     if (gw->context().environmentId != environment || gw->context().threadId != thread
         || gw->controlsRevision() != layout) {
@@ -3044,7 +3392,8 @@ void runControlRow(const DeviceControl& c) {
 }
 
 void discardClip() {
-  if (uiNetworkBusy() || !voice.canDismissCapture()) return;
+  if (!voice.canDismissCapture()) return;
+  if (uiNetworkBusy()) { gestureRefused(); return; }
   clipHeld = false;
   clipHeldMs = 0;
   audio::discard();
@@ -3077,7 +3426,8 @@ void paintVoiceMomentNow() {
 // Captured PCM remains immutable until the bounded worker completes. A failed transfer keeps it
 // available for explicit retry, and a successful upload follows the one server-owned voice job.
 void sendHeldClip() {
-  if (!clipHeld || uiNetworkBusy()) return;
+  if (!clipHeld) return;
+  if (uiNetworkBusy()) { gestureRefused(); return; }
   if (gw->context().environmentId != voiceCaptureEnvironment
       || gw->context().threadId != voiceCaptureThread) {
     message = "Thread changed; reselect the recording's thread or discard";
@@ -3097,7 +3447,7 @@ void sendHeldClip() {
   work->state = voice;
   media::buildWavHeader(work->header, static_cast<uint32_t>(bytes), audio::sampleRateHz());
   const uint8_t* pcm = audio::pcm();
-  if (!enqueueUiNetworkJob([work, pcm, bytes]() {
+  if (!submitUiJob([work, pcm, bytes]() {
         work->mediaId = work->state.upload("audio", "audio/wav", "controller.wav", work->header,
           sizeof(work->header), pcm, bytes, MEDIA_UPLOAD_MAX_BYTES, work->httpStatus);
       }, [work]() {
@@ -3229,14 +3579,15 @@ void commitPicker() {
   if (target < 0 || target == boundThreadIndex()) {
     const bool open = pickerOpenResponse;
     pickerOpenResponse = false;
-    if (open && haveThread()) { goTo(Screen::Response); queueResponsePage(0, true); }
+    if (open && haveThread()) openReply();
     return;
   }
   const ThreadOption* row = gw->thread((size_t)target);
   if (!row) return;
   const String targetId = row->id;
-  pickerBinding = true;
-  enqueueUiNetworkJob([target, targetId] {
+  // True only if the write actually started: a refused job must not leave the highlight claiming a
+  // bind in progress that nothing will ever complete.
+  pickerBinding = submitUiJob([target, targetId] {
     gw->lockState();
     const ThreadOption* current = gw->thread((size_t)target);
     uiOperationSucceeded = current && current->id == targetId && gw->selectThread((size_t)target);
@@ -3245,46 +3596,111 @@ void commitPicker() {
     pickerBinding = false;
     const bool open = pickerOpenResponse;
     pickerOpenResponse = false;
-    if (open && uiOperationSucceeded) {
-      goTo(Screen::Response);
-      queueResponsePage(0, true);
-    }
+    if (open && uiOperationSucceeded) openReply();
     message = uiOperationSucceeded ? "" : "Not confirmed; reload threads";
     contentDirty = true;
   });
 }
 
 
-void refreshThreads() {
+// ---------------------------------------------------------------------------------------------
+// THREADS is local-first
+// ---------------------------------------------------------------------------------------------
+//
+// Entering the screen used to blank the list and then run two serial requests (environments, then
+// threads) before painting a row, although the device already held that list: the gateway cycle
+// refreshes it every 30 s and HOME's picker steps through it. The data was on the glass one screen
+// ago and the person waited for the network to be told what they were already looking at.
+//
+// So the screen now paints what is held, at once, and checks it with the gateway BEHIND the list:
+//   * the held rows are shown only when GatewayClient says the gateway stamped them for exactly this
+//     environment and folder (threadListMatches), never on the strength of "it was the last list";
+//   * the check is a background job: the action bar stays live, and USE THREAD pressed while it runs
+//     is held and replayed when it ends (pendingGesture);
+//   * the highlighted row is re-found by id when the list is replaced, so it does not jump;
+//   * binding a thread is untouched in spirit: a paint is optimistic, a write is not. The only write
+//     is still commitPreviewThread(): one server round trip validated against the live snapshot, and
+//     nothing is bound locally until the gateway confirms it.
+
+int16_t maxScroll(size_t count, int16_t rowH, int16_t top);
+
+bool environmentKnown(const String& id) {
+  if (id.length() == 0) return false;
+  for (size_t i = 0; i < browse.environmentCount(); ++i) {
+    const BrowseEnvironment* row = browse.environment(i);
+    if (row && row->id == id) return true;
+  }
+  return false;
+}
+
+// Seeds the preview list from the client's held list when, and only when, it is that destination's.
+bool seedHeldThreads() {
+  if (!gw->threadListMatches(browse.previewEnvironmentId(), browse.previewProjectId())) return false;
+  browse.seedPreviewThreads(gw->threadCount(), [](size_t i) { return gw->thread(i); });
+  threadsFetched = true;
+  return true;
+}
+
+// Keeps the person's highlighted row (by id) when the list under it is replaced.
+bool reconcilePreviewSelection() {
+  if (previewThreadId.length() == 0) { previewThreadIndex = -1; return true; }
+  for (size_t i = 0; i < browse.previewThreadCount(); ++i) {
+    const ThreadOption* row = browse.previewThread(i);
+    if (row && row->id == previewThreadId) { previewThreadIndex = (int)i; return true; }
+  }
   previewThreadIndex = -1;
   previewThreadId = "";
-  showBusy("Threads", "Refreshing destination list");
+  return false;
+}
+
+// Publishes a revalidation. Replacing the browser wholesale is safe here: the slot is exclusive, and
+// the only gesture allowed through while it runs (previewing a row) touches no browser state.
+void finishThreadsRevalidation() {
+  threadsLoading = false;
+  browse = uiStagedBrowse;
+  threadsFetched = true;
+  const bool hadSelection = previewThreadId.length() > 0;
+  const bool kept = reconcilePreviewSelection();
+  const int16_t limit = maxScroll(browse.previewThreadCount(), kThreadRowH, kThreadListTop);
+  if (threadScroll > limit) threadScroll = limit;
+  message = hadSelection && !kept ? String("That thread is no longer listed") : browse.previewDetail();
+  contentDirty = true;
+  barDirty = true;
+}
+
+// Asks the gateway to confirm the list behind the one on screen. `announce` is for an explicit
+// REFRESH, which should acknowledge itself; the automatic check on entry stays silent.
+bool startThreadsRevalidation(bool withEnvironments, bool announce) {
+  if (!uiJobSlotFree()) { gestureRefused(); return false; }
   uiStagedBrowse = browse;
-  enqueueUiNetworkJob([] { uiStagedBrowse.refreshPreviewThreads(); }, [] {
-    browse = uiStagedBrowse;
-    threadsFetched = true;
-    threadScroll = 0;
-    message = browse.previewDetail();
-  });
+  threadsLoading = true;
+  if (announce) { message = "Refreshing"; contentDirty = true; }
+  if (submitUiJob([withEnvironments] {
+        if (withEnvironments) uiStagedBrowse.refreshEnvironments();
+        uiStagedBrowse.refreshPreviewThreads();
+      }, [] { finishThreadsRevalidation(); }, /*background=*/true)) return true;
+  threadsLoading = false;
+  return false;
+}
+
+void refreshThreads() {
+  startThreadsRevalidation(false, true);
 }
 
 void goToThreads() {
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   agentBrowseMode = 0; selectedAgentRow = -1;
-  browse.beginPreview(gw->context().environmentId, gw->context().projectId);
+  const String environment = gw->context().environmentId;
+  browse.beginPreview(environment, gw->context().projectId);
+  seedHeldThreads();
   previewThreadIndex = -1;
   previewThreadId = "";
+  threadScroll = 0;
+  message = "";
   goTo(Screen::Threads);
-  uiStagedBrowse = browse;
-  showBusy("Choose destination", "Current thread stays selected");
-  enqueueUiNetworkJob([] {
-    uiStagedBrowse.refreshEnvironments();
-    uiStagedBrowse.refreshPreviewThreads();
-  }, [] {
-    browse = uiStagedBrowse;
-    threadScroll = 0;
-    threadsFetched = true;
-    message = browse.previewDetail();
-  });
+  // The environment list only names the breadcrumb, and it changes when a host is paired: it is
+  // fetched when the name is not already known, not on every visit.
+  startThreadsRevalidation(!environmentKnown(environment), false);
 }
 
 void selectThreadRow(size_t index) {
@@ -3302,12 +3718,13 @@ void usePreviewThread() {
   const int index = previewThreadIndex;
   const ThreadOption* row = index < 0 ? nullptr : browse.previewThread((size_t)index);
   if (!row || row->id != previewThreadId) { message = "Choose a thread again"; return; }
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   const uint32_t generation = navigationGeneration;
   const String id = row->id;
   const String title = row->title;
   uiStagedBrowse = browse;
   showBusy("Use thread", uip::fitWords(title, kCols1));
-  enqueueUiNetworkJob([index, id] {
+  submitUiJob([index, id] {
     const ThreadOption* candidate = uiStagedBrowse.previewThread((size_t)index);
     uiOperationSucceeded = candidate && candidate->id == id
       && uiStagedBrowse.commitPreviewThread((size_t)index);
@@ -3343,9 +3760,10 @@ void goToThreads();
 // uniqueness guaranteed, and T3 only auto-retitles a thread still carrying its own default, so that
 // is the name the thread keeps.
 void createThreadNow() {
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   showBusy("New thread", "Asking the gateway");
   uiStagedBrowse = browse;
-  enqueueUiNetworkJob([] { uiOperationSucceeded = uiStagedBrowse.createThread(); }, [] {
+  submitUiJob([] { uiOperationSucceeded = uiStagedBrowse.createThread(); }, [] {
   browse = uiStagedBrowse;
   if (!uiOperationSucceeded) {
     // A refused create changes NOTHING server-side: the device stays on the thread it was on. So
@@ -3395,9 +3813,10 @@ void browseDirectAgents(bool sessions) {
   if (sessions && !selected) return;
   const String runtimeId = selected ? selected->runtimeId : String();
   const String model = selected ? selected->model : String();
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   uiStagedBrowse = browse;
   showBusy(sessions ? "Saved sessions" : "Agents", "Reading selected folder");
-  enqueueUiNetworkJob([sessions, runtimeId, model] {
+  submitUiJob([sessions, runtimeId, model] {
     uiOperationSucceeded = sessions ? uiStagedBrowse.refreshNativeSessions(runtimeId, model) : uiStagedBrowse.refreshAgents();
   }, [sessions] {
     browse = uiStagedBrowse;
@@ -3411,9 +3830,10 @@ void applyDirectAgent(bool resume) {
   const int index = selectedAgentRow;
   const String thread = gw->context().threadId;
   const String environment = gw->context().environmentId;
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   uiStagedBrowse = browse;
   showBusy(resume ? "Continue session" : "Change agent", "Waiting for confirmation");
-  enqueueUiNetworkJob([resume, index, thread, environment] {
+  submitUiJob([resume, index, thread, environment] {
     uiOperationSucceeded = gw->context().threadId == thread && gw->context().environmentId == environment
       && (resume ? uiStagedBrowse.resumeNativeSession((size_t)index, thread) : uiStagedBrowse.useAgent((size_t)index, thread));
     if (uiOperationSucceeded && resume) {
@@ -3428,9 +3848,10 @@ void applyDirectAgent(bool resume) {
 }
 
 void refreshEnvironments() {
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   showBusy("Environments", "Asking the gateway");
   uiStagedBrowse = browse;
-  enqueueUiNetworkJob([] { uiStagedBrowse.refreshEnvironments(); }, [] {
+  submitUiJob([] { uiStagedBrowse.refreshEnvironments(); }, [] {
     browse = uiStagedBrowse;
     envScroll = 0;
   });
@@ -3438,9 +3859,10 @@ void refreshEnvironments() {
 
 
 void refreshProjects() {
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   showBusy("Folders", "Asking the gateway");
   uiStagedBrowse = browse;
-  enqueueUiNetworkJob([] { uiStagedBrowse.refreshProjects(); }, [] {
+  submitUiJob([] { uiStagedBrowse.refreshProjects(); }, [] {
     browse = uiStagedBrowse;
     projectScroll = 0;
   });
@@ -3448,13 +3870,21 @@ void refreshProjects() {
 
 
 void selectEnvironmentRow(size_t index) {
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   if (!browse.previewEnvironment(index)) return;
   goTo(Screen::Projects);
   refreshProjects();
 }
 
 void selectProjectRow(size_t index) {
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   if (!browse.previewProject(index)) return;
+  // Another folder's threads: the old highlight and scroll belong to a list that is gone. If the
+  // device happens to hold this folder's list (the one it is bound to), it is shown at once.
+  previewThreadIndex = -1;
+  previewThreadId = "";
+  threadScroll = 0;
+  seedHeldThreads();
   goTo(Screen::Threads);
   refreshThreads();
 }
@@ -3462,11 +3892,12 @@ void selectProjectRow(size_t index) {
 
 void answerApproval(const String& commandId, const String& label, bool approve) {
   if (commandId.length() == 0) return;
+  if (!uiJobSlotFree()) { gestureRefused(); return; }
   showBusy(approve ? "Approving" : "Rejecting", uip::fit(label, kCols1));
   const uint32_t generation = navigationGeneration;
   const String environment = gw->context().environmentId;
   const String thread = gw->context().threadId;
-  enqueueUiNetworkJob([commandId, approve] {
+  submitUiJob([commandId, approve] {
     uiDispatchResult = gw->answerApproval(commandId, approve);
   }, [generation, environment, thread, approve] {
     message = uiDispatchResult.detail;
@@ -3499,12 +3930,7 @@ void openCategory(Row row) {
         goTo(Screen::Approvals);
         return;
       }
-      goTo(Screen::Response);
-      if (!gw->responseOpen() && haveThread()) {
-        showBusy("Reply", "Loading the latest");
-        queueResponsePage(0, true);
-        contentDirty = true;
-      }
+      openReply();
       return;
   }
 }
@@ -3599,7 +4025,7 @@ void runAction(Act id) {
       const String command = voice.commandId();
       const uint32_t generation = navigationGeneration;
       if (voice.reviewReason() != "gateway_approval" || command.length() == 0) return;
-      enqueueUiNetworkJob([] { gw->refreshApprovals(); }, [command, generation] {
+      if (!enqueueUiNetworkJob([] { gw->refreshApprovals(); }, [command, generation] {
         if (generation != navigationGeneration || command != voice.commandId()) return;
         for (size_t i = 0; i < gw->approvalCount(); ++i) {
           const PendingApproval* row = gw->approval(i);
@@ -3611,7 +4037,10 @@ void runAction(Act id) {
         }
         message = "Original approval unavailable; use console or recheck";
         contentDirty = true;
-      });
+      })) {
+        message = "Busy; tap again";
+        contentDirty = true;
+      }
       return;
     }
     case Act::VoiceStatus:
@@ -3623,7 +4052,8 @@ void runAction(Act id) {
       contentDirty = true;
       return;
     case Act::VoiceDismiss: {
-      if (!voice.canDismissCapture() || uiNetworkBusy()) return;
+      if (!voice.canDismissCapture()) return;
+      if (uiNetworkBusy()) { message = "Busy; tap again"; contentDirty = true; return; }
       // Sent acknowledges dispatch, not a finished T3 turn. Transfer a background
       // completion's cursor to the reply reader before a new draft can replace it.
       if (voice.stage() == VoiceStage::Sent && voice.responseAfter().length() > 0) {
@@ -3631,7 +4061,7 @@ void runAction(Act id) {
         const String thread = voiceCaptureThread;
         const String after = voice.responseAfter();
         const String media = voice.mediaId();
-        enqueueUiNetworkJob([environment, thread, after] {
+        if (!enqueueUiNetworkJob([environment, thread, after] {
           gw->lockState();
           uiOperationSucceeded = environment == gw->context().environmentId && thread == gw->context().threadId;
           if (uiOperationSucceeded) {
@@ -3649,7 +4079,10 @@ void runAction(Act id) {
             message = "Previous reply remains in the thread";
           }
           contentDirty = true;
-        });
+        })) {
+          message = "Busy; tap again";
+          contentDirty = true;
+        }
         return;
       }
       voice.reset();
@@ -3690,14 +4123,12 @@ void runAction(Act id) {
         return;
       }
       if (!gw->responseOpen()) {
-        showBusy("Reply", "Loading the latest");
-        queueResponsePage(0, true);
-        goTo(Screen::Response);
-        contentDirty = true;
+        openReply();
         return;
       }
-      showBusy("Reply", "Refreshing");
-      queueResponsePage(gw->response().page);
+      // An explicit refresh keeps the text on screen and refreshes it behind itself.
+      replyRefreshedAt = millis();
+      queueResponsePage(gw->response().page, false, String(), true);
       contentDirty = true;
       return;
     }
@@ -3772,8 +4203,9 @@ void runAction(Act id) {
         message=removed?"Saved network removed":"Switch networks before forgetting";
         refreshWifiUi();goTo(Screen::Wifi);
       } else if (which == Modal::ConfirmClaim) {
+        if (!uiJobSlotFree()) { gestureRefused(); return; }
         showBusy("New code", "Previous code will stop working");
-        enqueueUiNetworkJob([] { gw->requestNewClaimCode(); }, [] {});
+        submitUiJob([] { gw->requestNewClaimCode(); }, [] {});
       } else if (which == Modal::ConfirmRejection) {
         answerApproval(pendingApprovalId, pendingApprovalSummary, false);
       } else if (which == Modal::ConfirmApproval) {
@@ -3894,8 +4326,7 @@ void handleContentTap(int16_t x, int16_t y) {
     case Screen::Home: {
       if (!uip::hit(homeActionRect(), x, y)) return;
       if (!haveThread()) { goToThreads(); return; }
-      goTo(Screen::Response);
-      if (!gw->responseOpen()) queueResponsePage(0, true);
+      openReply();
       return;
     }
     case Screen::Actions: {
@@ -4257,56 +4688,260 @@ void reportTouchPerformance() {
   }
   touchPerformance.resetWindow();touchPerformanceReportAt=now;
 }
-void dirtyTouchFeedback() {
-  if(screen==Screen::WifiPassword && modal==Modal::None && drawerT<=0.001f
-      && touchTarget.y>=kWifiKeyboardTop && touchTarget.y<kWifiUtilityTop+kWifiUtilityH) {
-    if(touchTarget.y<kWifiUtilityTop)wifiLettersDirty=true;else wifiUtilityDirty=true;
-    return;
+#if HOSYOND_UI_PROFILE
+// MEASUREMENT (HOSYOND_UI_PROFILE only): called once per uiTick, before any early return, so a frame skipped for
+// the model lock still observes the driver's contact sequence and the loop cadence.
+void sampleTouchFunnel() {
+  const uint32_t now=millis();
+  const uint32_t nowUs=micros();
+  const uint32_t contact=touchContactId();
+  if(!touchFunnel.primed){touchFunnel.primed=true;touchFunnel.lastContactId=contact;touchFunnel.windowAt=now;}
+  else {
+    touchFunnel.contacts+=contact-touchFunnel.lastContactId; // wraps correctly; 0 is skipped by the driver
+    touchFunnel.lastContactId=contact;
+    const uint32_t gapUs=nowUs-touchFunnel.lastTickEnterUs;
+    if(gapUs>touchFunnel.gapMaxUs) {
+      touchFunnel.gapMaxUs=gapUs;
+      touchFunnel.gapTickUs=lastTickDurUs;touchFunnel.gapSleepUs=lastSleepUs;touchFunnel.gapKind=lastTickKind;
+    }
   }
-  // Pressed feedback is a bounded outline; repaint its region only when removing it.
-  if(touchTarget.active && touchDown())return;
-  if(drawerT>0.001f){drawerDirty=true;return;}
-  if(touchTarget.y<kContentTop){chromeDirty=true;return;}
-  if(touchTarget.y>=kH-kBarH){barDirty=true;return;}
-  contentDirty=true;
+  touchFunnel.lastTickEnterUs=nowUs;
+  touchFunnel.lastTickAt=now;
+  ++touchFunnel.ticks;
+  if(touchDown())++touchFunnel.held;
+  if(now-touchFunnel.windowAt<5000)return;
+  const bool active=touchFunnel.lockSkips||touchFunnel.contacts||touchFunnel.discrete||touchFunnel.drags||touchFunnel.held
+    ||touchFunnel.retained||touchFunnel.overflow||touchFunnel.stale||touchFunnel.queued||touchFunnel.refused;
+  // Quiet windows print once in six (30 s) so "no touches" is distinguishable from "not built in".
+  if(active || ++touchFunnel.quietWindows>=6) {
+    touchFunnel.quietWindows=0;
+    const float gapMs=static_cast<float>(touchFunnel.gapMaxUs)/1000.0f;
+    const float gapTick=static_cast<float>(touchFunnel.gapTickUs)/1000.0f;
+    const float gapSleep=static_cast<float>(touchFunnel.gapSleepUs)/1000.0f;
+    Serial.printf("[touch-funnel] win_ms=%u ticks=%u painted=%u lock_skips=%u contacts=%u held_ticks=%u discrete=%u drags=%u retained=%u overflow=%u stale=%u dispatched=%u age_avg_ms=%u age_max_ms=%u queued=%u replayed=%u lost=%u refused=%u tick_gap_max_ms=%.1f (prev tick %.1f [%s] + sleep %.1f + loop-rest %.1f)\n",
+      static_cast<unsigned>(now-touchFunnel.windowAt),static_cast<unsigned>(touchFunnel.ticks),
+      static_cast<unsigned>(touchFunnel.painted),static_cast<unsigned>(touchFunnel.lockSkips),
+      static_cast<unsigned>(touchFunnel.contacts),static_cast<unsigned>(touchFunnel.held),
+      static_cast<unsigned>(touchFunnel.discrete),static_cast<unsigned>(touchFunnel.drags),
+      static_cast<unsigned>(touchFunnel.retained),static_cast<unsigned>(touchFunnel.overflow),
+      static_cast<unsigned>(touchFunnel.stale),static_cast<unsigned>(touchFunnel.dispatched),
+      static_cast<unsigned>(touchFunnel.dispatched?touchFunnel.ageSum/touchFunnel.dispatched:0),
+      static_cast<unsigned>(touchFunnel.ageMax),
+      static_cast<unsigned>(touchFunnel.queued),static_cast<unsigned>(touchFunnel.replayed),
+      static_cast<unsigned>(touchFunnel.lost),static_cast<unsigned>(touchFunnel.refused),static_cast<double>(gapMs),static_cast<double>(gapTick),
+      kTickKindName[touchFunnel.gapKind<4?touchFunnel.gapKind:0],static_cast<double>(gapSleep),
+      static_cast<double>(gapMs-gapTick-gapSleep>0.0f?gapMs-gapTick-gapSleep:0.0f));
+  }
+  const uint32_t keepContact=touchFunnel.lastContactId,keepTick=touchFunnel.lastTickAt,keepEnterUs=touchFunnel.lastTickEnterUs;
+  touchFunnel=TouchFunnel{};
+  touchFunnel.primed=true;touchFunnel.lastContactId=keepContact;touchFunnel.lastTickAt=keepTick;
+  touchFunnel.lastTickEnterUs=keepEnterUs;touchFunnel.windowAt=now;
 }
-void paintPressedTarget() {
-  if(!touchTarget.active || !touchDown()) return;
-  if(touchTarget.generation!=navigationGeneration){touchTarget.cancel();return;}
-  // A bounded outline preserves the existing text, with no permanent animation or fill.
-  const int16_t top=max<int16_t>(0,touchTarget.y);
-  const int16_t bottom=min<int16_t>(kH,touchTarget.y+touchTarget.h);
-  if(bottom>top) g().drawRoundRect(touchTarget.x+1,top+1,max<int16_t>(1,touchTarget.w-2),bottom-top-2,4,panelGrey(kBright));
+// MEASUREMENT (HOSYOND_UI_PROFILE only): the [frame-split], [orb-split] and [content-split] lines. Millisecond figures are
+// per-frame AVERAGES over the 2 s window unless marked max, so a stage that runs on one frame in
+// ten shows a tenth of its true cost; the [n] counts say how often each stage ran, and `orb_ms` is
+// normalised by orb frames only.
+void reportFrameSplit() {
+  FrameSplit& f = split;
+#if ORB_PROFILE
+  OrbProfile prof;
+  const bool haveProf = orbProfileTake(prof);
+#endif
+  if (f.frames == 0) { f = FrameSplit{}; return; }
+  const float n = static_cast<float>(f.frames);
+  const auto avg = [n](uint32_t us) { return static_cast<float>(us) / n / 1000.0f; };
+  const auto mx = [](uint32_t us) { return static_cast<float>(us) / 1000.0f; };
+  Serial.printf("[frame-split] frames=%u period=%.1f(max %.1f) tick=%.1f(max %.1f) sleep=%.1f rest=%.1f | pre=%.1f(max %.1f) logic=%.1f chrome=%.1f[%u] bar=%.1f[%u] drawer=%.1f content=%.1f(max %.1f)[%u] picker=%.1f orb=%.1f(max %.1f)[%u] status=%.1f\n",
+    static_cast<unsigned>(f.frames), avg(f.period), mx(f.periodMax), avg(f.tick), mx(f.tickMax), avg(f.sleep),
+    avg(f.period) - avg(f.tick) - avg(f.sleep),
+    avg(f.pre), mx(f.preMax), avg(f.logic), avg(f.chrome), static_cast<unsigned>(f.chromeFrames),
+    avg(f.bar), static_cast<unsigned>(f.barFrames), avg(f.drawer), avg(f.content), mx(f.contentMax),
+    static_cast<unsigned>(f.contentFrames), avg(f.picker), avg(f.orb), mx(f.orbMax),
+    static_cast<unsigned>(f.orbFrames), avg(f.status));
+#if ORB_PROFILE   // the orb's own probes: a separate switch, which follows HOSYOND_UI_PROFILE by default
+  if (haveProf && f.orbFrames) {
+    const float p = static_cast<float>(prof.frames);
+    const auto pa = [p](uint32_t us) { return static_cast<float>(us) / p / 1000.0f; };
+    const float orbTotal = static_cast<float>(f.orb) / static_cast<float>(f.orbFrames) / 1000.0f;
+    const float emit = pa(prof.emitUs), sort = pa(prof.sortUs);
+    const float raster = pa(prof.clearUs) + pa(prof.lineUs) + pa(prof.dotUs);
+    Serial.printf("[orb-split] %s orb_frames=%u dots=%.0f lines=%.0f | orb_ms=%.2f = emit %.2f(max %.2f) + sort %.2f(max %.2f) + raster %.2f(max %.2f)[clear %.2f line %.2f dot %.2f] + blit&other %.2f\n",
+      orbStateName(currentMode), static_cast<unsigned>(prof.frames),
+      static_cast<double>(prof.dots) / p, static_cast<double>(prof.lines) / p,
+      orbTotal, emit, mx(prof.emitMaxUs), sort, mx(prof.sortMaxUs), raster, mx(prof.rasterMaxUs),
+      pa(prof.clearUs), pa(prof.lineUs), pa(prof.dotUs), orbTotal - emit - sort - raster);
+  }
+#endif  // ORB_PROFILE
+  if (f.jobs) {
+    // Completed jobs only contribute strips/ms; a job still running at the window edge is counted in
+    // `jobs` but not yet in the averages, which is why they can differ by one.
+    const float done = static_cast<float>(f.strips ? f.strips : 1);
+    Serial.printf("[content-split] jobs=%u partial=%u restarts=%u strips=%u ms_per_strip=%.1f job_ms_max=%.1f job_frames_max=%u causes: revision=%u browse=%u screen=%u link=%u reserve=%u arrival=%u other=%u last_screen=%u\n",
+      static_cast<unsigned>(f.jobs), static_cast<unsigned>(f.partialJobs), static_cast<unsigned>(f.restarts),
+      static_cast<unsigned>(f.strips), static_cast<double>(static_cast<float>(f.jobUs) / done / 1000.0f),
+      static_cast<double>(mx(f.jobUsMax)), static_cast<unsigned>(f.jobFramesMax),
+      static_cast<unsigned>(f.cause[kCauseRevision]), static_cast<unsigned>(f.cause[kCauseBrowse]),
+      static_cast<unsigned>(f.cause[kCauseScreen]), static_cast<unsigned>(f.cause[kCauseLink]),
+      static_cast<unsigned>(f.cause[kCauseReserve]), static_cast<unsigned>(f.cause[kCauseArrival]),
+      static_cast<unsigned>(f.cause[kCauseOther]), static_cast<unsigned>(f.lastJobScreen));
+  }
+  const uint32_t keepEnterUs = f.lastTickEnterUs;  // the next window's first period still has a start
+  f = FrameSplit{};
+  f.lastTickEnterUs = keepEnterUs;
 }
-void handleBusyLocalTap(int16_t x,int16_t y) {
+#endif  // HOSYOND_UI_PROFILE
+// ---------------------------------------------------------------------------------------------
+// Taps that arrive while the gateway job slot is taken
+// ---------------------------------------------------------------------------------------------
+//
+// One gateway job runs at a time, and everything else in the UI is local. A tap on something local
+// must not wait for a request, so the few that never need the slot run right away. A tap that
+// DOES need it used to be answered with nothing: no action, no message, no trace - a button that
+// seemed dead. It is held instead (pendingGesture: one slot, latest wins) and replayed through the
+// normal router when the slot frees, if the screen and the thing under the finger are still the
+// same. Taken together, a tap now always ends in: it ran, it ran after a short wait, or the person
+// was told why it did not.
+
+constexpr char kQueuedMessage[] = "Queued; one moment";
+
+// true = handled here without the slot. false = it needs the slot; the caller holds it.
+bool handleBusyLocalTap(int16_t x,int16_t y) {
   if(drawerT>0.05f) {
-    if(y<kContentTop){closeDrawer();return;}
+    if(y<kContentTop){closeDrawer();return true;}
     for(uint8_t i=0;i<drawerRowCount;++i) {
       const Rect r=drawerRowRect(i);
       if(r.y+r.h>kContentTop+drawerShownPx-12)break;
       if(!uip::hit(r,x,y))continue;
       const Row row=drawerRows[i];closeDrawerNow();
       goTo(row==Row::Device?Screen::Device:row==Row::Gateway?Screen::Gateway:row==Row::Thread?Screen::Threads:gw->hasBlockingRequests()?Screen::Approvals:Screen::Response);
-      return;
+      return true;
     }
-    closeDrawer();return;
+    closeDrawer();return true;
   }
-  if(y<kContentTop){handleTap(x,y);return;}
+  if(y<kContentTop) {
+    // Opening the drawer is local. BACK is held: leaving a level can refresh the one it returns to.
+    if(uip::hit(kHandleHit,x,y)){openDrawer();return true;}
+    return false;
+  }
   if(barVisible() && y>=kH-kBarH) {
     // The busy bar exposes local navigation and one deliberate, serialized Stop confirmation.
+    // Any other enabled button is held and replayed when the slot frees.
     for(uint8_t i=0;i<actionCount;++i) {
       const Rect r=actionRect(i,kH-kBarH);
       if(x<r.x-4 || x>=r.x+r.w+4 || !actions[i].enabled)continue;
-      if(actions[i].id==Act::SavedActions || actions[i].id==Act::ConfirmNo || actions[i].id==Act::ConfirmYes) runAction(actions[i].id);
-      return;
+      if(actions[i].id==Act::SavedActions || actions[i].id==Act::ConfirmNo || actions[i].id==Act::ConfirmYes) {
+        runAction(actions[i].id);
+        return true;
+      }
+      return false;
     }
+    return true;
+  }
+  if(screen==Screen::Threads && modal==Modal::None && y>=kThreadListTop && y<contentBottom()
+      && !uip::hit(kBreadcrumb,x,y)) {
+    // Previewing a row only moves a highlight (previewThreadIndex/Id are UI state, not the staged
+    // browser), so it never waits on a request. The row is re-found by id when the list under it is
+    // replaced by a revalidation. This is what lets a person pick a row while the list is still
+    // being confirmed.
+    const int16_t local=(int16_t)(y-kThreadListTop+threadScroll);
+    if(local>=0 && (size_t)(local/kThreadRowH)<threadRowCount()) selectThreadRow((size_t)(local/kThreadRowH));
+    return true;
   }
   if(screen==Screen::Actions && modal==Modal::None && y>=kActionListTop && y<contentBottom()) {
     const size_t index=static_cast<size_t>((y-kActionListTop+actionScroll)/kActionRowH);
     const DeviceControl* control=gw->control(index);
-    if(control && control->enabled && (control->kind=="stop" || (control->kind=="legacy" && control->id=="stop"))) confirmControl(*control);
-    else {message="Request pending; only Stop can be queued";contentDirty=true;}
+    if(control && control->enabled && (control->kind=="stop" || (control->kind=="legacy" && control->id=="stop"))) {
+      confirmControl(*control);
+      return true;
+    }
+    return false;   // any other row runs, with its own confirmation, once the slot frees
   }
+  return false;
+}
+
+// Holds a tap for the slot. A tap with nothing actionable under it would have done nothing when idle
+// either (touchTargetAt() has no identity for it), so it is not held.
+void holdTapForJob(const TouchEvent& event) {
+  const TouchTargetInfo target=touchTargetAt(event.x,event.y);
+  if(target.identity==0)return;
+  if(pendingGesture.put(static_cast<uint8_t>(TouchGesture::Tap),event.x,event.y,target.identity,navigationGeneration,millis())) { UI_PROFILE(++touchFunnel.lost;) }
+  UI_PROFILE(++touchFunnel.queued;)
+  message=kQueuedMessage;
+  contentDirty=true;
+}
+
+// The part of a swipe that is decided before any screen is asked to act. Returns 0 when it was
+// consumed (it ended a recording, was scroll drift, or put the drawer away) and +1 / -1 for a
+// forward / back navigation.
+int swipeDirection(TouchGesture gesture) {
+  dragTravel = 0;
+  dragTravelX = 0;
+  if (recordArmed) { finishRecording(); return 0; }
+  // A gesture that already locked to the vertical axis is a scroll that happened to drift, and
+  // must not be re-read as a swipe on the way out. A flick fast enough never to produce a Drag
+  // leaves the axis Undecided, and that is a genuine swipe.
+  if (dragAxis == DragAxis::Vertical) { dragAxis = DragAxis::Undecided; return 0; }
+  dragAxis = DragAxis::Undecided;
+  if (drawerT > 0.05f) { closeDrawer(); return 0; }
+  if (!operable() || modal != Modal::None) return 0;
+  // Left is "forward": deeper into the hierarchy, later in the thread list, next page.
+  return gesture == TouchGesture::SwipeLeft ? 1 : -1;
+}
+
+void routeSwipe(int forward) {
+  // HOME's line under the orb is the destination picker.
+  if (screen == Screen::Home) { goToThreads(); return; }
+
+  if (screen == Screen::Approvals && gw->approvalCount() > 1) {
+    const int count = (int)gw->approvalCount();
+    approvalIndex = (size_t)(((int)approvalIndex + forward + count) % count);
+    contentDirty = true;
+    return;
+  }
+
+  // The three levels.
+  if (screen == Screen::Threads || screen == Screen::Projects
+      || screen == Screen::Environments) {
+    levelStep(forward);
+    return;
+  }
+
+  // Paging the reply, which is the meaning this gesture already had here.
+  if (screen != Screen::Response || !gw->responseOpen()) return;
+  stepReplyPage(forward);
+}
+
+void holdSwipeForJob(TouchGesture gesture) {
+  const int forward=swipeDirection(gesture);
+  if(forward==0)return;
+  if(pendingGesture.put(static_cast<uint8_t>(gesture),0,0,0,navigationGeneration,millis())) { UI_PROFILE(++touchFunnel.lost;) }
+  UI_PROFILE(++touchFunnel.queued;)
+  message=kQueuedMessage;
+  contentDirty=true;
+}
+
+// Runs the held gesture, once, when the slot is free - or says why it did not. Called from the
+// frame after the job's completion has been published, so the screen it is validated against is the
+// one the person is now looking at.
+void drainPendingGesture() {
+  if(!pendingGesture.valid || uiNetworkBusy())return;
+  buildActions();   // a held bar press is checked against the bar as it is NOW, not as it was while busy
+  PendingGesture held;
+  const PendingGesture::Fate fate=pendingGesture.take(navigationGeneration,millis(),
+    [](int16_t x,int16_t y){return touchTargetAt(x,y).identity;},held);
+  if(message==kQueuedMessage)message="";
+  if(fate==PendingGesture::Fate::Nothing)return;
+  if(fate!=PendingGesture::Fate::Replay || recordArmed) {
+    UI_PROFILE(++touchFunnel.lost;)
+    message=fate==PendingGesture::Fate::Expired?"Timed out; tap again":"Screen changed; tap again";
+    contentDirty=true;
+    return;
+  }
+  UI_PROFILE(++touchFunnel.replayed;)
+  dragTravel=0;dragTravelX=0;
+  if(held.kind==static_cast<uint8_t>(TouchGesture::Tap)) handleTap(held.x,held.y);
+  else if(drawerT<=0.05f && operable() && modal==Modal::None)
+    routeSwipe(held.kind==static_cast<uint8_t>(TouchGesture::SwipeLeft)?1:-1);
 }
 
 }  // namespace
@@ -4337,50 +4972,75 @@ bool uiBegin(GatewayClient& gateway, Provisioning& provisioning, DeviceStore& de
 }
 
 void uiHandleTouch(const TouchEvent& event) {
+  // Counted before ANY gate, including the readiness check below, so an event that is swallowed
+  // there still shows up as delivered-but-never-dispatched. Replayed events are not re-counted.
+  UI_PROFILE(
+    if(!replayingTouches) {
+      if(event.gesture==TouchGesture::Drag)++touchFunnel.drags;
+      else if(event.gesture!=TouchGesture::None)++touchFunnel.discrete;
+    }
+  )
   if (!displayReady() || !gw || !prov) return;
+  // Any contact holds the gateway scheduler's own polls for a moment (GatewayClient::noteInteraction):
+  // a poll that starts under a finger is the request this tap's job would queue behind.
+  if (!replayingTouches && event.gesture != TouchGesture::None) gw->noteInteraction();
   if (!replayingTouches && !retainedTouches.empty()) {
-    if(event.gesture==TouchGesture::Drag){touchTarget.move(event);dirtyTouchFeedback();}
-    if(event.gesture!=TouchGesture::Drag && event.gesture!=TouchGesture::None)++touchPerformance.retained;
-    if(!retainedTouches.push(event,navigationGeneration,lastRevision,millis())){touchTarget.cancel();inputWasDiscarded=true;}
+    if(event.gesture==TouchGesture::Drag)touchTarget.move(event);
+    if(event.gesture!=TouchGesture::Drag && event.gesture!=TouchGesture::None){++touchPerformance.retained;UI_PROFILE(++touchFunnel.retained;)}
+    if(!retainedTouches.push(event,navigationGeneration,lastRevision,millis())){touchTarget.cancel();inputWasDiscarded=true;UI_PROFILE(++touchFunnel.overflow;)}
     return;
   }
   if (!gw->tryLockState(0)) {
-    if(event.gesture==TouchGesture::Drag){touchTarget.move(event);dirtyTouchFeedback();}
-    if(event.gesture!=TouchGesture::Drag && event.gesture!=TouchGesture::None)++touchPerformance.retained;
-    if(!retainedTouches.push(event,navigationGeneration,lastRevision,millis())) { touchTarget.cancel();inputWasDiscarded=true; }
+    if(event.gesture==TouchGesture::Drag)touchTarget.move(event);
+    if(event.gesture!=TouchGesture::Drag && event.gesture!=TouchGesture::None){++touchPerformance.retained;UI_PROFILE(++touchFunnel.retained;)}
+    if(!retainedTouches.push(event,navigationGeneration,lastRevision,millis())) { touchTarget.cancel();inputWasDiscarded=true;UI_PROFILE(++touchFunnel.overflow;) }
     return;
   }
   struct TouchStateGuard { GatewayClient* client; ~TouchStateGuard() { client->unlockState(); } } touchGuard{gw};
-  if(event.gesture!=TouchGesture::None && event.gesture!=TouchGesture::Drag)touchPerformance.dispatched(millis()-event.sampledAt);
+  if(event.gesture!=TouchGesture::None && event.gesture!=TouchGesture::Drag) {
+    const uint32_t age=millis()-event.sampledAt;
+    touchPerformance.dispatched(age);
+    UI_PROFILE(++touchFunnel.dispatched;touchFunnel.ageSum+=age;if(age>touchFunnel.ageMax)touchFunnel.ageMax=age;)
+  }
   if(event.gesture==TouchGesture::Press && event.y>=kContentTop && lastRevision!=gw->revision()) {
-    touchTarget.cancel();message="Screen changed; tap again";dirtyTouchFeedback();return;
+    touchTarget.cancel();message="Screen changed; tap again";contentDirty=true;return;
   }
   if(event.gesture==TouchGesture::Press) {
     const TouchTargetInfo target=touchTargetAt(event.x,event.y);
     touchTarget.begin(event,target.identity,navigationGeneration,target.rect.x,target.rect.y,target.rect.w,target.rect.h);
-    dirtyTouchFeedback();
     dragTravel=0;dragTravelX=0;dragAxis=DragAxis::Undecided;
     wifiKeyboardDragStart=wifiKeyboardOffset;wifiKeyboardDragged=false;
     wifiKeyboardDragging=screen==Screen::WifiPassword && event.y>=kWifiKeyboardTop && event.y<kWifiUtilityTop;
     dragOwner=event.y<kContentTop?DragOwner::Drawer:drawerT>0.05f?DragOwner::DrawerList:DragOwner::Content;
   } else if(event.gesture==TouchGesture::Drag) {
-    const bool before=touchTarget.active;
     touchTarget.move(event);
-    if(before!=touchTarget.active)dirtyTouchFeedback();
   } else if(event.gesture==TouchGesture::Tap) {
     const TouchTargetInfo target=touchTargetAt(event.x,event.y);
     const bool activate=touchTarget.accepts(event,target.identity,navigationGeneration);
-    touchTarget.cancel();dirtyTouchFeedback();
+    touchTarget.cancel();
     if(recordArmed){finishRecording();return;}
     if(!activate)return;
   } else if(event.gesture!=TouchGesture::None) {
-    touchTarget.cancel();dirtyTouchFeedback();
+    touchTarget.cancel();
   }
   // Local navigation stays usable. Mutations remain serialized; only an explicitly confirmed
   // Stop may be held behind one existing job, with context/revision revalidation at execution.
   if(uiNetworkBusy() && !(screen==Screen::Wifi || screen==Screen::WifiDetails || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) {
-    if(event.gesture==TouchGesture::Tap)handleBusyLocalTap(event.x,event.y);
+    if(event.gesture==TouchGesture::Tap) {
+      const uint32_t before=navigationGeneration;
+      if(!handleBusyLocalTap(event.x,event.y))holdTapForJob(event);
+      // The person navigated on purpose, so a tap held before it is moot rather than "stale".
+      else if(before!=navigationGeneration)pendingGesture.cancel();
+    }
     else if(event.gesture==TouchGesture::Drag) {dragTravelX+=event.dx;handleDrag(event.y,event.dy);}
+    else if(event.gesture==TouchGesture::SwipeLeft || event.gesture==TouchGesture::SwipeRight) holdSwipeForJob(event.gesture);
+    else if(event.gesture==TouchGesture::Press && screen==Screen::Send && uip::hit(micButtonRect(),event.x,event.y)) {
+      // Hold-to-talk cannot wait for a slot - a recording starts on contact or not at all - so it is
+      // refused out loud rather than being swallowed.
+      UI_PROFILE(++touchFunnel.refused;)
+      message="Busy; hold again in a moment";
+      contentDirty=true;
+    }
     return;
   }
 
@@ -4433,39 +5093,10 @@ void uiHandleTouch(const TouchEvent& event) {
           moveWifiKeyboard(wifiKeyboardOffset+(event.gesture==TouchGesture::SwipeLeft?168:-168));
         wifiKeyboardDragging=false;wifiKeyboardDragged=false;dragTravel=0;dragTravelX=0;dragAxis=DragAxis::Undecided;return;
       }
-      dragTravel = 0;
-      dragTravelX = 0;
-      if (recordArmed) { finishRecording(); return; }
-      // A gesture that already locked to the vertical axis is a scroll that happened to drift, and
-      // must not be re-read as a swipe on the way out. A flick fast enough never to produce a Drag
-      // leaves the axis Undecided, and that is a genuine swipe.
-      if (dragAxis == DragAxis::Vertical) { dragAxis = DragAxis::Undecided; return; }
-      dragAxis = DragAxis::Undecided;
-      if (drawerT > 0.05f) { closeDrawer(); return; }
-      if (!operable() || modal != Modal::None) return;
-      // Left is "forward": deeper into the hierarchy, later in the thread list, next page.
-      const int forward = event.gesture == TouchGesture::SwipeLeft ? 1 : -1;
-
-      // HOME's line under the orb is the destination picker.
-      if (screen == Screen::Home) { goToThreads(); return; }
-
-      if (screen == Screen::Approvals && gw->approvalCount() > 1) {
-        const int count = (int)gw->approvalCount();
-        approvalIndex = (size_t)(((int)approvalIndex + forward + count) % count);
-        contentDirty = true;
-        return;
-      }
-
-      // The three levels.
-      if (screen == Screen::Threads || screen == Screen::Projects
-          || screen == Screen::Environments) {
-        levelStep(forward);
-        return;
-      }
-
-      // Paging the reply, which is the meaning this gesture already had here.
-      if (screen != Screen::Response || !gw->responseOpen()) return;
-      stepReplyPage(forward);
+      // Decided in swipeDirection()/routeSwipe() so that a swipe held behind a gateway job (see
+      // holdSwipeForJob) takes exactly the route an immediate one does.
+      const int forward = swipeDirection(event.gesture);
+      if (forward != 0) routeSwipe(forward);
       return;
     }
 
@@ -4636,12 +5267,36 @@ void uiTick() {
   // uiBegin(). The board is dead at that point, but it must say so on the serial line rather than
   // panicking on a null pointer thirty times a second.
   if (!gw || !prov) return;
+  // A queued gesture job would otherwise start at the network task's next tick, up to 100 ms away.
+  // Atomics only, so it is safe before the model lock is taken (and when that lock is skipped).
+  if (uiJobState.load(std::memory_order_acquire) == 1) {
+    if (!uiJobKicked) { uiJobKicked = true; gw->wakeNetworkTask(); }
+  } else {
+    uiJobKicked = false;
+  }
+  // A finger resting on the glass (a hold, a long scroll) keeps the scheduler's polls quiet as well.
+  if (touchDown()) gw->noteInteraction();
+  // Not measurement: the content job's frame budget is counted from here (see contentJob.advance()
+  // below), so this one clock read stays in every build. What the profile adds is only the exit
+  // guard that records how long the pass took and what kind of pass it was.
+  const uint32_t tickEnterUs = micros();
+#if HOSYOND_UI_PROFILE
+  uint8_t tickKind = kTickNotDue;
+  struct TickExit {
+    uint32_t enterUs; uint8_t& kind;
+    ~TickExit() { lastTickDurUs = micros() - enterUs; lastTickKind = kind; }
+  } tickExit{tickEnterUs, tickKind};
+#endif
   // Read models and draw from one coherent state. A socket drops this lock; only compact
   // parsing can defer a frame. Never block the render task waiting for another task.
   reportTouchPerformance();
-  if (!gw->tryLockState(0)) { ++touchPerformance.lockSkips;nextFrameAt=millis()+kFrameMs; return; }
+  UI_PROFILE(sampleTouchFunnel();)
+  if (!gw->tryLockState(0)) { ++touchPerformance.lockSkips;UI_PROFILE(++touchFunnel.lockSkips;tickKind=kTickLockSkip;)nextFrameAt=millis()+kTargetFrameMs; return; }
   struct FrameStateGuard { GatewayClient* client; ~FrameStateGuard() { client->unlockState(); } } frameGuard{gw};
   completeUiNetworkJob();
+  // Only meaningful while a job is in flight; cleared when idle so a job started by a path that does
+  // not go through submitUiJob() can never inherit "background" from an earlier one.
+  if (!uiNetworkBusy()) uiJobBackground = false;
   if(screen==Screen::WifiPhone && static_cast<int32_t>(millis()-phoneNextCheckAt)>=0) {
     phoneNextCheckAt=millis()+1000;
     auto latest=prov->phoneSetupSnapshot();
@@ -4683,24 +5338,34 @@ void uiTick() {
   replayingTouches=true;
   while(retainedTouches.pop(retained)) {
     if(!TouchEventBuffer::current(retained,navigationGeneration,gw->revision(),millis())) {
-      touchTarget.cancel();inputWasDiscarded=true;continue;
+      touchTarget.cancel();inputWasDiscarded=true;UI_PROFILE(++touchFunnel.stale;)continue;
     }
     uiHandleTouch(retained.event);
   }
   replayingTouches=false;
-  if(inputWasDiscarded){++touchPerformance.discarded;inputWasDiscarded=false;message="Screen changed; tap again";dirtyTouchFeedback();}
+  if(inputWasDiscarded){++touchPerformance.discarded;inputWasDiscarded=false;message="Screen changed; tap again";contentDirty=true;}
   if(deferredStopPending && !uiNetworkBusy()) {
     deferredStopPending=false;
     if(deferredStopEnvironment==gw->context().environmentId && deferredStopThread==gw->context().threadId
         && deferredStopRevision==gw->controlsRevision()) dispatchControl(deferredStop);
     else {message="Stop context changed; review again";contentDirty=true;}
   }
+  // A tap held behind the job that just finished. After the deferred Stop, which was confirmed
+  // first and may have taken the slot again, in which case this waits for that one too.
+  drainPendingGesture();
+  captureHeldReply();
 
   // Recording owns the loop while it runs. The I2S ring holds tens of milliseconds, so the pump
   // has to be tighter than the frame budget; the orb stops for the duration and the button's own
   // timer is the moving thing instead. Redrawn four times a second, because a full frame between
   // reads is how a clip gains a gap.
   if (recordArmed && audio::recording()) {
+    UI_PROFILE(tickKind = kTickRecording;)
+    // startRecording() has just composed the whole page directly. A content job half-way through
+    // its strips is moot, and resuming it after the capture would paint stale strips over the
+    // result. (Done here rather than in startRecording(), whose test stubs only what it uses.)
+    contentJob = ContentJob{};
+    homeTextDirty = false;
     const uint32_t until = millis() + 25;
     while ((int32_t)(millis() - until) < 0) {
       if (!audio::pumpRecording()) break;
@@ -4763,16 +5428,23 @@ void uiTick() {
   // Paced against a running deadline rather than "33 ms since the last frame finished". The latter
   // adds the draw time to every interval, so a 27 ms draw yields 37 ms frames — 27 fps that also
   // wanders as the draw cost changes.
-  nextFrameAt += kFrameMs;
+  nextFrameAt += kTargetFrameMs;
   // If a frame ran long, do not catch up by drawing several back to back — that reads as a stutter
   // followed by a sprint. Drop the missed slots and resync.
-  if ((int32_t)(now - nextFrameAt) > (int32_t)kFrameMs) nextFrameAt = now + kFrameMs;
+  if ((int32_t)(now - nextFrameAt) > (int32_t)kTargetFrameMs) nextFrameAt = now + kTargetFrameMs;
 
+  // The time the animations below advance by: what actually passed since the last painted frame,
+  // not the nominal period. approach() used to be handed the constant frame length, which is only
+  // true while every frame lands on time; a 40 ms content frame then made the drawer and the action
+  // bar crawl in slow motion for the length of the stall. Clamped so a long sleep or pause cannot
+  // teleport an animation to its end in a single step.
+  uint32_t frameDtMs = kTargetFrameMs;
+  if (lastFrameAt != 0) frameDtMs = min<uint32_t>(max<uint32_t>(now - lastFrameAt, 1), 3 * kTargetFrameMs);
   if (lastFrameAt != 0) {
     const uint32_t gap = now - lastFrameAt;
     if (gap > stats.worstGapMs) stats.worstGapMs = gap;
     if (gap > stats.worstGapEverMs) stats.worstGapEverMs = gap;
-    if (gap > kFrameMs * 3 / 2) { stats.hitches++; stats.hitchesEver++; }
+    if (gap > kTargetFrameMs * 3 / 2) { stats.hitches++; stats.hitchesEver++; }
   }
   lastFrameAt = now;
 
@@ -4813,7 +5485,7 @@ void uiTick() {
     if (operable() && screen == Screen::Status) { screen = Screen::Home; message = ""; }
     rebuildDrawerRows();
     chromeDirty = true;
-    contentDirty = true;
+    markContentDirty(kCauseLink);
     modeDirty = true;
   }
   if (gw->revision() != lastRevision) {
@@ -4821,7 +5493,7 @@ void uiTick() {
     // Local network entry has no dependency on thread/display refreshes. Repainting the
     // complete keyboard for those updates adds work underneath an owner's active contact.
     if (!(screen==Screen::Wifi || screen==Screen::WifiDetails
-          || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) contentDirty = true;
+          || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) markContentForModelChange(kCauseRevision);
     drawerDirty = true;
     modeDirty = true;
     // The header is painted on chromeDirty, which revision() does not set — so the device's own
@@ -4837,7 +5509,7 @@ void uiTick() {
   if (browse.revision() != lastBrowseRevision) {
     lastBrowseRevision = browse.revision();
     if (!(screen==Screen::Wifi || screen==Screen::WifiDetails
-          || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) contentDirty = true;
+          || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) markContentForModelChange(kCauseBrowse);
   }
   if (gw->approvalCount() != lastApprovalCount) {
     lastApprovalCount = gw->approvalCount();
@@ -4850,7 +5522,7 @@ void uiTick() {
     lastScreen = screen;
     lastModal = modal;
     chromeDirty = true;
-    contentDirty = true;
+    markContentDirty(kCauseScreen);
   }
 
   gw->unlockState();
@@ -4877,13 +5549,21 @@ void uiTick() {
   statusLabel = currentLabel;
 #endif
 
+  UI_PROFILE(tickKind = kTickPainted; ++touchFunnel.painted;)
   const uint32_t drawStart = millis();
+#if HOSYOND_UI_PROFILE
+  // MEASUREMENT: see FrameSplit. lap() charges the time since the previous lap to one stage.
+  uint32_t lapUs = micros();
+  const uint32_t preUs = lapUs - tickEnterUs;
+  uint32_t logicUs = 0, chromeUs = 0, barUs = 0, drawerUs = 0, contentUs = 0, pickerUs = 0, orbUs = 0, statusUs = 0;
+  const auto lap = [&lapUs](uint32_t& bucket) { const uint32_t t = micros(); bucket += t - lapUs; lapUs = t; };
+#endif
   const bool pickerMoving = advanceHomePickerMotion(now);
 
   // The drawer eases open and shut. While it is moving nothing else in the content region is
   // painted: it covers all of it, and repainting underneath would be work nobody can see.
   const float drawerTarget = drawerOpen ? 1.0f : 0.0f;
-  const float nextDrawerT = uip::approach(drawerT, drawerTarget, kFrameMs,
+  const float nextDrawerT = uip::approach(drawerT, drawerTarget, frameDtMs,
                                           drawerOpen ? kDrawerOpenMs : kDrawerCloseMs);
   const bool drawerMoved = nextDrawerT != drawerT;
   drawerT = nextDrawerT;
@@ -4898,7 +5578,7 @@ void uiTick() {
     barDirty = true;
   }
   const float barTarget = (actionCount > 0 && drawerT <= 0.001f && !drawerOpen) ? 1.0f : 0.0f;
-  const float nextBarT = uip::approach(barT, barTarget, kFrameMs, kBarSlideMs);
+  const float nextBarT = uip::approach(barT, barTarget, frameDtMs, kBarSlideMs);
   const bool barMoved = nextBarT != barT;
   barT = nextBarT;
   // The content stops short of the tray whenever the tray BELONGS on screen, not merely once it has
@@ -4908,17 +5588,20 @@ void uiTick() {
   const bool reserve = actionCount > 0 && !drawerOpen;
   if (reserve != barReserved) {
     barReserved = reserve;
-    contentDirty = true;
+    markContentDirty(kCauseReserve);
   }
 
   // Arrival first, before anything paints into the region. A screen change clears the whole content
   // area exactly once, here, rather than each screen being trusted to cover its predecessor.
   if (viewKey() != paintedViewKey && drawerT <= 0.001f) {
     clearForArrival();
-    contentDirty = true;
+    markContentDirty(kCauseArrival);
   }
 
+  UI_PROFILE(lap(logicUs);)
+  UI_PROFILE(const bool chromeRan = chromeDirty;)
   if (chromeDirty && !displayComposeScene(0,kContentTop,panelGrey(kBg),[](void*){drawChrome();},nullptr))drawChrome();
+  UI_PROFILE(lap(chromeUs);)
 
   // Order is load-bearing, three times over.
   //
@@ -4933,9 +5616,11 @@ void uiTick() {
   // The CONTENT goes last and only when the drawer is fully away, because the drawer covers the
   // whole page and repainting underneath it is work nobody can see.
   // Never while the drawer owns the screen — see openDrawer() for what interleaving the two did.
-  if ((barMoved || barDirty) && !drawerOpen && drawerT <= 0.001f) {
+  const bool barRan = (barMoved || barDirty) && !drawerOpen && drawerT <= 0.001f;
+  if (barRan) {
     if(!displayComposeScene(kH-kBarH,kBarH,panelGrey(kBg),[](void*){paintActionBar();},nullptr))paintActionBar();
   }
+  UI_PROFILE(lap(barUs);)
 
   const bool drawerActive = drawerMoved || drawerT > 0.0f || drawerShownPx > 0;
   if (drawerActive && (drawerMoved || drawerDirty)) {
@@ -4944,10 +5629,71 @@ void uiTick() {
     if (drawerT <= 0.0f && drawerShownPx <= 0) contentDirty = true;
   }
   drawerDirty = false;
+  UI_PROFILE(lap(drawerUs);)
 
-  const bool repaintedContent = contentDirty && drawerT <= 0.001f;
-  if (repaintedContent) {
-    if(screen==Screen::WifiPassword || !displayComposeScene(kContentTop,contentBottom()-kContentTop,panelGrey(kBg),[](void*){paintContent();},nullptr))paintContent();
+  // ---- Content: arm, then advance a time-budgeted slice of the job. See ContentJob. ----
+  //
+  // A drawer that comes out over a half-composed job abandons it: the drawer covers the page, and
+  // when it retracts it sets contentDirty, which re-arms a full job from the top.
+  if (contentJob.active && drawerT > 0.001f) { contentJob.active = false; contentDirty = true; }
+  if (contentDirty && drawerT <= 0.001f) {
+    // A fresh full request (or a restart of one in flight, with the freshest state).
+    UI_PROFILE(if (contentJob.active) ++split.restarts;)
+    contentJob.arm(kContentTop, contentBottom(), /*isPartial=*/false);
+    contentDirty = false;
+    homeTextDirty = false;
+    UI_PROFILE(
+      ++split.jobs;
+      ++split.cause[pendingContentCause == kNoCause ? kCauseOther : pendingContentCause];
+      pendingContentCause = kNoCause;
+      split.lastJobScreen = (uint8_t)screen;
+    )
+  } else if (homeTextDirty && drawerT <= 0.001f && !(contentJob.active && !contentJob.partial)) {
+    homeTextDirty = false;
+    int16_t top = 0, end = 0;
+    if (screen == Screen::Home && modal == Modal::None && homeTextRows(top, end)) {
+      UI_PROFILE(if (contentJob.active) ++split.restarts;)
+      contentJob.arm(top, end, /*isPartial=*/true);
+      UI_PROFILE(
+        ++split.jobs;
+        ++split.partialJobs;
+        ++split.cause[pendingContentCause == kNoCause ? kCauseOther : pendingContentCause];
+        pendingContentCause = kNoCause;
+        split.lastJobScreen = (uint8_t)screen;
+      )
+    } else {
+      contentDirty = true;   // no longer HOME or no rows: the safe answer is the full repaint
+    }
+  }
+
+  // True while a job that covers the orb's area is unfinished (or finished this frame): the orb is
+  // withheld, as it always was on a repaint frame.
+  bool repaintedContent = false;
+  if (contentJob.active) {
+    if (screen == Screen::WifiPassword) {
+      // Its keyboard is painted by its own dirty flags straight to the panel; one shot, as before.
+      paintContent();
+      contentJob.active = false;
+    } else {
+      constexpr int16_t kStripRows = 22;   // displayComposeBands()'s band height
+      contentJob.advance(
+        [](int16_t y, int16_t rows) {
+          if (displayComposeScene(y, rows, panelGrey(kBg), [](void*){paintContent();}, nullptr)) return true;
+          paintContent();                    // no band canvas: the old direct paint of everything
+          return false;
+        },
+        []() { return micros(); }, tickEnterUs, kPaintBudgetUs, kStripRows);
+    }
+    contentDirty = false;   // paintContent() clears it per strip; make it unconditional
+    repaintedContent = !contentJob.partial;
+#if HOSYOND_UI_PROFILE
+    if (!contentJob.active) {
+      split.strips += contentJob.strips;
+      split.jobUs += contentJob.spentUs;
+      if (contentJob.spentUs > split.jobUsMax) split.jobUsMax = contentJob.spentUs;
+      if (contentJob.frames > split.jobFramesMax) split.jobFramesMax = contentJob.frames;
+    }
+#endif
   }
   if(!repaintedContent && screen==Screen::WifiPassword && modal==Modal::None && drawerT<=0.001f) {
     if(wifiEntryDirty)paintWifiEntry();
@@ -4955,9 +5701,11 @@ void uiTick() {
     if(wifiUtilityDirty)paintWifiUtilities();
   }
 
+  UI_PROFILE(lap(contentUs);)
   const bool paintedPickerMotion = pickerMoving && screen == Screen::Home
-    && modal == Modal::None && drawerT <= 0.001f;
+    && modal == Modal::None && drawerT <= 0.001f && !contentJob.active;
   if (paintedPickerMotion) paintHomePickerMotion();
+  UI_PROFILE(lap(pickerUs);)
 
   // The orb, its label, and HOME's small carousel band animate. Everything else is repainted on
   // change, which is what keeps a list screen inside the frame budget: a full list redraw costs
@@ -4968,19 +5716,23 @@ void uiTick() {
 
   // The orb and either a full content repaint or a carousel frame do not share a frame.
   //
-  // Measured on the board, the orb alone is about 24 ms of a 33 ms budget — its geometry, its
-  // rasterisation and its blit. A content repaint clears and redraws the whole region and costs
-  // another ten or more. Together they were the 75 ms frames. Dropping ONE orb frame when the
-  // screen underneath changes is invisible at 30 fps; a frame that runs to twice the budget is
-  // not, and it is what "sluggish" looked like.
+  // Measured on the board at 80 MHz SPI (0.2.22): the orb is ~6 ms a frame (geometry 3.1,
+  // rasterisation 1.2, blit and the rest 1.7), NOT the ~24 ms this comment used to claim. A full
+  // content repaint is ~40 ms on top of that, which is what produced the 70 ms frames. So the orb
+  // yields to a content job that covers its area, and the job itself is sliced across frames
+  // (ContentJob) so that no single frame carries the whole 40 ms. A HOME text-only refresh does
+  // not cover the orb and does not interrupt it.
   //
   // The drawer and the action tray are cheap enough to coexist with it now that neither pays
   // distance-field arithmetic for its flat middle. The carousel draws up to two anti-aliased
   // buttons, so it gets the same one-frame priority as a content repaint.
+  UI_PROFILE(bool orbDrawn = false;)
   if (repaintedContent || paintedPickerMotion) {
     // Nothing: the orb resumes when the short repaint/transition is finished.
   } else if (bigOrb && orbReady) {
     displayDrawOrb(orb, kOrbCx, stack.orbCy, elapsed, kOrbDrawPx);
+    UI_PROFILE(orbDrawn = true;)
+    UI_PROFILE(lap(orbUs);)
     // The claim block starts where the label would be, and the label's strip is full width: drawing
     // both means the code is repainted over four times a second by a word.
     // HOME has no shimmer: its prominent line is the thread's name, and the state word — when it
@@ -4999,13 +5751,40 @@ void uiTick() {
     const bool inComposition = voiceShowsOrb();
     displayDrawMiniOrb(miniOrb, inComposition ? kOrbCx : kMiniOrbCx,
                        inComposition ? voiceLayout().orbCy : kMiniOrbCy, elapsed);
+    UI_PROFILE(orbDrawn = true;)
+    UI_PROFILE(lap(orbUs);)
     shownLabel = "";
   }
   // The header's right-hand affordance never disappears: whenever the mini orb is not sitting in
   // the header, a dot stands in for it so the drawer's tap target keeps its mark.
   if ((bigOrb || voiceShowsOrb()) && orbReady) drawHeaderStatusDot();
+  UI_PROFILE(lap(statusUs);)
 
-  paintPressedTarget();
+#if HOSYOND_UI_PROFILE
+  // MEASUREMENT: fold this frame into the split window. See FrameSplit and the [frame-split] line.
+  {
+    const uint32_t tickUs = lapUs - tickEnterUs;
+    FrameSplit& f = split;
+    ++f.frames;
+    f.pre += preUs; f.logic += logicUs; f.chrome += chromeUs; f.bar += barUs; f.drawer += drawerUs;
+    f.content += contentUs; f.picker += pickerUs; f.orb += orbUs; f.status += statusUs; f.tick += tickUs;
+    if (orbDrawn) ++f.orbFrames;
+    if (repaintedContent) ++f.contentFrames;
+    if (chromeRan) ++f.chromeFrames;
+    if (barRan) ++f.barFrames;
+    if (tickUs > f.tickMax) f.tickMax = tickUs;
+    if (orbUs > f.orbMax) f.orbMax = orbUs;
+    if (preUs > f.preMax) f.preMax = preUs;
+    if (contentUs > f.contentMax) f.contentMax = contentUs;
+    if (f.lastTickEnterUs) {
+      const uint32_t period = tickEnterUs - f.lastTickEnterUs;
+      f.period += period;
+      if (period > f.periodMax) f.periodMax = period;
+    }
+    f.lastTickEnterUs = tickEnterUs;
+  }
+#endif  // HOSYOND_UI_PROFILE
+
   touchPerformance.frame(millis());
   const uint32_t drawMs = millis() - drawStart;
   if (drawMs > stats.worstDrawMs) stats.worstDrawMs = drawMs;
@@ -5020,11 +5799,12 @@ void uiTick() {
     // only diagnosable if you know what was being drawn.
     Serial.printf("[fps] %-10s %.1f  draw<=%ums  gap<=%ums  hitches=%u  budget=%ums  heap=%u\n",
                   orbStateName(currentMode), stats.fps, (unsigned)stats.worstDrawMs,
-                  (unsigned)stats.worstGapMs, (unsigned)stats.hitches, (unsigned)kFrameMs,
+                  (unsigned)stats.worstGapMs, (unsigned)stats.hitches, (unsigned)kTargetFrameMs,
                   (unsigned)ESP.getFreeHeap());
     Serial.printf("      since boot: worst gap %u ms, %u hitches, up %u s\n",
                   (unsigned)stats.worstGapEverMs, (unsigned)stats.hitchesEver,
                   (unsigned)(millis() / 1000));
+    UI_PROFILE(reportFrameSplit();)
     stats.frames = 0;
     stats.worstDrawMs = 0;
     stats.worstGapMs = 0;
@@ -5044,7 +5824,7 @@ void uiTick() {
   // private worker copy until completion, so an in-flight TLS read never races the orb renderer.
   if (!uiNetworkBusy() && voice.pollDue(millis()) && operable()) {
     auto polledVoice = std::make_shared<GatewayVoice>(voice);
-    enqueueUiNetworkJob([polledVoice]() { polledVoice->poll(); }, [polledVoice]() {
+    submitUiJob([polledVoice]() { polledVoice->poll(); }, [polledVoice]() {
       voice = *polledVoice;
       if (voice.revision() == lastVoiceRevision) return;
       lastVoiceRevision = voice.revision();
@@ -5071,10 +5851,12 @@ void uiTick() {
 
 void uiSleepUntilNextFrame() {
   // Sleep until the next frame is actually due rather than spinning on delay(1). Polling in 1 ms
-  // steps means a frame fires on the first iteration AFTER its deadline, so the interval lands
-  // anywhere in 33..36 ms even though the work took 23 ms. That wander is small in absolute terms
-  // and very visible in an animation.
+  // steps means a frame fires on the first iteration AFTER its deadline, so the interval wanders by
+  // a millisecond or more around the target. That wander is small in absolute terms and very
+  // visible in an animation.
+  UI_PROFILE(const uint32_t sleepStartUs = micros();)  // MEASUREMENT: see FrameSplit (headroom)
   const int32_t waitMs = (int32_t)(nextFrameAt - millis());
   if (waitMs > 1) delay((uint32_t)(waitMs - 1));
   else delay(1);
+  UI_PROFILE(lastSleepUs = micros() - sleepStartUs; split.sleep += lastSleepUs;)
 }

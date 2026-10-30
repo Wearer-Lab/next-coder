@@ -77,6 +77,11 @@ const ThreadOption* GatewayClient::thread(size_t index) const {
   return index < threadCount_ ? &threads_[index] : nullptr;
 }
 
+bool GatewayClient::threadListMatches(const String& environmentId, const String& projectId) const {
+  return threadsScopeKnown_ && environmentId.length() > 0
+    && threadsEnvironmentId_ == environmentId && threadsProjectId_ == projectId;
+}
+
 const SavedMacro* GatewayClient::macro(size_t index) const {
   return index < macroCount_ ? &macros_[index] : nullptr;
 }
@@ -128,6 +133,7 @@ bool GatewayClient::applyConfigJson(const String& payload) {
   context_.projectId = nextProject;
   if (changedEnvironment) {
     threadCount_ = 0;
+    threadsScopeKnown_ = false;   // the rows it vouched for are gone
     nextThreadsAt_ = millis();
     nextControlsAt_ = millis();
   }
@@ -398,7 +404,26 @@ void GatewayClient::clearContextBinding(const String& environmentId, const Strin
   context_.environmentId = environmentId;
   context_.projectId = projectId;
   context_.threadId = "";
-  threadCount_ = 0;
+  // WHAT EMPTYING THE LIST PROTECTED. threads_ is the HOME picker's rows and the index space
+  // selectThread() validates against, and both assume it describes the folder the device is bound
+  // to. Moving to another environment or folder makes those rows another folder's threads: a swipe
+  // on the picker would offer a thread the next POST /v1/device/config/thread (which carries only a
+  // threadId and is resolved against the BOUND folder) cannot honour, or worse could honour.
+  //
+  // That is a statement about the folder, not about this call, so it is kept as exactly that: the
+  // rows survive when the gateway stamped them for the very destination being bound (picking another
+  // thread in the same folder, which is the common case and used to blank HOME until the next 30 s
+  // poll), and are emptied, with an immediate refetch, whenever the destination differs or the
+  // scope is unknown. Nothing here trusts the caller's idea of "same folder".
+  if (threadListMatches(environmentId, projectId)) {
+    // The binding was just dropped (threadId is empty until adoptThreadBinding), so no row is
+    // selected; leaving the previous thread flagged would show two bound threads for a moment.
+    for (size_t i = 0; i < threadCount_; ++i) threads_[i].selected = false;
+  } else {
+    threadCount_ = 0;
+    threadsScopeKnown_ = false;
+    nextThreadsAt_ = millis();
+  }
   selectedThreadIndex_ = -1;
   closeResponse();
   nextConfigAt_ = millis();
@@ -427,6 +452,15 @@ bool GatewayClient::refreshThreads() {
 
   threadsDetail_ = "";
   JsonArray threads = doc["threads"].as<JsonArray>();
+
+  // Record what this list is a list OF. The plain list route answers for the device's bound
+  // environment and folder and says which, under the same atomic-v1 contract the destination picker
+  // relies on (src/app.mjs, GET /v1/device/threads). A gateway that predates it sends no stamp, and
+  // then nothing may claim the rows are for any particular folder.
+  threadsEnvironmentId_ = String(doc["environmentId"] | "");
+  threadsProjectId_ = String(doc["projectId"] | "");
+  threadsScopeKnown_ = String(doc["destinationSelection"] | "") == "atomic-v1"
+    && threadsEnvironmentId_.length() > 0;
 
   // An accepted mutation can lead its snapshot projection by a poll or two. Settle only when the
   // raw list agrees; until then, the event's rename/removal remains authoritative on this device.

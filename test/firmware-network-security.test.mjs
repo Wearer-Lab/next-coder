@@ -99,7 +99,14 @@ test("Vision Master delegates the canonical bounded heartbeat to the shared cont
   ]) {
     assert.match(shared, new RegExp(`doc\\["${field}"\\]`, "u"), `heartbeat omits ${field}`);
   }
-  assert.match(shared, /kMaxResponseBodyBytes/u);
+  // The bounded-body read moved with the transport into the warm-session exchange that the shared
+  // client's request() delegates to; the bound itself is unchanged.
+  const exchange = await readFile(
+    join(FIRMWARE, "shared/NextCoderCore/src/GatewayWarm.h"),
+    "utf8",
+  );
+  assert.match(shared, /gateway_warm::exchange\(/u);
+  assert.match(exchange, /kMaxResponseBodyBytes/u);
   assert.match(shared, /request\("POST", "\/v1\/device\/heartbeat", body, response\)/u);
   assert.match(shared, /if \(code >= 200 && code < 300\) \{\s+observeCredentialRotation\(response\);/u);
 });
