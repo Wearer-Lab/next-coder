@@ -5,6 +5,7 @@ import {
   buildT3Command,
   buildT3ProjectLaunchCommands,
   compressSnapshot,
+  fetchT3Snapshot,
   pendingThreadInteractions,
 } from "../src/t3Client.mjs";
 
@@ -91,4 +92,51 @@ test("a project launch puts attachments on the bootstrap turn, not the thread cr
 
   assert.deepEqual(launch.startTurn.message.attachments, attachments);
   assert.equal(launch.createThread.message, undefined);
+});
+
+// --- Protocol 1 reached against a protocol 2 server -------------------------------------------
+//
+// Observed against the running T3 0.1.1 on 2026-10-30, not assumed: the removed snapshot route
+// answers 200 with the single-page application, while the dispatch route answers 404. A 200 of
+// HTML passes `response.ok`, so the only symptom used to be a JSON parse error naming neither the
+// version nor the protocol.
+
+test("a web page on the snapshot route is refused as a protocol mismatch, not parsed", async () => {
+  const fetchImpl = async () => new Response(
+    "<!doctype html><html lang=\"en\"><head><title>T3</title></head></html>",
+    { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+  );
+  await assert.rejects(
+    () => fetchT3Snapshot({ baseUrl: "http://127.0.0.1:3774", accessToken: "token" }, { fetchImpl }),
+    (error) => {
+      assert.equal(error.code, "T3_PROTOCOL_MISMATCH");
+      // The message has to name the cause: this is the error an operator reads first.
+      assert.match(error.message, /protocol 2/u);
+      assert.match(error.message, /0\.1\.0 or newer/u);
+      return true;
+    },
+  );
+});
+
+test("a genuine protocol 1 JSON snapshot is still parsed", async () => {
+  const snapshot = { snapshotSequence: 7, projects: [], threads: [], updatedAt: "2026-10-30T00:00:00.000Z" };
+  const fetchImpl = async () => new Response(JSON.stringify(snapshot), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+  assert.deepEqual(
+    await fetchT3Snapshot({ baseUrl: "http://127.0.0.1:3773", accessToken: "token" }, { fetchImpl }),
+    snapshot,
+  );
+});
+
+test("JSON under an unusual content type is still parsed, so older servers keep working", async () => {
+  // Only HTML is refused. A stricter "must be JSON" rule would break a 0.0.x server or proxy that
+  // labels its body oddly, to catch a case that cannot arise there.
+  const fetchImpl = async () => new Response(JSON.stringify({ projects: [], threads: [] }), {
+    status: 200,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+  const result = await fetchT3Snapshot({ baseUrl: "http://127.0.0.1:3773", accessToken: "token" }, { fetchImpl });
+  assert.deepEqual(result.threads, []);
 });

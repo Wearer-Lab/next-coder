@@ -143,7 +143,36 @@ export async function fetchT3Snapshot(environment, options = {}) {
   if (!response.ok) {
     throw taggedError(`T3 snapshot failed with HTTP ${response.status}.`, { status: response.status });
   }
-  return response.json();
+  return await readOrchestrationJson(response, "snapshot");
+}
+
+/**
+ * Parse an orchestration response, refusing the single-page application.
+ *
+ * Verified against the running T3 0.1.1 on 2026-10-30: `GET /api/orchestration/snapshot` answers
+ * **200 with `text/html`** — the SPA catch-all — because the API route was removed, while
+ * `POST /api/orchestration/dispatch` answers a plain 404. So `response.ok` is true and the body is
+ * a web page, and the only symptom was a `SyntaxError: Unexpected token '<'` from `json()` that
+ * named neither the version nor the protocol.
+ *
+ * This path is only reachable now when protocol 1 was selected — by a genuine 0.0.x server, or by
+ * the fallback taken when the environment descriptor could not be read. A 0.1.x server reached
+ * that way is a protocol mismatch, and saying so is the difference between a one-line diagnosis
+ * and an afternoon.
+ */
+async function readOrchestrationJson(response, what) {
+  // Narrow to HTML on purpose, rather than "anything that is not JSON". The observed failure is
+  // the SPA catch-all, and a stricter rule would reject a server or proxy that returns JSON under
+  // an unusual or missing content type — breaking a working 0.0.x deployment to catch a case that
+  // cannot occur there.
+  const contentType = String(response.headers?.get?.("content-type") ?? "").toLowerCase();
+  if (contentType.includes("html")) {
+    throw taggedError(
+      `T3 returned a web page instead of a ${what}, which means this server does not serve the protocol 1 orchestration HTTP API. It is most likely T3 0.1.0 or newer, which requires the orchestration protocol 2 WebSocket.`,
+      { status: response.status, code: "T3_PROTOCOL_MISMATCH" },
+    );
+  }
+  return await response.json();
 }
 
 /**

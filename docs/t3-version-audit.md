@@ -403,9 +403,9 @@ Consequences for this product:
    forwarding of per-request `options[]`, the `orchestration:operate` pairing scope and the
    tested/audited split in `src/t3Compatibility.mjs` were all made *because of* static findings in this
    document. Their tests run against stubs and captured fixtures, so a passing test shows the code
-   matches our reading of the bundle, not that a running T3 behaves that way. After those changes the
-   repository still has **zero live observation of 0.1.5**, and of 0.1.1 only what earlier work
-   recorded.
+   matches our reading of the bundle, not that a running T3 behaves that way. **Superseded in part
+   on 2026-10-30 by the live run recorded in section 9**; the limits stated there are what remains
+   unobserved.
 8. **Not re-examined:** firmware, Convex, the cloud connector hub (it relays whatever the connector
    projects), and the real effect of the `fx` driver or the default-Claude-model change on a
    production workspace.
@@ -449,3 +449,32 @@ Still open, ordered by blast radius:
    `THREAD_RESUME_MAX_GAP`, the inert `agentVerb` and work-graph sections, the version pin, the
    `t3Protocol2.mjs` copy and the Intel Mac limit are all stated per version. The attachment lines in
    `t3-capability-manifest.md` and the manifest code remain outstanding.
+
+## 9. Live observation of T3 0.1.5, 2026-10-30
+
+The audit above was written from shipped bundles. On 2026-10-30 the maintainer's production T3 was
+moved from 0.1.1 to 0.1.5 (the launchd job `com.next-coder.production.t3` pinned the 0.1.1 binary by
+absolute path, so the version only changes when that path does), and the claims below were measured
+against the running server on `127.0.0.1:3774`. The plist and the 116 MB `userdata` directory were
+copied first, because a new release may migrate stored state irreversibly.
+
+| Claim | Section | Observed on live 0.1.5 |
+|---|---|---|
+| `orchestrationProtocolVersion` is 2 | 4 | **Confirmed** — descriptor reports `2` |
+| `/ws` refuses a client that does not ask for protocol 2 | 2 | **Confirmed** — HTTP **426** without the parameter |
+| `/ws` accepts the parameter | 2 | **Confirmed** — HTTP **401**, i.e. it proceeds to ticket authentication |
+| An unknown protocol is refused | 4 | **Confirmed** — `orchestrationProtocol=3` also returns **426**, so failing closed on a future protocol is correct |
+| `POST /api/orchestration/dispatch` is gone | 2 | **Confirmed** — HTTP **404** |
+| `GET /api/orchestration/snapshot` is gone | 2 | **Refined** — HTTP **200** with `text/html`, the single-page application, *not* a 404. A caller checking `response.ok` sees success and fails later parsing HTML as JSON. `src/t3Client.mjs` now refuses an HTML body with `T3_PROTOCOL_MISMATCH` naming the version and protocol |
+| File attachments up to 50 MiB | 2 | **Confirmed** — `fileAttachments.maxUploadBytes` is `52428800`. `docs/t3-capability-manifest.md` still records the 0.0.32 image-only limits and remains outstanding |
+| `orchestration:write` is not a T3 scope | 0, 8 | **Confirmed** — a pairing token minted by 0.1.5 lists eleven scopes and `orchestration:write` is not among them |
+| The corrected pairing scopes are accepted | 8 | **Confirmed** — `exchangePairingToken` succeeded and the server echoed `orchestration:read orchestration:operate terminal:operate` |
+| The direct transport works on protocol 2 | 8 | **Confirmed** — `DirectT3Transport.snapshot()` returned `{projects, snapshotSequence, threads}` over the WebSocket, with 1 project and 1 thread |
+
+### Still not observed on 0.1.5
+
+Dispatching a turn, approval answering (including whether `acceptAlways` behaves per provider as the
+bundles indicate), structured user input, terminal input, the work graph, thread streaming and resume,
+and anything through the **connector** path rather than the direct one. `maximumTestedVersion`
+therefore stays at **0.1.1**: the run above exercises pairing and a snapshot read, not a completed
+command, and it used the direct transport rather than the connector the ceiling describes.
