@@ -1,6 +1,7 @@
 #include "DeviceStore.h"
 
 #include <ArduinoJson.h>
+#include <cstring>
 
 #include "GatewayTls.h"
 
@@ -25,6 +26,7 @@ constexpr const char* kKeyGatewayState = "gw_state";
 constexpr const char* kKeyGatewayError = "gw_error";
 constexpr const char* kKeyWifiSsid = "wifi_ssid";
 constexpr const char* kKeyWifiPass = "wifi_pass";
+constexpr const char* kKeyWifiNetworks = "wifi_saved";
 constexpr const char* kKeyClaimCode = "claim_code";
 constexpr const char* kKeyClaimExpiry = "claim_exp";
 constexpr const char* kKeyConfigCache = "cfg_cache";
@@ -101,6 +103,7 @@ bool DeviceStore::begin() {
   }
   wifiSsid_ = readString(kKeyWifiSsid);
   wifiPassword_ = readString(kKeyWifiPass);
+  loadWifiNetworks();
   claimCode_ = readString(kKeyClaimCode);
   claimCodeExpiresAt_ = readString(kKeyClaimExpiry);
   configCache_ = readString(kKeyConfigCache);
@@ -116,7 +119,7 @@ bool DeviceStore::begin() {
     gatewayUrl_.length() ? gatewayUrl_.c_str() : "(none)",
     static_cast<unsigned>(gatewayProfileCount_),
     gatewaySwitchState_.c_str(),
-    wifiSsid_.length() ? wifiSsid_.c_str() : "(none)",
+    wifiSsid_.length() ? "configured" : "(none)",
     claimCode_.length() ? "cached" : "(none)"
   );
   return true;
@@ -447,13 +450,159 @@ bool DeviceStore::ensureLegacyGatewayProfile() {
   return replaceGatewayProfiles(&legacy, 1, gatewayRevision_, "legacy");
 }
 
+namespace {
+constexpr size_t kMaxWifiProfileBytes = 600;
+
+bool validWifiProfile(const WifiNetworkProfile& profile) {
+  return profile.ssid.length() > 0 && profile.ssid.length() <= 32
+    && profile.password.length() <= 64
+    && strlen(profile.ssid.c_str()) == profile.ssid.length()
+    && strlen(profile.password.c_str()) == profile.password.length();
+}
+
+// A single versioned, length-prefixed NVS value is the commit record. Lengths
+// preserve arbitrary UTF-8 SSIDs/password punctuation without escaping or partial pairs.
+String encodeWifiNetworks(const WifiNetworkProfile* profiles, size_t count) {
+  String output("W1\n");
+  for (size_t i = 0; i < count; ++i) {
+    output += String(profiles[i].ssid.length()); output += ':'; output += profiles[i].ssid;
+    output += String(profiles[i].password.length()); output += ':'; output += profiles[i].password;
+  }
+  return output;
+}
+
+bool readWifiField(const String& encoded, size_t& offset, size_t ceiling, String& output) {
+  size_t length = 0, digits = 0;
+  while (offset < encoded.length() && encoded[offset] >= '0' && encoded[offset] <= '9') {
+    if (++digits > 2) return false;
+    length = length * 10 + static_cast<size_t>(encoded[offset++] - '0');
+  }
+  if (digits == 0 || length > ceiling || offset >= encoded.length() || encoded[offset++] != ':'
+      || length > encoded.length() - offset) return false;
+  output = encoded.substring(offset, offset + length);
+  offset += length;
+  return true;
+}
+}  // namespace
+
+void DeviceStore::loadWifiNetworks() {
+  SettingsGuard settingsGuard(*this);
+  savedWifiNetworkCount_ = 0;
+  const String encoded = readString(kKeyWifiNetworks);
+  bool valid = encoded.length() >= 3 && encoded.length() <= kMaxWifiProfileBytes
+    && encoded.substring(0, 3) == "W1\n";
+  WifiNetworkProfile decoded[kMaxSavedWifiNetworks];
+  size_t count = 0, offset = 3;
+  while (valid && offset < encoded.length()) {
+    if (count >= kMaxSavedWifiNetworks || !readWifiField(encoded, offset, 32, decoded[count].ssid)
+        || !readWifiField(encoded, offset, 64, decoded[count].password) || !validWifiProfile(decoded[count])) {
+      valid = false; break;
+    }
+    for (size_t i = 0; i < count; ++i) if (decoded[i].ssid == decoded[count].ssid) valid = false;
+    ++count;
+  }
+  wifiProfilesPersisted_ = valid;
+  if (valid) {
+    savedWifiNetworkCount_ = count;
+    for (size_t i = 0; i < count; ++i) savedWifiNetworks_[i] = decoded[i];
+    wifiSsid_ = count > 0 ? decoded[0].ssid : String();
+    wifiPassword_ = count > 0 ? decoded[0].password : String();
+  } else if (validWifiProfile({wifiSsid_, wifiPassword_})) {
+    // Lazy migration: legacy remains usable even with full NVS. The first write
+    // must durably anchor this old pair before touching either compatibility key.
+    savedWifiNetworks_[0] = {wifiSsid_, wifiPassword_};
+    savedWifiNetworkCount_ = 1;
+  } else {
+    wifiSsid_ = "";
+    wifiPassword_ = "";
+  }
+}
+
+std::vector<WifiNetworkProfile> DeviceStore::savedWifiNetworksSnapshot() const {
+  SettingsGuard settingsGuard(*this);
+  std::vector<WifiNetworkProfile> snapshot;
+  snapshot.reserve(savedWifiNetworkCount_);
+  for (size_t i = 0; i < savedWifiNetworkCount_; ++i) snapshot.push_back(savedWifiNetworks_[i]);
+  return snapshot;
+}
+
+std::vector<String> DeviceStore::savedWifiNamesSnapshot() const {
+  SettingsGuard settingsGuard(*this);
+  std::vector<String> names;
+  names.reserve(savedWifiNetworkCount_);
+  for (size_t i = 0; i < savedWifiNetworkCount_; ++i) names.push_back(savedWifiNetworks_[i].ssid);
+  return names;
+}
+
+bool DeviceStore::commitWifiNetworks(const WifiNetworkProfile* profiles, size_t count) {
+  SettingsGuard settingsGuard(*this);
+  if (!opened_ || count > kMaxSavedWifiNetworks) return false;
+  for (size_t i = 0; i < count; ++i) if (!validWifiProfile(profiles[i])) return false;
+  if (!wifiProfilesPersisted_) {
+    if (!putString(kKeyWifiNetworks, encodeWifiNetworks(savedWifiNetworks_, savedWifiNetworkCount_))) return false;
+    wifiProfilesPersisted_ = true;
+  }
+  const String nextSsid = count > 0 ? profiles[0].ssid : String();
+  const String nextPassword = count > 0 ? profiles[0].password : String();
+  const String encoded = encodeWifiNetworks(profiles, count);
+  if (readString(kKeyWifiNetworks) == encoded && wifiSsid_ == nextSsid && wifiPassword_ == nextPassword
+      && readString(kKeyWifiSsid) == nextSsid && readString(kKeyWifiPass) == nextPassword) return true;
+  // The blob is authoritative across power loss. Mirrors are prepared first and
+  // rolled back on error; if rollback also fails, the old blob still wins at boot.
+  if (!putString(kKeyWifiPass, nextPassword) || !putString(kKeyWifiSsid, nextSsid)
+      || !putString(kKeyWifiNetworks, encoded)) {
+    putString(kKeyWifiPass, wifiPassword_);
+    putString(kKeyWifiSsid, wifiSsid_);
+    return false;
+  }
+  for (size_t i = 0; i < kMaxSavedWifiNetworks; ++i) {
+    savedWifiNetworks_[i] = i < count ? profiles[i] : WifiNetworkProfile();
+  }
+  savedWifiNetworkCount_ = count;
+  wifiSsid_ = nextSsid;
+  wifiPassword_ = nextPassword;
+  return true;
+}
+
+bool DeviceStore::saveWifiNetwork(const String& ssid, const String& password) {
+  SettingsGuard settingsGuard(*this);
+  const WifiNetworkProfile candidate{ssid, password};
+  if (!validWifiProfile(candidate)) return false;
+  size_t existing = savedWifiNetworkCount_;
+  for (size_t i = 0; i < savedWifiNetworkCount_; ++i) if (savedWifiNetworks_[i].ssid == ssid) existing = i;
+  if (existing == savedWifiNetworkCount_ && savedWifiNetworkCount_ == kMaxSavedWifiNetworks) return false;
+  WifiNetworkProfile staged[kMaxSavedWifiNetworks];
+  staged[0] = candidate;
+  size_t count = 1;
+  for (size_t i = 0; i < savedWifiNetworkCount_; ++i) if (i != existing) staged[count++] = savedWifiNetworks_[i];
+  return commitWifiNetworks(staged, count);
+}
+
+bool DeviceStore::activateSavedWifiNetwork(const String& ssid) {
+  SettingsGuard settingsGuard(*this);
+  for (size_t i = 0; i < savedWifiNetworkCount_; ++i) {
+    if (savedWifiNetworks_[i].ssid == ssid) return saveWifiNetwork(ssid, savedWifiNetworks_[i].password);
+  }
+  return false;
+}
+
+bool DeviceStore::forgetWifiNetwork(const String& ssid) {
+  SettingsGuard settingsGuard(*this);
+  if (ssid.length() == 0 || ssid == wifiSsid_) return false;
+  WifiNetworkProfile staged[kMaxSavedWifiNetworks];
+  size_t count = 0;
+  bool found = false;
+  for (size_t i = 0; i < savedWifiNetworkCount_; ++i) {
+    if (savedWifiNetworks_[i].ssid == ssid) { found = true; continue; }
+    staged[count++] = savedWifiNetworks_[i];
+  }
+  return found && commitWifiNetworks(staged, count);
+}
+
 bool DeviceStore::setWifiCredentials(const String& ssid, const String& password) {
   SettingsGuard settingsGuard(*this);
-  if (!putString(kKeyWifiSsid, ssid)) return false;
-  if (!putString(kKeyWifiPass, password)) return false;
-  wifiSsid_ = ssid;
-  wifiPassword_ = password;
-  return true;
+  if (ssid.length() == 0) return password.length() == 0 && commitWifiNetworks(nullptr, 0);
+  return saveWifiNetwork(ssid, password);
 }
 
 bool DeviceStore::setClaimCode(const String& code, const String& expiresAt) {

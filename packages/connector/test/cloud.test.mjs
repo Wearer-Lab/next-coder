@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { enrollConnector, requestSocketTicket, revokeCloudConnector } from "../src/cloud.mjs";
+import { defaultConnectorLabel, describeHostPlatform, enrollConnector, requestSocketTicket, revokeCloudConnector } from "../src/cloud.mjs";
 
 test("enrollment never sends local T3 authority to cloud", async () => {
   let request;
@@ -39,4 +39,54 @@ test("self-revocation uses only the connector realm and validates response ident
   await assert.rejects(revokeCloudConnector(state, {
     fetchImpl: async () => new Response(JSON.stringify({ connector: { id: "other", environmentId: "env_1", status: "revoked" } })),
   }), { code: "REVOCATION_INVALID" });
+});
+
+test("a computer names itself after its host, never after a platform guess", () => {
+  // The console used to prefill the literal "Mac T3 Code" for every new environment, so a Windows
+  // host enrolled as a Mac and a second workspace was indistinguishable from the first.
+  assert.equal(defaultConnectorLabel({ platform: "win32", hostname: "SERGE-PC" }), "SERGE-PC (Windows)");
+  assert.equal(defaultConnectorLabel({ platform: "linux", hostname: "build-01" }), "build-01 (Linux)");
+  // A trailing .local is mDNS noise, not part of the computer's name.
+  assert.equal(defaultConnectorLabel({ platform: "darwin", hostname: "Serges-MacBook-Pro.local" }), "Serges-MacBook-Pro");
+  // No "mac-mini (macOS)": the name already says it.
+  assert.equal(defaultConnectorLabel({ platform: "darwin", hostname: "mac-mini" }), "mac-mini");
+  assert.equal(defaultConnectorLabel({ platform: "linux", hostname: "ubuntu-box" }), "ubuntu-box");
+});
+
+test("an unusable hostname still produces a label that distinguishes the platform", () => {
+  // An explicit null means "this host has no usable name"; omitting the argument entirely still
+  // reads the real os.hostname(), which is why undefined is not in this list.
+  for (const hostname of ["", "   ", "localhost", "LOCALHOST", null]) {
+    assert.equal(defaultConnectorLabel({ platform: "win32", hostname }), "Windows computer");
+  }
+  assert.equal(defaultConnectorLabel({ platform: "win32" }).length > 0, true);
+  // An unknown platform must not invent a name for itself.
+  assert.equal(defaultConnectorLabel({ platform: "haiku", hostname: "" }), "T3 Code");
+  assert.equal(describeHostPlatform("haiku"), null);
+  assert.equal(describeHostPlatform("win32"), "Windows");
+});
+
+test("a host-derived label is sent when the owner passed none, and never overrides one they did", async () => {
+  const sent = [];
+  const fetchImpl = async (_url, options) => {
+    sent.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ connector: { id: "con_1" }, environment: { id: "env_1" }, secret: "s" }), { status: 201 });
+  };
+  await enrollConnector({ server: "https://cloud.example", code: "c", platform: "win32", fetchImpl });
+  assert.equal(typeof sent[0].label, "string");
+  assert.equal(sent[0].label.length > 0, true, "an unnamed host must still send a name");
+  assert.equal(sent[0].label.includes("Mac"), false);
+
+  await enrollConnector({ server: "https://cloud.example", code: "c", label: "  Studio desk  ", platform: "win32", fetchImpl });
+  assert.equal(sent[1].label, "Studio desk", "an explicit label wins and is trimmed");
+});
+
+test("a blank explicit label falls back to the host name rather than enrolling unnamed", async () => {
+  let body;
+  const fetchImpl = async (_url, options) => {
+    body = JSON.parse(options.body);
+    return new Response(JSON.stringify({ connector: { id: "con_1" }, environment: { id: "env_1" }, secret: "s" }), { status: 201 });
+  };
+  await enrollConnector({ server: "https://cloud.example", code: "c", label: "   ", platform: "linux", fetchImpl });
+  assert.equal(body.label.trim().length > 0, true);
 });

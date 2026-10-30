@@ -5,6 +5,9 @@ import { createApp } from "../src/app.mjs";
 import {
   buildConnectorRotateCommand,
   buildConnectCommand,
+  connectCommandVariants,
+  connectorRotateCommandVariants,
+  COMMAND_SHELLS,
   buildLegacyDirectConnectCommand,
   normalizeConnectAccessMode,
 } from "../src/connectSession.mjs";
@@ -46,7 +49,7 @@ test("the console mints a connect code and the T3 host redeems it into an enviro
   // The one-liner is what the user copies; it has to name this gateway and carry the code.
   assert.equal(
     minted.command,
-    `npx @wearer-haitch/connector connect --server '${baseUrl}' --code '${minted.code}'`,
+    `npx @wearer-haitch/connector connect --server ${baseUrl} --code ${minted.code}`,
   );
   assert.equal(minted.command.includes("tailscale"), false, "access mode is not a connector CLI credential");
   assert.equal(minted.command.includes("token"), false, "the copyable command never carries a T3 token");
@@ -296,16 +299,49 @@ test("another user cannot poll someone else's connect session", async (t) => {
   assert.equal(denied.status, 404);
 });
 
-test("the default connect command launches the published connector CLI with shell-safe arguments", () => {
+test("the default connect command is bare so one line is correct in cmd.exe, PowerShell and POSIX", () => {
+  // The regression this pins: POSIX single quotes are not quote characters in Command Prompt, so
+  // the previous `--server 'https://...'` reached the CLI with literal apostrophes and enrollment
+  // failed on a malformed URL. A gateway origin and a generated code are bare-safe, so the one
+  // line the console shows must contain no quotes at all.
+  const variants = connectCommandVariants({ gatewayUrl: "https://gateway.example/", code: "ABCDE-FGHIJ" });
   assert.equal(
-    buildConnectCommand({ gatewayUrl: "https://gateway.example/", code: "ABCDE-FGHIJ", accessMode: "local" }),
-    "npx @wearer-haitch/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'",
+    variants.command,
+    "npx @wearer-haitch/connector connect --server https://gateway.example --code ABCDE-FGHIJ",
   );
-  assert.equal(
-    buildConnectCommand({ gatewayUrl: "https://gateway.example/path'o/", code: "CODE'VALUE", accessMode: "tailscale" }),
-    `npx @wearer-haitch/connector connect --server 'https://gateway.example/path'"'"'o' --code 'CODE'"'"'VALUE'`,
-  );
-  assert.equal(buildConnectCommand({ gatewayUrl: "https://gateway.example", code: "ABCDE-FGHIJ", accessMode: "online" }).includes("online"), false);
+  assert.equal(variants.universal, true);
+  for (const shell of COMMAND_SHELLS) assert.equal(variants.commands[shell], variants.command);
+  assert.equal(variants.command.includes("'"), false);
+  assert.equal(variants.command.includes('"'), false);
+  assert.equal(buildConnectCommand({ gatewayUrl: "https://gateway.example/", code: "ABCDE-FGHIJ" }), variants.command);
+});
+
+test("every generated enrollment code is bare-safe, so the universal form is not a lucky sample", () => {
+  // createHumanCode's alphabet is [A-Z2-9] with one dash; if that ever changes to include a
+  // shell metacharacter the console would silently go back to shipping a quoted command.
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const variants = connectCommandVariants({ gatewayUrl: "https://gateway.example", code: createHumanCodeForTest() });
+    assert.equal(variants.universal, true, "generated codes must need no quoting");
+  }
+});
+
+test("an argument that cannot be bare is quoted per shell rather than POSIX-only", () => {
+  const variants = connectCommandVariants({ gatewayUrl: "https://gateway.example/path'o", code: "ABCDE-FGHIJ" });
+  assert.equal(variants.universal, false);
+  assert.match(variants.commands.posix, /--server 'https:\/\/gateway\.example\/path'"'"'o'/u);
+  // Doubled apostrophe, which is PowerShell's own escape inside a single-quoted string.
+  assert.equal(variants.commands.powershell.includes("'https://gateway.example/path''o'"), true);
+  // Double quotes, because cmd.exe would pass an apostrophe through literally.
+  assert.equal(variants.commands.cmd.includes('"https://gateway.example/path\'o"'), true);
+});
+
+test("cmd.exe expansion characters are never emitted bare", () => {
+  // `%PATH%` would expand in Command Prompt and `$x` in POSIX shells, so neither may take the
+  // bare branch even though both are legal URL characters.
+  for (const hostile of ["https://h.example/%PATH%", "https://h.example/$HOME", "https://h.example/a!b", "https://h.example/a&b"]) {
+    const variants = connectCommandVariants({ gatewayUrl: hostile, code: "ABCDE-FGHIJ" });
+    assert.equal(variants.universal, false, `${hostile} must not be emitted bare`);
+  }
 });
 
 test("the rotation command is shell-safe and explicitly confirmed", () => {
@@ -319,10 +355,31 @@ test("the rotation command is shell-safe and explicitly confirmed", () => {
   assert.match(command, / --yes$/u);
 });
 
+test("the ordinary rotation command is also bare in all three shells", () => {
+  const variants = connectorRotateCommandVariants({ gatewayUrl: "https://controller.example/", code: "ABCDE-FGHIJ" });
+  assert.equal(variants.universal, true);
+  assert.equal(
+    variants.command,
+    "npx @wearer-haitch/connector rotate --server https://controller.example --code ABCDE-FGHIJ --yes",
+  );
+});
+
+// A local copy of the store's generator, so this file proves the property for the real alphabet
+// without importing a store module just to reach a private helper.
+function createHumanCodeForTest() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let output = "";
+  for (let index = 0; index < 10; index += 1) {
+    output += alphabet[Math.floor(Math.random() * alphabet.length)];
+    if (index === 4) output += "-";
+  }
+  return output;
+}
+
 test("legacy direct setup is available only through its explicitly named builder", () => {
   assert.equal(
     buildLegacyDirectConnectCommand({ gatewayUrl: "https://gateway.example/", code: "ABCDE-FGHIJ", accessMode: "tailscale" }),
-    "npm run setup:t3 -- --gateway-url 'https://gateway.example' --connect-code 'ABCDE-FGHIJ' --tunnel 'tailscale'",
+    "npm run setup:t3 -- --gateway-url https://gateway.example --connect-code ABCDE-FGHIJ --tunnel tailscale",
   );
   assert.equal(normalizeConnectAccessMode("TAILSCALE"), "tailscale");
   assert.equal(normalizeConnectAccessMode("nonsense"), "local");

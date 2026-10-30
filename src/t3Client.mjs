@@ -2,6 +2,58 @@ import { createId, nowIso } from "./ids.mjs";
 import { appendDeviceFollowUpInstruction } from "./deviceThreadOutput.mjs";
 import { collectProviderApprovals, normalizeProviderApprovalDecision } from "./providerApprovals.mjs";
 import { pendingUserInputRequests } from "./userInput.mjs";
+import { callT3Rpc, negotiateOrchestrationProtocol, T3_WS_METHODS } from "./t3Ws.mjs";
+import { v2Command, v2Shell, v2Thread } from "./t3Protocol2.mjs";
+
+// ---------------------------------------------------------------------------------------------
+// TWO ORCHESTRATION PROTOCOLS, SELECTED BY WHAT THE SERVER ADVERTISES
+// ---------------------------------------------------------------------------------------------
+//
+// Protocol 1 (T3 0.0.x) serves the orchestration API over HTTP: GET /api/orchestration/snapshot,
+// GET /api/orchestration/threads/:id, POST /api/orchestration/dispatch. Protocol 2 (T3 >= 0.1.0)
+// removed all three. The 0.1.5 orchestration HTTP table is exactly `shell`, `threads/:threadId`,
+// `threads/:threadId/transcript`, `/bounded` and `/history` (docs/t3-version-audit.md T1, T2;
+// bundle-0.1.5.js:42414-42437, 0.1.1 at :37605-37630), and the `threads/:threadId` that survives
+// returns a different document. Everything those three calls did is done over the authenticated
+// WebSocket on protocol 2, exactly as packages/connector/src/t3.mjs does it:
+//
+//   snapshot      -> `orchestration.subscribeShell`, first authoritative snapshot, then Interrupt
+//   thread detail -> `orchestration.subscribeThread` (acceptBoundedSnapshot), first snapshot, Interrupt
+//   dispatch      -> `orchestration.dispatchCommand` with the command mapped by v2Command
+//
+// The choice is made per call from `/.well-known/t3/environment` (unauthenticated; absent field
+// means 1), read through negotiateOrchestrationProtocol with the caller's `protocolCache` so a
+// poll does not pay a descriptor round trip every time. A protocol neither path implements fails
+// closed with T3_PROTOCOL_UNSUPPORTED before any authenticated request is made.
+
+function selectProtocol(environment, options, timeoutMs) {
+  return negotiateOrchestrationProtocol(environment, {
+    fetchImpl: options.fetchImpl ?? globalThis.fetch,
+    timeoutMs: Math.min(timeoutMs, 5000),
+    orchestrationProtocolVersion: options.orchestrationProtocolVersion,
+    protocolCache: options.protocolCache ?? null,
+  });
+}
+
+// The RPC leg always pins protocol 2: the decision was just made, and callT3Rpc would otherwise
+// read the descriptor a second time.
+function v2RpcOptions(options, timeoutMs) {
+  return {
+    fetchImpl: options.fetchImpl ?? globalThis.fetch,
+    WebSocketImpl: options.WebSocketImpl ?? globalThis.WebSocket,
+    timeoutMs,
+    orchestrationProtocolVersion: 2,
+  };
+}
+
+// `subscribeShell` opens with the authoritative snapshot, followed (when T3 has resolved
+// repository identities) by a SECOND snapshot that carries `resolvedRepositoryIdentityRoots` and
+// `threads: []` (bundle-0.1.5.js:389172-389185). The connector takes the first snapshot it sees;
+// matching on the marker as well makes this robust to that ordering ever changing, because
+// projecting the identity-only snapshot would present an empty thread list as the truth.
+const isAuthoritativeShellSnapshot = (item) => item?.kind === "snapshot"
+  && item.resolvedRepositoryIdentityRoots === undefined;
+const isThreadSnapshot = (item) => item?.kind === "snapshot";
 
 export async function exchangePairingToken({ baseUrl, pairingToken, scopes }) {
   const url = new URL("/oauth/token", baseUrl);
@@ -58,6 +110,18 @@ export async function fetchT3Snapshot(environment, options = {}) {
   const timeoutMs = Number.isFinite(options.timeoutMs)
     ? options.timeoutMs
     : Number.isFinite(environment?.timeoutMs) ? environment.timeoutMs : 8000;
+  const protocol = await selectProtocol(environment, options, timeoutMs);
+  if (protocol.version === 2) {
+    const item = await callT3Rpc(
+      environment,
+      T3_WS_METHODS.orchestrationSubscribeShell,
+      {},
+      { ...v2RpcOptions(options, timeoutMs), settleOn: isAuthoritativeShellSnapshot },
+    );
+    // Protocol-2 shell threads carry no message bodies; thread detail is a separate read
+    // (fetchT3ThreadDetail), exactly as the snapshot was bodiless on protocol 1.
+    return v2Shell(item.snapshot);
+  }
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -99,6 +163,19 @@ export async function fetchT3ThreadDetail(environment, threadId, options = {}) {
   const timeoutMs = Number.isFinite(options.timeoutMs)
     ? options.timeoutMs
     : Number.isFinite(environment?.timeoutMs) ? environment.timeoutMs : 8000;
+  const protocol = await selectProtocol(environment, options, timeoutMs);
+  if (protocol.version === 2) {
+    // `turnLimit` has no protocol-2 meaning (OrchestrationV2SubscribeThreadInput has no such
+    // field); `acceptBoundedSnapshot` is what bounds the projection. Returns the thread itself,
+    // with `messages` and the synthesised approval/user-input `activities`, not a `{thread}` envelope.
+    const item = await callT3Rpc(
+      environment,
+      T3_WS_METHODS.orchestrationSubscribeThread,
+      { threadId, acceptBoundedSnapshot: true },
+      { ...v2RpcOptions(options, timeoutMs), settleOn: isThreadSnapshot },
+    );
+    return v2Thread(item.projection);
+  }
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const url = new URL(`/api/orchestration/threads/${encodeURIComponent(threadId)}`, environment.baseUrl);
   if (Number.isFinite(options.turnLimit)) url.searchParams.set("turnLimit", String(options.turnLimit));
@@ -126,6 +203,11 @@ export async function fetchT3ThreadDetail(environment, threadId, options = {}) {
 }
 
 export async function dispatchT3Command(environment, command, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs)
+    ? options.timeoutMs
+    : Number.isFinite(environment?.timeoutMs) ? environment.timeoutMs : 8000;
+  const protocol = await selectProtocol(environment, options, timeoutMs);
+  if (protocol.version === 2) return await dispatchT3CommandV2(environment, command, options, timeoutMs);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const response = await fetchImpl(new URL("/api/orchestration/dispatch", environment.baseUrl), {
     method: "POST",
@@ -145,11 +227,74 @@ export async function dispatchT3Command(environment, command, options = {}) {
   return response.json();
 }
 
+/**
+ * Protocol-2 dispatch. Mirrors packages/connector/src/t3.mjs dispatchCommand — keep the two in
+ * step (see src/t3Protocol2.mjs).
+ *
+ * Two commands do not map one-to-one:
+ *  - `thread.turn.interrupt` has no active-turn id on the legacy command. Protocol 2 interrupts a
+ *    RUN, so the thread is read first and its `session.activeTurnId` (a run id there) is used.
+ *    v2Command refuses with T3_NO_ACTIVE_RUN when nothing is running rather than guessing.
+ *  - `thread.turn.start` carries `runtimeMode` / `interactionMode`, which protocol 2 stores on the
+ *    THREAD rather than on the dispatched message. They are set first, as their own commands, with
+ *    ids derived from the turn's commandId so a retry replays the same identities. The
+ *    `modelSelection` on the turn (including its `options`, e.g. a reasoning-effort switch) is
+ *    carried by v2Command untouched.
+ *
+ * Attachments are forwarded as the legacy shape the gateway builds, as the connector does; that
+ * the protocol-2 attachment decoder accepts it has not been observed.
+ */
+async function dispatchT3CommandV2(environment, input, options, timeoutMs) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("A T3 command object is required.");
+  const rpc = v2RpcOptions(options, timeoutMs);
+  let command = input;
+  if (command.type === "thread.turn.interrupt") {
+    const thread = await fetchT3ThreadDetail(environment, command.threadId, { ...options, orchestrationProtocolVersion: 2 });
+    command = { ...command, runId: thread?.session?.activeTurnId };
+  }
+  if (command.type === "thread.turn.start") {
+    if (command.runtimeMode) {
+      await callT3Rpc(environment, T3_WS_METHODS.orchestrationDispatchCommand, {
+        type: "thread.runtime-mode.set", commandId: `${command.commandId}:runtime-mode`,
+        threadId: command.threadId, runtimeMode: command.runtimeMode,
+      }, rpc);
+    }
+    if (command.interactionMode) {
+      await callT3Rpc(environment, T3_WS_METHODS.orchestrationDispatchCommand, {
+        type: "thread.interaction-mode.set", commandId: `${command.commandId}:interaction-mode`,
+        threadId: command.threadId, interactionMode: command.interactionMode,
+      }, rpc);
+    }
+  }
+  return await callT3Rpc(environment, T3_WS_METHODS.orchestrationDispatchCommand, v2Command(command), rpc);
+}
+
+/**
+ * The `{instanceId, model, options?}` T3 takes on the wire (`ModelSelectionWire`).
+ *
+ * `options` was previously dropped here, which is why no reasoning-effort choice could reach a
+ * provider however it was selected upstream: T3 reads the per-model switches from this field and
+ * from nowhere else. Omitted entirely when empty rather than sent as `[]`, so a selection that
+ * sets nothing keeps whatever the thread already had instead of clearing it.
+ */
+function modelSelectionFor(intent) {
+  return {
+    instanceId: intent.runtimeId,
+    model: intent.model,
+    ...(Array.isArray(intent.options) && intent.options.length > 0 ? { options: intent.options } : {}),
+  };
+}
+
 export function buildT3Command({ intent, threadId, attachments = [] }) {
   const commandId = createId("t3cmd");
   const createdAt = nowIso();
 
   switch (intent.type) {
+    case "runtime_switch":
+      return { type: "thread.model-selection.set", commandId, threadId, modelSelection: modelSelectionFor(intent), createdAt };
+    case "runtime_import":
+      return { type: "runtime.session.import", commandId, threadId, projectId: intent.projectId, nativeSessionId: intent.nativeSessionId,
+        confirmResume: intent.confirmResume, modelSelection: modelSelectionFor(intent), createdAt };
     case "agent_prompt":
     case "media_prompt":
       return {

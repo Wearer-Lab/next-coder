@@ -1,3 +1,7 @@
+import {
+  ALWAYS_PROVIDER_APPROVAL_DECISIONS,
+  DEFAULT_OFFERED_PROVIDER_APPROVAL_DECISIONS,
+} from "./providerApprovals.mjs";
 import { T3_WS_METHODS } from "./t3Ws.mjs";
 
 export const T3_CAPABILITY_MANIFEST_SCHEMA = "next-coder.t3-capabilities.v1";
@@ -7,9 +11,21 @@ export const T3_CAPABILITY_CACHE_TTL_MS = 5 * 60_000;
 // The probe schema is a contract with the connector, and a connector installed before the rename
 // still answers with the legacy one. The gateway accepts both so an installed connector keeps
 // working; the connector only ever emits the current schema.
-const T3_PROBE_SCHEMAS = Object.freeze(["next-coder.t3-probe.v1", "agent-controller.t3-probe.v1"]);
+const T3_PROBE_SCHEMAS = Object.freeze(["next-coder.t3-probe.v1", "agent-controller.t3-probe.v1", "next-coder.runtime-probe.v1"]);
 
-const APPROVAL_DECISIONS = Object.freeze(["accept", "acceptForSession", "decline", "cancel"]);
+// Two lists, because T3 0.1.x's five-valued decision set is not one capability:
+//
+//   * `approvalDecisions` is what any approval request may be answered with unless it says
+//     otherwise: T3's own web-UI fallback four. This is the list a client may draw buttons from
+//     without looking at the request.
+//   * `requestScopedApprovalDecisions` is the rest of the vocabulary (`acceptAlways`). It is
+//     answerable ONLY when an individual request lists it in its own `options`: on Claude's
+//     adapter it is silently turned into a deny, on generic ACP into a rejection. Listing it in
+//     `approvalDecisions` would invite exactly that mistake, so the manifest says "exists, but
+//     read the request" instead. Neither list is derived from the reported T3 version; a 0.0.x
+//     server simply never sends a request that lists the fifth decision.
+const APPROVAL_DECISIONS = DEFAULT_OFFERED_PROVIDER_APPROVAL_DECISIONS;
+const REQUEST_SCOPED_APPROVAL_DECISIONS = ALWAYS_PROVIDER_APPROVAL_DECISIONS;
 const RUNTIME_MODES = Object.freeze(["approval-required", "auto-accept-edits", "auto", "full-access"]);
 const INTERACTION_MODES = Object.freeze(["default", "plan"]);
 
@@ -68,7 +84,7 @@ export class T3Adapter {
         error.code = "t3_capability_probe_incompatible";
         throw error;
       }
-      return buildT3CapabilityManifest({
+      const manifest = buildT3CapabilityManifest({
         environment,
         metadata: probe.installedVersion ? { serverVersion: probe.installedVersion } : {},
         snapshot: probe.probes?.snapshot === "passed" ? { projects: [], threads: [] } : null,
@@ -82,6 +98,20 @@ export class T3Adapter {
         probedAt: new Date(probedAtMs).toISOString(),
         freshUntil: new Date(probedAtMs + this.cacheTtlMs).toISOString(),
       });
+      if (probe.schema === "next-coder.runtime-probe.v1") {
+        manifest.runtimeKind = "direct";
+        for (const name of ["terminal", "launch", "providerApprovals", "structuredUserInput", "interrupt", "sessionStop", "proposedPlans", "checkpoints", "taskLifecycle"]) {
+          manifest.features[name] = { state: probe.features?.[name] === true && manifest.features.dispatch.state === "supported" ? "supported" : "unsupported", evidence: "direct_runtime_contract" };
+        }
+        manifest.attachments = { image: { state: "unsupported", evidence: "text_only_runtime" }, audio: { state: "unsupported", evidence: "text_only_runtime" }, file: { state: "unsupported", evidence: "text_only_runtime" }, maxCount: 0, maxImageBytes: 0 };
+        manifest.runtimeModes = ["approval-required"];
+        manifest.interactionModes = ["default"];
+        manifest.approvalDecisions = ["accept", "decline", "cancel"];
+        // A direct runtime offers only what the native agent exposed; no decision is held back
+        // for a request to opt into, and none may be assumed.
+        manifest.requestScopedApprovalDecisions = [];
+      }
+      return manifest;
     }
     const [metadataResult, snapshotResult, configResult] = await Promise.allSettled([
       this.environmentInfo(environment, probeOptions),
@@ -193,6 +223,7 @@ export function buildT3CapabilityManifest({
     runtimeModes: operable ? [...RUNTIME_MODES] : [],
     interactionModes: operable ? [...INTERACTION_MODES] : [],
     approvalDecisions: operable ? [...APPROVAL_DECISIONS] : [],
+    requestScopedApprovalDecisions: operable ? [...REQUEST_SCOPED_APPROVAL_DECISIONS] : [],
     recovery: recoveryForManifest({ probes, snapshotContract, configContract, methodAvailability }),
   };
 }

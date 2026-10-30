@@ -158,6 +158,13 @@ function t3Layer(environment: Environment, connector: Connector | null, stale: b
   const raw = connector?.lastT3Health
     ?? (environment.status === "reachable" ? "ready" : environment.health?.failureReason ?? "unknown");
   const state = capabilityFailure ? "incompatible" : typeof raw === "string" ? raw : "unknown";
+  if (capabilityManifest?.runtimeKind === "direct" || connector?.capabilities?.includes("runtime.direct")) {
+    const ready = state === "ready";
+    return layer("t3", "Agent bridge", state,
+      ready ? "The local direct-agent bridge is reachable. Native authentication is checked separately."
+        : "The local direct-agent bridge is unavailable. Check the connector and configured agents.",
+      stale ? "warning" : ready ? "success" : "warning", observedAt, stale);
+  }
   const map: Record<string, [string, StatusTone]> = {
     ready: ["T3 is reachable and authenticated on the local computer.", "success"],
     starting: ["T3 is starting on the local computer.", "warning"],

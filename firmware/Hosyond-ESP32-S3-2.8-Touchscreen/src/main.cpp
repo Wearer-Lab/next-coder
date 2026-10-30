@@ -22,6 +22,7 @@
 #include <GatewayClient.h>
 #include <Provisioning.h>
 
+#include "qualification.h"
 #include "audio.h"
 #include "display.h"
 #include "gatewayProbe.h"
@@ -196,7 +197,11 @@ void setup() {
   store.seedIdentityIfEmpty(DEVICE_ID, DEVICE_SECRET, GATEWAY_BASE_URL);
   reportIdentity();
 
-  if (audio::begin()) audio::bootSelfTest();
+  if (audio::begin()) {
+#if !HOSYOND_QUALIFICATION
+    audio::bootSelfTest();
+#endif
+  }
 
   // Declared before the first heartbeat, because the gateway decides what to assign this device and
   // how to wrap its text from these numbers. A board that does not claim a microphone is never
@@ -219,6 +224,7 @@ void setup() {
   reportState(lastState);
 
   uiBegin(gateway, provisioning, store);
+  qualificationBegin();
 
   // -----------------------------------------------------------------------------------------
   // Not yet implemented, in dependency order:
@@ -230,7 +236,7 @@ void setup() {
 }
 
 
-#if BENCH_SELFTEST
+#if BENCH_SELFTEST && !HOSYOND_QUALIFICATION
 // A bench-only harness, compiled out of every product environment.
 //
 // It exists because the two paths that matter most had only ever been reasoned about: recording
@@ -476,16 +482,17 @@ void loop() {
   // parsing on either side of a fetch, so this almost never waits. When it genuinely cannot get
   // the lock in time, the frame is skipped rather than painted from state that is being rewritten
   // underneath it — one dropped frame at 30 fps is invisible, and a torn String is not.
-  if (gateway.tryLockState(0)) {
-    const TouchEvent touch = touchPoll();
-    if (touch.gesture != TouchGesture::None) uiHandleTouch(touch);
-    uiTick();
-    gateway.unlockState();
-  }
+  // Sample the glass even while the network parser owns the model. The UI retains at most
+  // four discrete edges and validates their age/navigation/model before replay.
+  const TouchEvent touch = touchPoll();
+  if (touch.gesture != TouchGesture::None) uiHandleTouch(touch);
+  // uiTick owns its model lock and records a skipped frame when it cannot acquire it.
+  uiTick();
 
-#if BENCH_SELFTEST
+#if BENCH_SELFTEST && !HOSYOND_QUALIFICATION
   bench::tick(gateway);
 #endif
+  qualificationTick(provisioning,gateway,store);
   pollBootButton();
   uiSleepUntilNextFrame();
 }

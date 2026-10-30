@@ -74,7 +74,12 @@ const char* voiceStageName(VoiceStage stage) {
 
 void GatewayVoice::begin(DeviceStore& store) { store_ = &store; }
 
-void GatewayVoice::beginCapture(const String& environmentId, const String& threadId) {
+bool GatewayVoice::canStartCapture() const {
+  return captureResolved_ && (stage_ == VoiceStage::Idle || stage_ == VoiceStage::Sent);
+}
+
+bool GatewayVoice::beginCapture(const String& environmentId, const String& threadId) {
+  if (!canStartCapture()) return false;
   reset();
   captureEnvironmentId_ = environmentId;
   captureThreadId_ = threadId;
@@ -86,6 +91,8 @@ void GatewayVoice::beginCapture(const String& environmentId, const String& threa
     captureRequestId_ += digits[value >> 4];
     captureRequestId_ += digits[value & 15];
   }
+  publish(VoiceStage::Recorded, String("Recording"));
+  return true;
 }
 
 void GatewayVoice::publish(VoiceStage stage, const String& detail) {
@@ -101,14 +108,29 @@ void GatewayVoice::reset() {
   captureRequestId_ = "";
   jobId_ = "";
   mediaId_ = "";
+  commandId_ = "";
   transcript_ = "";
+  reviewReason_ = "";
   responseAfter_ = "";
   ok_ = true;
   failures_ = 0;
   nextPollAt_ = 0;
   giveUpAt_ = 0;
   done_ = false;
+  captureResolved_ = true;
   publish(VoiceStage::Idle, String());
+}
+
+bool GatewayVoice::resumeStatus() {
+  if (!hasJob()) return false;
+  done_ = false;
+  captureResolved_ = false;
+  ok_ = true;
+  failures_ = 0;
+  nextPollAt_ = millis();
+  giveUpAt_ = millis() + kGiveUpAfterMs;
+  publish(VoiceStage::Transcribing, String("Checking recording status"));
+  return true;
 }
 
 void GatewayVoice::setLocalStage(VoiceStage stage) {
@@ -137,14 +159,22 @@ String GatewayVoice::upload(const char* kind, const char* contentType, const cha
                             const uint8_t* bodyBytes, size_t bodyLength, uint32_t maxRawBytes,
                             int& httpStatusOut) {
   httpStatusOut = -1;
+  // A local size refusal cannot have created cloud work; keep draft discard available.
+  if (maxRawBytes > 0 && (headerLength > maxRawBytes || bodyLength > maxRawBytes - headerLength)) {
+    httpStatusOut = 413;
+    return String();
+  }
   jobId_ = "";
   mediaId_ = "";
+  commandId_ = "";
   transcript_ = "";
+  reviewReason_ = "";
   responseAfter_ = "";
   ok_ = true;
   failures_ = 0;
   done_ = false;
   if (!store_) return String();
+  captureResolved_ = false;
   const media::UploadSessionContext context{captureEnvironmentId_, captureThreadId_, captureRequestId_};
   const media::UploadSessionResult result = media::uploadSession(
     *store_, "voice", kind, contentType, originalName, headerBytes, headerLength, bodyBytes,
@@ -164,6 +194,7 @@ String GatewayVoice::upload(const char* kind, const char* contentType, const cha
   } else if (mediaId_.length() > 0) {
     done_ = true;
     ok_ = !result.transcriptionUnavailable;
+    captureResolved_ = result.transcriptionUnavailable;
     publish(result.transcriptionUnavailable ? VoiceStage::Failed : VoiceStage::Ready, result.transcriptionUnavailable
       ? String("Transcription unavailable; configure it in the console")
       : String("Uploaded without a voice job; check the console"));
@@ -237,6 +268,11 @@ bool GatewayVoice::poll() {
   failures_ = 0;
   nextPollAt_ = millis() + kPollIntervalMs;
   done_ = job["done"] | false;
+  captureResolved_ = done_ && next != VoiceStage::Review;
+  const String command = String(job["commandId"] | "");
+  commandId_ = command.length() <= 128 ? command : String();
+  const String reason = String(job["reviewReason"] | "");
+  reviewReason_ = next == VoiceStage::Review && (reason == "gateway_approval" || reason == "transcript_review") ? reason : String();
   responseAfter_ = String(job["responseAfter"] | "");
   const char* transcript = job["transcript"] | "";
   if (strlen(transcript) > 0) transcript_ = transcript;
@@ -251,7 +287,9 @@ bool GatewayVoice::poll() {
     case VoiceStage::Review:
       // The normaliser changed something a person has to see. This is a stop, and the wording has
       // to say so rather than sounding like one more stage of progress.
-      detail = "Check the wording in the console";
+      detail = reviewReason_ == "gateway_approval" ? "Approve request in console"
+        : reviewReason_ == "transcript_review" ? "Review transcript in console"
+        : "Needs attention in console";
       break;
     case VoiceStage::Ready:
       if (!done_) { detail = "Sending to the agent"; break; }

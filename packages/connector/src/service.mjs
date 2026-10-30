@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { CONNECTOR_VERSION } from "./cloud.mjs";
 import { redact } from "./redact.mjs";
+import { resolveT3Version, T3_VERSION_ENV } from "./t3Process.mjs";
 
 // The service identifiers are the installed registration names on each platform. They are not
 // renamed with the product: a launchd label, a systemd user unit, and a scheduled task name are
@@ -71,8 +72,11 @@ export function servicePaths({ platform = currentPlatform(), stateDir, env = pro
   throw unsupportedPlatform(platform);
 }
 
-export async function installService({ stateDir, platform, env, home, uid, fs = nodeFs, run = runCommand, packageDir = packageRoot } = {}) {
+export async function installService({ stateDir, platform, env, home, uid, fs = nodeFs, run = runCommand, packageDir = packageRoot, t3Launch = {} } = {}) {
   const paths = servicePaths({ stateDir, platform, env, home, uid });
+  // Resolved before the existing definition is read or any file is written, so a refused option
+  // leaves an installed service exactly as it was.
+  const t3Arguments = serviceT3Arguments({ t3Launch, env: env ?? process.env });
   const previousDefinition = await readOptionalFile(paths.definitionPath, fs);
   if (previousDefinition !== null) await assertExistingLocalService(paths, fs);
   const replaceWindowsTask = paths.platform === "win32" ? await assertWindowsRegistrationBeforeInstall(paths, run, previousDefinition) : false;
@@ -82,7 +86,7 @@ export async function installService({ stateDir, platform, env, home, uid, fs = 
   await fs.mkdir(paths.logDir, { recursive: true, mode: 0o700 });
   await copyRuntime(packageDir, paths.runtimeRoot, fs);
   await fs.chmod(paths.runtimeBin, 0o755);
-  const definition = renderServiceDefinition(paths, { stateDir });
+  const definition = renderServiceDefinition(paths, { stateDir, t3Arguments });
   await fs.mkdir(dirname(paths.definitionPath), { recursive: true, mode: 0o700 });
   await fs.writeFile(paths.definitionPath, definition, { encoding: "utf8", mode: 0o600 });
   const manifest = { version: 1, serviceId: SERVICE_ID, packageVersion: CONNECTOR_VERSION, platform: paths.platform, definitionPath: paths.definitionPath, runtimeRoot: paths.runtimeRoot, logPath: paths.logPath, target: paths.target, definitionSha256: hash(definition), installedAt: new Date().toISOString() };
@@ -96,6 +100,9 @@ export async function installService({ stateDir, platform, env, home, uid, fs = 
   } else if (paths.platform === "linux") {
     await run("/usr/bin/systemctl", ["--user", "daemon-reload"]);
     await run("/usr/bin/systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT]);
+    // `enable --now` leaves a unit that is already running on the ExecStart it started with. A
+    // replacement must restart it, or the new command would only take effect at the next login.
+    if (previousDefinition !== null) await run("/usr/bin/systemctl", ["--user", "restart", SYSTEMD_UNIT]);
   } else {
     await restrictWindowsStateDirectory(paths, env, run);
     await run(paths.schedulerPath, ["/Create", "/TN", paths.target, "/XML", paths.definitionPath, ...(replaceWindowsTask ? ["/F"] : [])]);
@@ -302,8 +309,34 @@ export async function readServiceRuntimeIdentity({ runtimeRoot, expectedVersion,
   return { name: manifest.name, version: manifest.version };
 }
 
-export function renderServiceDefinition(paths, { stateDir }) {
-  const args = [process.execPath, paths.runtimeBin, "connect", "--state-dir", resolve(stateDir), "--service-log", paths.logPath];
+// The T3 launch options the operator set on `connect --install-service`, as the service command
+// runs them. Only an option the operator actually set is written. A default is never persisted:
+// a unit that froze the pin would keep starting an old T3 after a connector upgrade moved it.
+// NEXT_CODER_T3_VERSION is an explicit choice too, so it is captured at install time; the managed
+// service does not inherit the shell that installed it. Values are validated here, before anything
+// is written, and reach each platform through that platform's own argument quoting in
+// renderServiceDefinition.
+export function serviceT3Arguments({ t3Launch = {}, env = process.env } = {}) {
+  const args = [];
+  const flagVersion = t3Launch?.version;
+  const environmentVersion = String(env?.[T3_VERSION_ENV] ?? "").trim();
+  if (flagVersion !== undefined && flagVersion !== null) args.push("--t3-version", resolveT3Version(env, { explicit: String(flagVersion) }));
+  else if (environmentVersion !== "") args.push("--t3-version", resolveT3Version(env));
+  if (t3Launch?.port !== undefined && t3Launch?.port !== null) args.push("--t3-port", String(serviceIntegerOption(t3Launch.port, "--t3-port", 1, 65535)));
+  if (t3Launch?.startTimeoutMs !== undefined && t3Launch?.startTimeoutMs !== null) args.push("--t3-start-timeout-ms", String(serviceIntegerOption(t3Launch.startTimeoutMs, "--t3-start-timeout-ms", 1_000, 300_000)));
+  return args;
+}
+
+function serviceIntegerOption(value, flag, minimum, maximum) {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < minimum || number > maximum) {
+    throw Object.assign(new Error(`${flag} must be an integer from ${minimum} to ${maximum}.`), { code: "T3_OPTION_INVALID" });
+  }
+  return number;
+}
+
+export function renderServiceDefinition(paths, { stateDir, t3Arguments = [] }) {
+  const args = [process.execPath, paths.runtimeBin, "connect", "--state-dir", resolve(stateDir), "--service-log", paths.logPath, ...t3Arguments];
   if (paths.platform === "darwin") {
     const argumentsXml = args.map((value) => `      <string>${xmlEscape(value)}</string>`).join("\n");
     return `<?xml version="1.0" encoding="UTF-8"?>

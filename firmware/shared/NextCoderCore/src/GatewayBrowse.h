@@ -20,6 +20,7 @@
 #include <Arduino.h>
 
 #include "DeviceStore.h"
+#include "OperateModel.h"
 
 // An owner rarely has more than a couple of paired hosts, and the screen shows five rows. A
 // longer list is truncated and said to be truncated, never silently clipped.
@@ -69,9 +70,27 @@ struct BrowseProject {
   bool selected = false;
 };
 
+struct BrowseAgent {
+  ThreadOption row;
+  String runtimeId;
+  String model;
+  String nativeSessionId;
+  bool resumable = false;
+};
+
 class GatewayBrowse {
  public:
   void begin(DeviceStore& store);
+  // Direct runtimes use the same cloud policy, receipts and selected destination as T3.
+  // These blocking calls belong on the network worker, never the render task.
+  bool refreshAgents();
+  bool refreshNativeSessions(const String& runtimeId, const String& model);
+  bool useAgent(size_t index, const String& threadId);
+  bool resumeNativeSession(size_t index, const String& threadId);
+  size_t agentCount() const { return agentCount_; }
+  const BrowseAgent* agent(size_t index) const { return index < agentCount_ ? &agents_[index] : nullptr; }
+  const String& agentDetail() const { return agentDetail_; }
+  bool directAgentsSupported() const { return directAgentsSupported_; }
 
   // Environments. Answers 200 even with nothing bound — a controller with no environment is
   // exactly the one that needs the list.
@@ -89,6 +108,23 @@ class GatewayBrowse {
   // Projects inside the bound environment. 409 with no environment bound and 502 when the T3 host
   // cannot be reached; both arrive as a one-line remedy in projectsDetail().
   bool refreshProjects();
+
+  // Preview navigation is read-only. Only commitPreviewThread/createThread changes
+  // the destination, in one server-confirmed write. Legacy select* stays compatible.
+  void beginPreview(const String& environmentId, const String& projectId);
+  bool previewEnvironment(size_t index);
+  bool previewProject(size_t index);
+  bool refreshPreviewThreads();
+  bool commitPreviewThread(size_t index);
+  const String& previewEnvironmentId() const { return previewEnvironmentId_; }
+  const String& previewProjectId() const { return previewProjectId_; }
+  size_t previewThreadCount() const { return previewThreadCount_; }
+  const ThreadOption* previewThread(size_t index) const {
+    return index < previewThreadCount_ ? &previewThreads_[index] : nullptr;
+  }
+  const String& previewDetail() const { return previewDetail_; }
+  bool previewActive() const { return previewActive_; }
+  void endPreview() { previewActive_ = false; }
   size_t projectCount() const { return projectCount_; }
   const BrowseProject* project(size_t index) const;
   int selectedProjectIndex() const { return selectedProjectIndex_; }
@@ -149,10 +185,20 @@ class GatewayBrowse {
   bool consumeContextCleared();
 
  private:
+  bool postAgentIntent(const String& intent, const String& threadId, String& resultThreadId);
+  BrowseAgent agents_[12];
+  size_t agentCount_ = 0;
+  bool directAgentsSupported_ = false;
+  String agentDetail_;
   int request(const char* method, const char* path, const String& body, String& response);
   void touch() { revision_ += 1; }
 
   DeviceStore* store_ = nullptr;
+  bool previewActive_ = false;
+  bool previewContractReady_ = false;
+  String previewEnvironmentId_, previewProjectId_, previewDetail_;
+  ThreadOption previewThreads_[kMaxThreadOptions];
+  size_t previewThreadCount_ = 0;
 
   BrowseEnvironment environments_[kMaxBrowseEnvironments];
   size_t environmentCount_ = 0;

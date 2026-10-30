@@ -113,8 +113,8 @@ const FALLBACK_PROFILES: DeviceProfile[] = [
   {
     id: "power-controller",
     label: "Power controller",
-    description: "High-trust control with policy-screened dangerous shell input, and the only built-in profile that may grant an agent a permission for a whole session.",
-    capabilities: ["status", "agent_prompt", "media_prompt", "session_control", "approval_response", "approval_response_persistent", "shell_input"],
+    description: "High-trust control with policy-screened dangerous shell input, and the only built-in profile that may grant an agent a standing permission, for a session or from now on.",
+    capabilities: ["status", "agent_prompt", "media_prompt", "session_control", "approval_response", "approval_response_persistent", "approval_response_always", "shell_input"],
   },
 ];
 

@@ -257,6 +257,18 @@ test("updates firmware channel, update mode, and desired release", async () => {
   }));
 });
 
+test("the device policy editor lists the always-allow capability on the power-controller profile", () => {
+  const device: Device = { id: "dev_policy", label: "Policy bench", profile: "next-coder" };
+  renderPage(controller([device]));
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit Policy bench" }));
+  fireEvent.click(screen.getByRole("tab", { name: "policy" }));
+
+  expect(screen.getByText(/from now on, not just for one session/)).toBeVisible();
+  expect(screen.getByText(/for the whole session/)).toBeVisible();
+  expect(screen.queryByText("approval_response_always")).toBeNull();
+});
+
 test("treats a never-acknowledged control revision as waiting for the device", async () => {
   const device: Device = { id: "dev_pending", label: "Offline controller", profile: "next-coder" };
   const c = controller([device]);

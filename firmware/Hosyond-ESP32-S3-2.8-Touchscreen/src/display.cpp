@@ -152,8 +152,40 @@ uint8_t* miniGrey = nullptr;
 int16_t miniDim = 0;
 
 InternalCanvas16* labelCanvas = nullptr;
+bool composingBands = false;
 
 constexpr int16_t kLabelH = 22;
+
+// BEGIN ABSOLUTE SCENE PROXY: fixed state, no separate framebuffer or allocation.
+bool sceneActive = false;
+int16_t sceneBandTop = 0, sceneBandBottom = 0;
+class SceneGfx : public Adafruit_GFX {
+ public:
+  SceneGfx() : Adafruit_GFX(240, 320) {}
+  void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+    if (sceneActive && x >= 0 && x < 240 && y >= sceneBandTop && y < sceneBandBottom)
+      labelCanvas->getBuffer()[static_cast<size_t>(y-sceneBandTop)*240+x] = color;
+  }
+  void writePixel(int16_t x, int16_t y, uint16_t color) override { drawPixel(x,y,color); }
+  void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) override {
+    if (!sceneActive || w<=0 || h<=0) return;
+    const int32_t left=x<0?0:x, top=y<sceneBandTop?sceneBandTop:y;
+    const int32_t right=static_cast<int32_t>(x)+w>240?240:static_cast<int32_t>(x)+w;
+    const int32_t bottom=static_cast<int32_t>(y)+h>sceneBandBottom?sceneBandBottom:static_cast<int32_t>(y)+h;
+    if(right<=left || bottom<=top)return;
+    for(int32_t row=top;row<bottom;++row){
+      uint16_t* dst=labelCanvas->getBuffer()+static_cast<size_t>(row-sceneBandTop)*240+left;
+      for(int32_t col=left;col<right;++col)*dst++=color;
+    }
+  }
+  void writeFillRect(int16_t x,int16_t y,int16_t w,int16_t h,uint16_t c) override {fillRect(x,y,w,h,c);}
+  void drawFastHLine(int16_t x,int16_t y,int16_t w,uint16_t c) override {fillRect(x,y,w,1,c);}
+  void drawFastVLine(int16_t x,int16_t y,int16_t h,uint16_t c) override {fillRect(x,y,1,h,c);}
+  void writeFastHLine(int16_t x,int16_t y,int16_t w,uint16_t c) override {fillRect(x,y,w,1,c);}
+  void writeFastVLine(int16_t x,int16_t y,int16_t h,uint16_t c) override {fillRect(x,y,1,h,c);}
+};
+SceneGfx sceneGfx;
+// END ABSOLUTE SCENE PROXY
 
 // One row of pixels in internal, DMA-capable RAM.
 //
@@ -168,6 +200,28 @@ constexpr int16_t kLabelH = 22;
 // all of Adafruit_GFX's drawing primitives.
 uint16_t* dmaRow = nullptr;
 
+// Raster kernels clip to the active band BEFORE computing distance fields; replay therefore
+// evaluates each visible pixel once rather than repeating a full shape twelve times.
+void clipSceneBand(int16_t& top,int16_t& bottom) {
+  if(!sceneActive)return;
+  if(top<sceneBandTop)top=sceneBandTop;
+  if(bottom>sceneBandBottom)bottom=sceneBandBottom;
+}
+void beginRaster(int16_t x,int16_t y,int16_t width,int16_t rows) {
+  if(sceneActive)return;
+  auto& panel=displayPanel();panel.startWrite();panel.setAddrWindow(x,y,width,rows);
+}
+void publishRasterRow(int16_t x,int16_t y,int16_t width) {
+  if(sceneActive) {
+    if(y>=sceneBandTop && y<sceneBandBottom) {
+      const int16_t from=x<0?static_cast<int16_t>(-x):0;
+      const int16_t to=x+width>240?static_cast<int16_t>(240-x):width;
+      if(to>from)memcpy(labelCanvas->getBuffer()+static_cast<size_t>(y-sceneBandTop)*240+x+from,dmaRow+from,static_cast<size_t>(to-from)*2);
+    }
+  } else displayPanel().writePixels(dmaRow,width);
+}
+void endRaster() {if(!sceneActive)displayPanel().endWrite();}
+
 // Copies `len` pixels from a possibly-PSRAM source into the staging row and pushes them.
 void pushRow(Adafruit_ILI9341& g, const uint16_t* src, int16_t len) {
   if (!dmaRow) return;
@@ -176,6 +230,14 @@ void pushRow(Adafruit_ILI9341& g, const uint16_t* src, int16_t len) {
 }
 
 }  // namespace
+
+Adafruit_GFX& displayRenderGfx() { return sceneActive ? static_cast<Adafruit_GFX&>(sceneGfx) : static_cast<Adafruit_GFX&>(displayPanel()); }
+bool displaySceneActive() { return sceneActive; }
+bool displayRenderIntersects(int16_t x,int16_t y,int32_t width,int32_t height) {
+  if(width<=0 || height<=0)return false;
+  return !sceneActive || (x<240 && static_cast<int32_t>(x)+width>0
+    && y<sceneBandBottom && static_cast<int32_t>(y)+height>sceneBandTop);
+}
 
 bool displayBeginCanvases(uint16_t orbSize, uint16_t miniSize) {
   const uint32_t heapBefore = ESP.getFreeHeap();
@@ -254,8 +316,10 @@ void blitOrb(ThinkingOrb& orb, int16_t cx, int16_t cy, uint32_t elapsedMs, uint8
   const float r2 = r * r;
 
   Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
+  if(!sceneActive)g.startWrite();
   for (int16_t row = 0; row < drawDim; ++row) {
+    const int16_t absoluteY=static_cast<int16_t>(cy-half+row);
+    if(sceneActive && (absoluteY<sceneBandTop || absoluteY>=sceneBandBottom))continue;
     const float dy = (row - r) + 0.5f;
     const float inside = r2 - dy * dy;
     if (inside <= 0.0f) continue;
@@ -271,10 +335,11 @@ void blitOrb(ThinkingOrb& orb, int16_t cx, int16_t cy, uint32_t elapsedMs, uint8
     // stride from the offset the smaller disc starts at — not from the buffer's origin.
     const uint8_t* src = grey + (size_t)(mid - half + row) * dim + (mid - half + from);
     for (int16_t col = 0; col < span; ++col) dmaRow[col] = panelGrey(src[col]);
-    g.setAddrWindow((int16_t)(cx - half + from), (int16_t)(cy - half + row), span, 1);
-    g.writePixels(dmaRow, span);
+    const int16_t absoluteX=static_cast<int16_t>(cx-half+from);
+    if(!sceneActive)g.setAddrWindow(absoluteX,absoluteY,span,1);
+    publishRasterRow(absoluteX,absoluteY,span);
   }
-  g.endWrite();
+  if(!sceneActive)g.endWrite();
 }
 
 }  // namespace
@@ -292,7 +357,62 @@ void displayClearStatus(int16_t cy) {
   if (!displayReady()) return;
   // Full width, because only the caller knows the label changed and the incoming word may be
   // narrower than the outgoing one.
-  displayPanel().fillRect(0, cy - 4, 240, kLabelH, panelGrey(0));
+  displayRenderGfx().fillRect(0, cy - 4, 240, kLabelH, panelGrey(0));
+}
+
+bool displayComposeBands(int16_t y, int16_t height, uint16_t background,
+                         DisplayBandPainter painter, void* context) {
+  if (!displayReady() || !labelCanvas || !labelCanvas->getBuffer() || !dmaRow
+      || !painter || height <= 0 || composingBands) return false;
+  const int32_t first = y < 0 ? 0 : y;
+  const int32_t requestedEnd = static_cast<int32_t>(y) + height;
+  const int32_t end = requestedEnd > 320 ? 320 : requestedEnd;
+  if (first >= end || first >= 320) return false;
+  composingBands = true;
+  struct ComposeGuard { ~ComposeGuard() { composingBands = false; } } guard;
+  for (int32_t top = first; top < end; top += kLabelH) {
+    const int16_t rows = static_cast<int16_t>(end - top < kLabelH ? end - top : kLabelH);
+    labelCanvas->setRotation(0);
+    labelCanvas->setFont(nullptr);
+    labelCanvas->setTextWrap(false);
+    labelCanvas->setTextSize(1);
+    labelCanvas->setCursor(0, 0);
+    labelCanvas->setTextColor(background);
+    labelCanvas->fillScreen(background);
+    painter(*labelCanvas, static_cast<int16_t>(top), context);
+    // Publish only after background, every key face, and every glyph in this band is complete.
+    // The source and staging row both remain internal RAM, preserving the proven DMA path.
+    Adafruit_ILI9341& panel = displayPanel();
+    panel.startWrite();
+    panel.setAddrWindow(0, static_cast<int16_t>(top), 240, rows);
+    const uint16_t* pixels = labelCanvas->getBuffer();
+    for (int16_t row = 0; row < rows; ++row) pushRow(panel, pixels + static_cast<size_t>(row) * 240, 240);
+    panel.endWrite();
+  }
+  labelCanvas->setRotation(0);
+  labelCanvas->setFont(nullptr);
+  labelCanvas->setTextWrap(true);
+  return true;
+}
+
+namespace {
+struct SceneCall { DisplayScenePainter painter;void* context;int16_t end; };
+void replaySceneBand(Adafruit_GFX&,int16_t top,void* raw) {
+  const auto& call=*static_cast<SceneCall*>(raw);
+  sceneBandTop=top;sceneBandBottom=static_cast<int16_t>(top+kLabelH<call.end?top+kLabelH:call.end);
+  sceneActive=true;
+  struct SceneGuard {~SceneGuard(){sceneActive=false;}} guard;
+  sceneGfx.setRotation(0);sceneGfx.setFont(nullptr);sceneGfx.setTextWrap(false);
+  sceneGfx.setTextSize(1);sceneGfx.setCursor(0,0);
+  call.painter(call.context);
+}
+}
+bool displayComposeScene(int16_t y,int16_t height,uint16_t background,
+                         DisplayScenePainter painter,void* context) {
+  if(!painter || height<=0 || composingBands || sceneActive)return false;
+  const int32_t end=static_cast<int32_t>(y)+height;
+  SceneCall call{painter,context,static_cast<int16_t>(end>320?320:end)};
+  return displayComposeBands(y,height,background,replaySceneBand,&call);
 }
 
 void displayDrawStatus(const char* label, int16_t cy, uint32_t elapsedMs) {
@@ -319,6 +439,18 @@ void displayDrawStatus(const char* label, int16_t cy, uint32_t elapsedMs) {
   const int16_t stripX = (int16_t)(x0 - 4 < 0 ? 0 : x0 - 4);
   const int16_t stripW = (int16_t)(textW + 8 > 240 ? 240 : textW + 8);
 
+  if(sceneActive) {
+    if(!displayRenderIntersects(stripX,cy-4,stripW,kLabelH))return;
+    sceneGfx.fillRect(stripX,cy-4,stripW,kLabelH,panelGrey(0));
+    sceneGfx.setTextWrap(false);sceneGfx.setTextSize(2);
+    for(size_t i=0;i<len;++i){
+      const float d=fabsf(static_cast<float>(i)-head);
+      const float lift=d>2.6f?0.0f:1.0f-d/2.6f;
+      sceneGfx.setTextColor(panelGrey(static_cast<uint8_t>(150+lift*85)));
+      sceneGfx.setCursor(x0+static_cast<int16_t>(i*charW),cy);sceneGfx.write(label[i]);
+    }
+    return;
+  }
   labelCanvas->fillScreen(panelGrey(0));
   labelCanvas->setTextSize(2);
   for (size_t i = 0; i < len; ++i) {
@@ -437,6 +569,7 @@ void displaySoftRoundRectBand(int16_t x, int16_t y, int16_t w, int16_t h, float 
   if (y0 < 0) y0 = 0;
   if (x1 > kPanelW) x1 = kPanelW;
   if (y1 > kPanelH) y1 = kPanelH;
+  clipSceneBand(y0,y1);
   if (x1 <= x0 || y1 <= y0) return;
   const int16_t vw = (int16_t)(x1 - x0);
 
@@ -457,9 +590,7 @@ void displaySoftRoundRectBand(int16_t x, int16_t y, int16_t w, int16_t h, float 
   const bool wantStroke = strokeGrey >= 0 && strokeWidth > 0.0f;
   const float stroke = wantStroke ? (float)strokeGrey : base;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  beginRaster(x0,y0,vw,static_cast<int16_t>(y1-y0));
   for (int16_t py = y0; py < y1; ++py) {
     const float fy = (py + 0.5f) - cy;
     for (int16_t col = 0; col < vw; ++col) {
@@ -470,9 +601,9 @@ void displaySoftRoundRectBand(int16_t x, int16_t y, int16_t w, int16_t h, float 
       if (wantStroke) v = over(v, stroke, clamp01((halfStroke - fabsf(d)) / f + 0.5f));
       dmaRow[col] = panelGrey((uint8_t)(v + 0.5f));
     }
-    g.writePixels(dmaRow, vw);
+    publishRasterRow(x0,py,vw);
   }
-  g.endWrite();
+  endRaster();
 }
 
 void displaySoftRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, float radius,
@@ -506,6 +637,7 @@ void displaySoftRoundRectRgb(int16_t x, int16_t y, int16_t w, int16_t h, float r
   if (y0 < 0) y0 = 0;
   if (x1 > kPanelW) x1 = kPanelW;
   if (y1 > kPanelH) y1 = kPanelH;
+  clipSceneBand(y0,y1);
   if (x1 <= x0 || y1 <= y0) return;
   const int16_t vw = (int16_t)(x1 - x0);
 
@@ -523,9 +655,7 @@ void displaySoftRoundRectRgb(int16_t x, int16_t y, int16_t w, int16_t h, float r
   const bool wantFill = fillRgb >= 0;
   const bool wantStroke = strokeRgb >= 0 && strokeWidth > 0.0f;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  beginRaster(x0,y0,vw,static_cast<int16_t>(y1-y0));
   for (int16_t py = y0; py < y1; ++py) {
     const float fy = (py + 0.5f) - cy;
     for (int16_t col = 0; col < vw; ++col) {
@@ -536,9 +666,9 @@ void displaySoftRoundRectRgb(int16_t x, int16_t y, int16_t w, int16_t h, float r
       if (wantStroke) v = blendRgb(v, (uint16_t)strokeRgb, clamp01((halfStroke - fabsf(d)) / f + 0.5f));
       dmaRow[col] = panelRgb(v);
     }
-    g.writePixels(dmaRow, vw);
+    publishRasterRow(x0,py,vw);
   }
-  g.endWrite();
+  endRaster();
 }
 
 void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickness,
@@ -554,6 +684,7 @@ void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickn
   if (y0 < 0) y0 = 0;
   if (x1 > kPanelW) x1 = kPanelW;
   if (y1 > kPanelH) y1 = kPanelH;
+  clipSceneBand(y0,y1);
   if (x1 <= x0 || y1 <= y0) return;
   const int16_t vw = (int16_t)(x1 - x0);
 
@@ -565,9 +696,7 @@ void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickn
   const float base = (float)bgGrey;
   const float ink = (float)inkGrey;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  beginRaster(x0,y0,vw,static_cast<int16_t>(y1-y0));
   for (int16_t py = y0; py < y1; ++py) {
     const float fy = py + 0.5f;
     for (int16_t col = 0; col < vw; ++col) {
@@ -579,9 +708,9 @@ void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickn
       const float d = sqrtf(dx * dx + dy * dy) - half;
       dmaRow[col] = panelGrey((uint8_t)(over(base, ink, clamp01(0.5f - d / f)) + 0.5f));
     }
-    g.writePixels(dmaRow, vw);
+    publishRasterRow(x0,py,vw);
   }
-  g.endWrite();
+  endRaster();
 }
 
 void displaySoftArcDivider(int16_t x, int16_t y, int16_t w, float sag, float thickness,
@@ -599,6 +728,7 @@ void displaySoftArcDivider(int16_t x, int16_t y, int16_t w, float sag, float thi
   if (y0 < 0) y0 = 0;
   if (x1 > kPanelW) x1 = kPanelW;
   if (y1 > kPanelH) y1 = kPanelH;
+  clipSceneBand(y0,y1);
   if (x1 <= x0 || y1 <= y0) return;
   const int16_t vw = (int16_t)(x1 - x0);
 
@@ -610,9 +740,7 @@ void displaySoftArcDivider(int16_t x, int16_t y, int16_t w, float sag, float thi
   // one that dissolves before it gets there is a curve that knows where it stops.
   constexpr float kFade = 0.22f;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  beginRaster(x0,y0,vw,static_cast<int16_t>(y1-y0));
   for (int16_t py = y0; py < y1; ++py) {
     const float fy = py + 0.5f;
     for (int16_t col = 0; col < vw; ++col) {
@@ -625,9 +753,9 @@ void displaySoftArcDivider(int16_t x, int16_t y, int16_t w, float sag, float thi
       const float cov = clamp01(half - fabsf(fy - curve) + 0.5f) * edge;
       dmaRow[col] = panelGrey((uint8_t)(over(base, ink, cov) + 0.5f));
     }
-    g.writePixels(dmaRow, vw);
+    publishRasterRow(x0,py,vw);
   }
-  g.endWrite();
+  endRaster();
 }
 
 void displaySoftPanel(int16_t x, int16_t y, int16_t w, int16_t h, float radius, uint8_t bgGrey,
@@ -650,7 +778,7 @@ void displaySoftPanel(int16_t x, int16_t y, int16_t w, int16_t h, float radius, 
                              y, (int16_t)(y + topCap));
   }
   if (middle > 0) {
-    displayPanel().fillRect(x < 0 ? 0 : x, (int16_t)(y + topCap),
+    displayRenderGfx().fillRect(x < 0 ? 0 : x, (int16_t)(y + topCap),
                             (int16_t)(x < 0 ? w + x : w), middle, panelGrey(fillGrey));
   }
   if (bottomCap > 0) {

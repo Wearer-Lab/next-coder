@@ -21,6 +21,15 @@ def quoted(value: str) -> str:
 
 
 definitions = []
+qualification = os.environ.get("NEXT_CODER_QUALIFICATION_BENCH")
+if qualification not in (None, "0", "1"):
+    raise ValueError("NEXT_CODER_QUALIFICATION_BENCH must be 0 or 1")
+if qualification == "1":
+    if env.get("PIOENV") != "hosyond-es3c28p-bench":
+        raise ValueError("Qualification is allowed only in hosyond-es3c28p-bench, never release")
+    definitions.extend([("HOSYOND_QUALIFICATION", 1), ("HOSYOND_QUALIFICATION_ALLOWED", 1),
+                        ("TLS_SESSION_DIAGNOSTICS", 1)])
+
 # The NEXT_CODER_* names are current. The AGENT_CONTROLLER_* names are the previous product's
 # spelling and stay accepted so an existing release pipeline keeps working unchanged.
 firmware_version = os.environ.get("NEXT_CODER_FIRMWARE_VERSION") or os.environ.get(

@@ -30,24 +30,54 @@ import { createT3TransportResolver } from "./t3Transport.mjs";
 // RESUME, DEDUPLICATION, AND THE GAP THAT CANNOT BE FILLED
 // ---------------------------------------------------------------------------------------------
 //
-// Every T3 orchestration event carries a global, monotonically increasing `sequence`
-// (packages/contracts/src/orchestration.ts:1257-1267, `EventBaseFields`). That — NOT the optional
-// per-activity `sequence` at :323, which only orders activities inside a turn — is the ordering
-// and resume key.
+// Every T3 orchestration event carries a global, monotonically increasing `sequence`. That is the
+// ordering and resume key at every version. Citations below name the version they apply to; the
+// two protocols are different servers' code, and a line number without a version is not evidence.
+//
+//   0.0.x (protocol 1): `EventBaseFields`, 0.0.32 packages/contracts/src/orchestration.ts:1257-1267.
+//        The optional per-activity `sequence` at :323 only orders activities inside a turn and is
+//        NOT the resume key.
+//   0.1.x (protocol 2): the thread's high-water mark is `latestAgentSequence`, MAX(sequence) over
+//        the thread's event stream (bundle-0.1.5.js:64620-64627), and stream items carry the
+//        same `sequence`. docs/t3-version-audit.md S1.
 //
 //   RESUME:  the highest sequence delivered is kept per watch and survives the socket. A reconnect
 //            passes it as `afterSequence`, and T3 replays the persisted events after it before
-//            going live (src/ws.ts:1317-1348).
-//   DEDUP:   an event whose sequence is not strictly greater than the cursor is dropped. The
-//            replay window and the live subscription deliberately overlap — T3 attaches the live
-//            subscription before draining the replay so nothing published mid-replay is lost
-//            (src/ws.ts:1300-1306) — so overlap is the normal case, not an error. Event ids are
-//            also remembered in a bounded ring to catch anything arriving without a usable
-//            sequence.
-//   THE GAP: T3 refuses to replay more than THREAD_RESUME_MAX_GAP = 1000 events, and refuses a
-//            cursor ahead of its own head (src/ws.ts:1317-1352 and :301-307). It does not error
-//            and it does not truncate — it sends a full `snapshot` frame instead, because a
-//            truncated replay would drop events silently.
+//            going live (0.0.32 src/ws.ts:1317-1348; 0.1.x bundle-0.1.5.js:407152-407183).
+//            THE CONNECTOR DOES NOT TAKE THIS PATH ON 0.1.x. For protocol 2 its
+//            `openThreadStream()` discards the cursor (`afterSequence: undefined`,
+//            packages/connector/src/t3.mjs) and projects every reconnect from a fresh snapshot, so
+//            behind a connector a resume is always answered with a snapshot. Only the direct
+//            transport (src/t3Ws.mjs) can actually resume against 0.1.x. The `gap: true` below is
+//            therefore correct either way (the intermediate events were not delivered) but its
+//            cause on the connector path is "the connector never asked", not "T3 could not fill it".
+//   DEDUP:   an event whose sequence is not strictly greater than the cursor is dropped. Event ids
+//            are also remembered in a bounded ring to catch anything arriving without a usable
+//            sequence. Overlap between replay and live is expected, not an error:
+//              - 0.0.32 attaches the live subscription BEFORE draining the replay so nothing
+//                published mid-replay is lost, and dedupes by sequence on the client
+//                (0.0.32 src/ws.ts:1298-1306).
+//              - 0.1.x dedupes server-side (`withLiveDedupe`, bundle-0.1.5.js:407152 onward) and
+//                additionally COALESCES repeated `*.updated` events inside a replay
+//                (`coalesceLiveUpdatedEvents`), so a replayed stream can omit intermediate states
+//                of a message that a live stream would have shown. The attach-then-drain ordering
+//                on 0.1.x was not traced (docs/t3-version-audit.md S4); the client-side dedup here
+//                is what makes either ordering safe.
+//   THE GAP: T3 will not replay an unbounded range, and refuses a cursor ahead of its own head. It
+//            does not error and it does not truncate — it sends a full `snapshot` frame instead,
+//            because a truncated replay would drop events silently. The bound is per protocol,
+//            and T3_THREAD_RESUME_LIMITS in src/t3Ws.mjs is the single statement of it:
+//              - 0.0.x: more than THREAD_RESUME_MAX_GAP = 1000 events
+//                (0.0.32 src/ws.ts:301-307, :1317-1352).
+//              - 0.1.x: THREAD_RESUME_MAX_GAP no longer exists. A snapshot answers a cursor ahead
+//                of the head, more than 128 events, more than 1 MiB of raw payload
+//                (`THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES = 1048576`), or a recreated thread
+//                (bundle-0.1.5.js:407157-407176, `decideThreadResume` :370513; identical logic in
+//                0.1.1 at bundle-0.1.1.js:395124-395139). The 1000-event bound survives only on
+//                the SHELL subscription (`SHELL_RESUME_MAX_GAP`, bundle-0.1.5.js:407045), which
+//                this file does not open.
+//            So a 0.1.x gap opens after a far shorter absence than a 0.0.x one: 129 events is
+//            enough, and a thread that streamed a long reply can pass that in one turn.
 //
 //            So the gateway never has to invent a story about a gap it cannot fill: it asked to
 //            resume and got a snapshot, which is T3 saying "start over from this". The gateway
@@ -57,6 +87,9 @@ import { createT3TransportResolver } from "./t3Transport.mjs";
 //            What is lost is the *intermediate history* between the old cursor and now — the
 //            individual events are gone, only their result is visible — and `gap: true` is how a
 //            client is told that, instead of quietly appending a snapshot onto a stale transcript.
+//
+//            Nothing here has been observed against a running 0.1.5 (and 0.1.x resume behaviour
+//            only against 0.1.1 through the connector, which does not resume). Read, not run.
 //
 // ---------------------------------------------------------------------------------------------
 // RECONNECTION
@@ -327,7 +360,9 @@ export function createThreadStreamHub({
   }
 
   async function handleSnapshot(entry, snapshot) {
-    // Asked to resume and handed a snapshot: T3 could not fill the gap (src/ws.ts:1349-1352).
+    // Asked to resume and handed a snapshot: T3 could not fill the gap (0.0.32 src/ws.ts:1349-1352;
+    // 0.1.x see the THE GAP note at the top of this file, limits in T3_THREAD_RESUME_LIMITS), or the
+    // connector never sent a cursor (protocol 2 behind a connector always snapshots).
     const gap = entry.resumeRequested === true;
     entry.resumeRequested = false;
     entry.state = "catching-up";
@@ -431,8 +466,9 @@ export function createThreadStreamHub({
       const messageId = stringOrNull(payload.messageId);
       const text = typeof payload.text === "string" ? payload.text : "";
 
-      // A streaming message-sent carries a DELTA, not the whole message: T3's own projector
-      // appends it (src/orchestration/projector.ts:497-515). A terminal frame carries the full
+      // A streaming message-sent carries a DELTA, not the whole message: T3 0.0.32's own projector
+      // appends it (0.0.32 src/orchestration/projector.ts:497-515). Protocol 2 sends absolute text
+      // instead; the connector's t3v2.mjs turns that into this suffix delta before it gets here. A terminal frame carries the full
       // text, or empty text meaning "keep what you have".
       if (payload.streaming === true) {
         if (entry.streamingReply.messageId !== messageId) {

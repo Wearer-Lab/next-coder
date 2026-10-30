@@ -6,11 +6,34 @@ import {
   T3_ADAPTER_CONTRACT_VERSION,
 } from "./t3CapabilityManifest.mjs";
 
-// Next Coder's orchestration and websocket contracts were verified live against this
-// release. Raise the ceiling only after the contract suite passes against a newer T3 host.
+// What the two version ceilings mean, because the difference decides what the console tells an
+// owner and which T3 releases it quietly accepts. Evidence is in docs/t3-version-audit.md.
+//
+// `maximumTestedVersion` is the highest T3 release Next Coder has EXERCISED against a running
+// server. A version above it raises `review_required` and the console recommends falling back to
+// it, so raising it is a claim that someone ran this product against that release:
+//   - 0.0.32: the original contract, verified live (the fixtures in test/fixtures/ are captures).
+//   - 0.1.1: an isolated live server returned real Codex replies through the connector's
+//     protocol-2 snapshot and streaming paths on 2026-10-22, and it is the owner's production T3.
+//     That covers the connector adapter (packages/connector/src/t3v2.mjs) ONLY: the direct
+//     transport, approval answering, user input, terminal input and the work graph were not
+//     exercised on 0.1.x, and nothing in this repository can currently produce work-graph input
+//     from a protocol-2 server (activities[] are not on that wire).
+//   - Versions strictly between 0.0.32 and 0.1.1 (0.0.33 to 0.1.0) were never examined by anyone.
+//     A ceiling cannot express a hole, so they inherit "supported". 0.1.0 is where the protocol
+//     moved from 1 to 2, which is the reason to look there first if a report names one.
+//
+// `maximumAuditedVersion` is the highest release whose server bundle was READ (not run). 0.1.5 is
+// audited and is what the connector pins (DEFAULT_T3_VERSION), but no process has ever served it
+// to this product, so it must not be mistaken for tested. A version in (tested, audited] still
+// raises `review_required`, with a message that says it was read and never run. Versions above the
+// audited ceiling get the original "newer than anything verified" wording. Never raise
+// `maximumAuditedVersion` without extracting that version's bundle (section 5 of the audit), and
+// never raise `maximumTestedVersion` on the strength of a static read.
 export const T3_COMPATIBILITY_POLICY = Object.freeze({
   minimumVersion: "0.0.28",
-  maximumTestedVersion: "0.0.32",
+  maximumTestedVersion: "0.1.1",
+  maximumAuditedVersion: "0.1.5",
   packageName: "t3",
   registryUrl: "https://registry.npmjs.org/t3/latest",
 });
@@ -44,18 +67,24 @@ export async function fetchLatestT3Release({
 export function buildT3ReleaseStatus(latestVersion, latestError = null) {
   const latest = normalizeVersion(latestVersion);
   const maximum = T3_COMPATIBILITY_POLICY.maximumTestedVersion;
+  const audited = T3_COMPATIBILITY_POLICY.maximumAuditedVersion;
   const comparison = latest ? compareT3Versions(latest, maximum) : null;
   const newerThanTested = comparison !== null && comparison > 0;
+  const auditedComparison = latest ? compareT3Versions(latest, audited) : null;
+  const auditedOnly = newerThanTested && auditedComparison !== null && auditedComparison <= 0;
   return {
     packageName: T3_COMPATIBILITY_POLICY.packageName,
     latestVersion: latest,
     latestError,
     minimumVersion: T3_COMPATIBILITY_POLICY.minimumVersion,
     maximumTestedVersion: maximum,
+    maximumAuditedVersion: audited,
     recommendedVersion: newerThanTested || !latest ? maximum : latest,
     status: latestError ? "unavailable" : newerThanTested ? "review_required" : "supported",
     alert: newerThanTested
-      ? `T3 Code ${latest} is newer than the latest version Next Coder has verified (${maximum}).`
+      ? auditedOnly
+        ? `T3 Code ${latest} has been read by Next Coder but never run against it. The latest version exercised is ${maximum}.`
+        : `T3 Code ${latest} is newer than the latest version Next Coder has verified (${maximum}).`
       : null,
   };
 }
@@ -223,6 +252,7 @@ export function evaluateT3Compatibility({
   } else {
     const belowMinimum = compareT3Versions(installedVersion, T3_COMPATIBILITY_POLICY.minimumVersion);
     const aboveTested = compareT3Versions(installedVersion, T3_COMPATIBILITY_POLICY.maximumTestedVersion);
+    const aboveAudited = compareT3Versions(installedVersion, T3_COMPATIBILITY_POLICY.maximumAuditedVersion);
     if (belowMinimum !== null && belowMinimum < 0) {
       status = "incompatible";
       findings.push({
@@ -235,7 +265,9 @@ export function evaluateT3Compatibility({
       findings.push({
         level: "warning",
         code: "version_newer_than_tested",
-        message: `The read-only checks passed, but T3 Code ${installedVersion} is newer than the certified version ${T3_COMPATIBILITY_POLICY.maximumTestedVersion}.`,
+        message: aboveAudited !== null && aboveAudited <= 0
+          ? `The read-only checks passed, but T3 Code ${installedVersion} has only been read statically, never run against Next Coder. The latest version exercised is ${T3_COMPATIBILITY_POLICY.maximumTestedVersion}.`
+          : `The read-only checks passed, but T3 Code ${installedVersion} is newer than the certified version ${T3_COMPATIBILITY_POLICY.maximumTestedVersion}.`,
       });
     } else if (
       release.recommendedVersion
@@ -275,6 +307,7 @@ export function evaluateT3Compatibility({
     recommendedVersion: release.recommendedVersion,
     minimumVersion: release.minimumVersion,
     maximumTestedVersion: release.maximumTestedVersion,
+    maximumAuditedVersion: release.maximumAuditedVersion,
     recommendation,
     checks,
     findings,

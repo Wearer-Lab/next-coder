@@ -9,11 +9,14 @@
 #include <GatewayVoice.h>
 #include <MediaUpload.h>
 #include <ThinkingOrb.h>
+#include <ResponseLayout.h>
+#include <SetupQr.h>
 
 #include "audio.h"
 #include "display.h"
 #include "gatewayProbe.h"
 #include "ui_paint.h"
+#include "wifi_keyboard.h"
 
 #if __has_include("controller_config.h")
 #include "controller_config.h"
@@ -169,17 +172,17 @@ constexpr int16_t kMiniOrbCx = kW - 32;
 constexpr int16_t kMiniOrbCy = 22;
 
 enum class Screen : uint8_t {
-  Status, Home, Threads, Send, Actions, Response, Approvals, Environments, Projects, Device, Gateway
+  Status, Home, Threads, Send, Actions, Response, Approvals, Environments, Projects, Device, Gateway, Wifi, WifiDetails, WifiPassword, WifiJoining, WifiPhone
 };
-enum class Modal : uint8_t { None, ConfirmControl, ConfirmApproval, ConfirmReprovision };
+enum class Modal : uint8_t { None, ConfirmControl, ConfirmApproval, ConfirmReprovision, ConfirmRejection, ConfirmClaim, ConfirmForgetWifi, ConfirmNativeResume };
 
 // What the action bar can offer. Every one of these is something the person can do RIGHT NOW on
 // the screen they are looking at; there is no entry here that navigates for its own sake, because
 // that is what the drawer is for.
 enum class Act : uint8_t {
-  None, Review, Retry, Talk, PickThread, Reload, PrevPage, NextPage, Refresh,
+  None, Review, Retry, Talk, PickThread, Reload, PrevPage, NextPage, Refresh, Agents, AgentUse, AgentSessions, AgentResume, AgentBack,
   Approve, Reject, NextApproval, SendClip, DiscardClip, Portal, ClosePortal, Reprovision,
-  ConfirmYes, ConfirmNo, SavedActions, NewThread
+  ConfirmYes, ConfirmNo, SavedActions, NewThread, VoiceStatus, VoiceDismiss, VoiceConsole, VoiceReview, UseThread, NotNow, ReturnThread, WifiOpen, WifiScan, WifiSaved, WifiAdd, WifiConnect, WifiEdit, WifiForget, WifiCancel, WifiPhone, WifiPhonePage, WifiPhoneDone
 };
 
 struct Action {
@@ -234,6 +237,33 @@ Modal modal = Modal::None;
 DeviceControl pendingControl;
 String pendingApprovalId;
 String pendingApprovalSummary;
+int previewThreadIndex = -1;
+String previewThreadId;
+WifiScanSnapshot wifiScan;
+WifiConnectionSnapshot wifiConnection;
+std::vector<String> wifiSavedNames;
+String wifiTarget, wifiPassword;
+bool wifiTargetSaved=false, wifiTargetSecured=true, wifiTargetSupported=true;
+bool wifiShowSaved=false, wifiKeyboardSymbols=false, wifiKeyboardUpper=false, wifiEditingSsid=false;
+int16_t wifiScroll=0;
+uint32_t wifiObservedRevision=0, wifiNoticeUntil=0, wifiUiCandidateId=0;
+bool wifiHadDisconnect=false;
+String wifiNotice, wifiPreviousActive;
+PhoneSetupSnapshot phoneSetup;
+setup_qr::Matrix phoneQr;
+bool phoneShowPage=false,phoneSetupSucceeded=false;
+uint32_t phoneNextCheckAt=0;
+void refreshPhoneQr() {
+  phoneQr.clear();
+  if(!phoneSetup.active)return;
+  if(phoneShowPage)setup_qr::encodePortalUrl(phoneSetup.portalUrl.c_str(),phoneQr);
+  else setup_qr::encodeWifi(phoneSetup.apName.c_str(),phoneSetup.apPassword.c_str(),phoneQr);
+}
+bool wifiEntryDirty=false;
+bool wifiLettersDirty=false, wifiUtilityDirty=false;
+int16_t wifiKeyboardOffset=0, wifiKeyboardDragStart=0;
+bool wifiKeyboardDragging=false, wifiKeyboardDragged=false;
+
 size_t approvalIndex = 0;
 
 // HOME's destination picker.
@@ -295,6 +325,9 @@ constexpr uint32_t kPickerSlideMs = 190;
 // itself whoever asked for it. threadListKnown() is what the UI consults; the flag only settles the
 // one case data cannot, which is "we asked and there genuinely are none".
 bool threadsFetched = false;
+// Native discovery is bounded to twelve rows and uses the existing scrolling destination view.
+uint8_t agentBrowseMode = 0; // threads / agents-models / native sessions
+int selectedAgentRow = -1;
 
 bool threadListKnown();
 bool createdRowLive();
@@ -350,6 +383,7 @@ size_t lastApprovalCount = 0;
 bool recordArmed = false;
 String voiceCaptureEnvironment;
 String voiceCaptureThread;
+String voiceCaptureTitle;
 #if BENCH_SELFTEST
 bool benchGlassHeld = false;
 #endif
@@ -463,7 +497,7 @@ uint32_t benchNextAt = 0;
 // Drawing primitives
 // ---------------------------------------------------------------------------------------------
 
-Adafruit_ILI9341& g() { return displayPanel(); }
+Adafruit_GFX& g() { return displayRenderGfx(); }
 
 bool operable() {
   return gw != nullptr && gw->link() == GatewayLink::Claimed;
@@ -474,6 +508,7 @@ bool unclaimed() {
 }
 
 bool voiceInJourney();
+bool voiceNeedsRecovery();
 
 // Whether this screen keeps the bottom 58 px clear for buttons.
 //
@@ -482,7 +517,7 @@ bool voiceInJourney();
 // and the three states are meant to read as one object changing rather than three screens. The
 // full-page journey is the exception: it has no buttons and wants the whole page.
 bool reservesActionBand() {
-  if (screen == Screen::Send) return !voiceInJourney();
+  if (screen == Screen::Send) return !voiceInJourney() || voiceNeedsRecovery();
   return barReserved;
 }
 
@@ -513,7 +548,7 @@ uint16_t paintedViewKey = 0xFFFF;
 uint16_t viewKey();
 
 void clearForArrival() {
-  g().fillRect(0, kContentTop, kW, (int16_t)(kH - kContentTop), panelGrey(kBg));
+  // The destination is composed as complete strips. Do not expose an empty panel first.
   paintedViewKey = viewKey();
   // The full clear took the action band with it, which is the point — nothing survives an arrival —
   // so the bar has to be told it is no longer on the glass.
@@ -576,7 +611,7 @@ String threadTitle() {
   for (size_t i = 0; i < gw->threadCount(); ++i) {
     const ThreadOption* row = gw->thread(i);
     if (!row) continue;
-    if ((row->selected || row->id == id) && row->title.length() > 0) return row->title;
+    if (row->id == id && row->title.length() > 0) return row->title;
   }
   return String();
 }
@@ -594,8 +629,8 @@ const char* rowTitle(Row row) {
   switch (row) {
     case Row::Device:   return "DEVICE";
     case Row::Gateway:  return "GATEWAY";
-    case Row::Thread:   return "THREAD";
-    default:            return "ACTIVITY";
+    case Row::Thread:   return "DESTINATION";
+    default:            return "NEEDS YOU / REPLY";
   }
 }
 
@@ -738,7 +773,8 @@ bool canGoBack() {
 // what somebody opens when the claim screen is not working, so neither the action bar nor the touch
 // router may gate them on being claimed the way every thread-shaped screen is.
 bool configScreen() {
-  return screen == Screen::Device || screen == Screen::Gateway;
+  return screen == Screen::Device || screen == Screen::Gateway || screen == Screen::Wifi
+    || screen == Screen::WifiDetails || screen == Screen::WifiPassword || screen == Screen::WifiJoining || screen == Screen::WifiPhone;
 }
 
 constexpr Rect kBackHit = {0, 0, 46, kContentTop};
@@ -754,7 +790,7 @@ void drawHeader() {
   const size_t nameCols = (size_t)((kW - nameX - 46) / 6);
   // The device's own name is the title of every screen on it, so it is the brightest thing in the
   // header: in the reference design the chrome is white and the content below it is not.
-  uip::text(nameX, 20, 1, kBright, uip::fit(deviceName(), nameCols));
+  uip::text(nameX, 20, 1, kBright, uip::fit(wifiNoticeUntil != 0 ? wifiNotice : deviceName(), nameCols));
 
   // The divider is a shallow arc that fades out before either bezel, and the pull grabber sits
   // above its low point rather than on it — a rule with a tab welded to it is the shape this UI is
@@ -882,11 +918,15 @@ bool createdRowLive() {
 // The thread list as the screen sees it: the client's rows, plus the overlay when it is live.
 size_t threadRowCount() {
   if (!gw) return 0;
+  if (screen == Screen::Threads && agentBrowseMode) return browse.agentCount();
+  if (screen == Screen::Threads && browse.previewActive()) return browse.previewThreadCount();
   return gw->threadCount() + (createdRowLive() ? 1 : 0);
 }
 
 const ThreadOption* threadRowAt(size_t index) {
   if (!gw) return nullptr;
+  if (screen == Screen::Threads && agentBrowseMode) { const BrowseAgent* item = browse.agent(index); return item ? &item->row : nullptr; }
+  if (screen == Screen::Threads && browse.previewActive()) return browse.previewThread(index);
   if (index < gw->threadCount()) return gw->thread(index);
   if (createdRowLive() && index == gw->threadCount()) return &createdRow;
   return nullptr;
@@ -973,7 +1013,8 @@ OrbPresentation presentationForState() {
     case VoiceStage::Review:
       // A STOP. The normaliser changed something a person has to look at before it is dispatched,
       // so this must not animate as work in progress.
-      return {OrbMode::Ring, "Needs review", true};
+      return {OrbMode::Ring, voice.reviewReason() == "gateway_approval" ? "Approval needed"
+        : voice.reviewReason() == "transcript_review" ? "Review transcript" : "Needs you", true};
     case VoiceStage::Failed:
       return {OrbMode::Ring, "Voice failed", true};
     default:
@@ -1221,7 +1262,7 @@ HomePickerVisual homePickerVisual(int slot, bool pending) {
   visual.big = prominent.length() <= kCols2;
   visual.prominent = uip::fitWords(prominent, visual.big ? kCols2 : kCols1);
   visual.secondary = uip::fitWords(secondary, kCols1);
-  visual.verb = onNew ? "CREATE" : (row == nullptr && !haveThread() ? "CHOOSE" : "OPEN");
+  visual.verb = haveThread() ? "REPLY" : "CHOOSE";
   // The title is the brightest thing on the screen, as in the reference design. A selection that
   // has not been committed is the exception: it recedes, and the warning takes the brightness,
   // because the line must never look more certain than it is.
@@ -1263,7 +1304,6 @@ void paintHome() {
   stack = homeStack();
   clearContent();
   drawHomePickerVisual(homePickerVisual(pickerSlot(), pickerPending()), 0);
-  drawHomePickerChevrons();
 }
 
 bool homePickerSlotPending(int slot) {
@@ -1290,6 +1330,7 @@ void paintHomePickerMotion() {
 }
 
 void updateHomePickerDrag(int16_t travelX) {
+  return; // Destination preview belongs to Choose, never the active Thread view.
   if (screen != Screen::Home || modal != Modal::None || drawerT > 0.05f) return;
 
   const int fromSlot = pickerSlot();
@@ -1510,7 +1551,7 @@ void paintThreads() {
     // The dead end this screen used to be. NEW THREAD is in the action bar below, primary and
     // enabled, so an empty folder is one press from having something to point at.
     uip::textCentered(kContentTop + 92, 1, kMuted,
-                      uip::fit(gw->threadsDetail().length() > 0 ? gw->threadsDetail()
+                      uip::fit(browse.previewDetail().length() > 0 ? browse.previewDetail()
                                                                 : String("No threads in this folder"),
                                kCols1));
     uip::textCentered(kContentTop + 112, 1, kHair, "Create one below");
@@ -1524,11 +1565,11 @@ void paintThreads() {
     if (y + kChoiceRowInkTop < kContentTop) continue;
     const ThreadOption* row = threadRowAt(i);
     if (!row) continue;
-    const bool active = row->selected && (int)i == boundThreadIndex();
+    const bool active = (int)i == (agentBrowseMode ? selectedAgentRow : previewThreadIndex);
     // "ACTIVE" says this is the thread the device is bound to; it is the accent, because it is
     // the one row whose state is about right now rather than about the past.
     paintChoiceRow(y, kThreadRowH, row->title, row->status, active, i + 1 == count,
-                   active ? "ACTIVE" : nullptr);
+                   active ? "USE BELOW" : (row->id == gw->context().threadId ? "CURRENT" : nullptr));
   }
   paintThreadsChrome();
 }
@@ -1699,10 +1740,17 @@ bool voiceInJourney() {
     case VoiceStage::Ready:
     case VoiceStage::Review:
     case VoiceStage::Failed:
+    case VoiceStage::Sent:
       return true;
     default:
       return false;
   }
+}
+
+bool voiceNeedsRecovery() {
+  return voice.stage() == VoiceStage::Failed || voice.stage() == VoiceStage::Review
+    || voice.stage() == VoiceStage::Sent
+    || (voice.stage() == VoiceStage::Ready && !voice.tracking());
 }
 
 VoiceView voiceView() {
@@ -1793,7 +1841,9 @@ void paintMicDestination() {
   const VoiceLayout at = voiceLayout();
   String where;
   uint8_t tone = kText;
-  if (!haveThread()) {
+  if (voice.stage() != VoiceStage::Idle && voiceCaptureThread.length() > 0) {
+    where = voiceCaptureTitle.length() > 0 ? voiceCaptureTitle : String("Original thread");
+  } else if (!haveThread()) {
     where = "No thread selected";
     tone = kBright;
   } else {
@@ -1801,7 +1851,8 @@ void paintMicDestination() {
     // Never the id. The gateway cycle keeps the thread list warm, so this is the boot-window case.
     where = title.length() > 0 ? title : String("Selected thread");
   }
-  uip::textCentered(at.labelY, 1, kHair, "SENDING TO");
+  uip::textCentered(at.labelY, 1, kHair,
+    voice.stage() != VoiceStage::Idle ? "RECORDED FOR" : "SENDING TO");
   uip::textCentered(at.nameY, 1, tone, uip::fitWords(where, kCols1));
 }
 
@@ -1810,9 +1861,12 @@ void paintSend() {
     // The full-page moment. The orb is drawn by the frame loop at stack.orbCy; all this has to do
     // is lay the block out and say which stage it is.
     const String detail = voice.detail();
-    stack = layOutStack(true, detail.length() > 0, false, kH);
+    const String target = voiceCaptureTitle.length() > 0 ? voiceCaptureTitle : String("Original thread");
+    stack = layOutStack(true, true, true, contentBottom());
     clearContent();
-    if (stack.line1) uip::textCentered(stack.line1Y, 1, kMuted, uip::fitWords(detail, kCols1));
+    uip::textCentered(stack.line1Y, 1, kMuted, uip::fitWords(String("To: ") + target, kCols1));
+    uip::textCentered(stack.line2Y, 1, kMuted,
+      uip::fitWords(message.length() > 0 ? message : detail, kCols1));
     return;
   }
 
@@ -1863,7 +1917,7 @@ void paintActions() {
     String meta = "RUN";
     if (!c->enabled) meta = "LOCK";
     else if (c->requiresThread && !haveThread()) meta = "THREAD";
-    else if (c->kind == "capture_audio" || c->mediaKind == "audio") meta = "HOLD";
+    else if (c->kind == "capture_audio" || c->mediaKind == "audio") meta = "CONSOLE";
     else if (c->kind == "status") meta = "VIEW";
     else if (c->requiresConfirmation || c->kind == "stop" || c->kind == "reset") meta = "CONFIRM";
     uip::textRight((int16_t)(kW - 14), (int16_t)(y + 6), 1, kHair, meta);
@@ -1884,9 +1938,36 @@ void paintActions() {
 
 constexpr int16_t kReplyTextTop = kContentTop + 8;
 constexpr int16_t kReplyLineH = 20;
-// Six lines of 19 characters is 114, against the 93 a full gateway page can hold (3 lines of 31),
-// so a page always fits. A seventh line would run into the state row below it.
+// Gateway pages may wrap beyond this panel's six visible rows. Local subpages retain every line.
 constexpr size_t kReplyMaxLines = 6;
+size_t replyLocalPage = 0;
+int replyRemotePage = -1;
+int replyPendingRemotePage = -1;
+size_t replyPendingLocalPage = 0;
+String replyMessageId;
+String replyCachedLines[kMaxResponseLines];
+size_t replyCachedLineCount = 0;
+
+ResponseLayout replyLayout(String* lines) {
+  const ThreadResponse& r = gw->response();
+  bool changed = replyRemotePage != r.page || replyMessageId != r.messageId
+    || replyCachedLineCount != r.lineCount;
+  for (size_t i = 0; i < r.lineCount; ++i) changed = changed || replyCachedLines[i] != r.lines[i];
+  if (changed) {
+    replyLocalPage = r.page == replyPendingRemotePage ? replyPendingLocalPage : 0;
+    replyPendingRemotePage = -1;
+    replyRemotePage = r.page;
+    replyMessageId = r.messageId;
+    replyCachedLineCount = r.lineCount;
+    for (size_t i = 0; i < kMaxResponseLines; ++i) replyCachedLines[i] = r.lines[i];
+  }
+  const ResponseLayout layout = layoutResponsePage(r.lines, r.lineCount, kCols2,
+    kReplyMaxLines, replyLocalPage, lines, kReplyMaxLines);
+  replyLocalPage = layout.page;
+  return layout;
+}
+
+void stepReplyPage(int direction);
 constexpr Rect kFollowLeft = {12, kContentTop + 160, 106, 34};
 constexpr Rect kFollowRight = {122, kContentTop + 160, 106, 34};
 
@@ -1900,18 +1981,9 @@ void paintResponse() {
     return;
   }
 
-  // The gateway wraps to 31 characters, which is e-ink geometry, not this panel's. Re-joining and
-  // re-wrapping to 19 is what buys size-2 text: 31 columns at size 2 would be 372 px on a 240 px
-  // screen. The join is safe because the gateway wraps on word boundaries.
-  String joined;
-  for (size_t i = 0; i < r.lineCount; ++i) {
-    if (r.lines[i].length() == 0) continue;
-    if (joined.length() > 0) joined += ' ';
-    joined += r.lines[i];
-  }
-
   String lines[kReplyMaxLines];
-  const size_t count = uip::wrapText(joined, kCols2, lines, kReplyMaxLines);
+  const ResponseLayout layout = replyLayout(lines);
+  const size_t count = layout.lineCount;
   for (size_t i = 0; i < count; ++i) {
     uip::text(10, (int16_t)(kReplyTextTop + (int16_t)i * kReplyLineH), 2, kText, lines[i]);
   }
@@ -1924,6 +1996,8 @@ void paintResponse() {
   // State is the turn-completion discriminator and the only honest answer to "is it done".
   String state = r.state;
   state.toUpperCase();
+  if (r.state == "error") state = "RETRY REPLY";
+  else if (r.truncated) state = "More in console";
   uip::divider(20, kContentTop + 138, (int16_t)(kW - 40));
   // The metric rhythm again: the marker, the value, the quiet column beside it. The marker is the
   // accent while the turn is in flight, because "the agent is working" is the one live fact on
@@ -1933,7 +2007,8 @@ void paintResponse() {
   else uip::pixel(14, kContentTop + 145, 6, kHair);
   uip::text(26, kContentTop + 146, 1, kText, state);
   uip::textRight((int16_t)(kW - 14), kContentTop + 146, 1, kHair,
-                 String(r.page + 1) + "/" + String(r.pageCount));
+                 String(r.page + 1) + "/" + String(r.pageCount)
+                   + (layout.pageCount > 1 ? String(" ") + String(layout.page + 1) + "/" + String(layout.pageCount) : String()));
 
   for (size_t i = 0; i < r.followUpCount && i < 2; ++i) {
     uip::button(i == 0 ? kFollowLeft : kFollowRight, r.followUps[i].label, false, haveThread());
@@ -1972,6 +2047,7 @@ void paintApprovals() {
 
   String header = String(approvalIndex + 1) + " of " + String(count);
   if (gw->approvalOverflow()) header += "+  (see console)";
+  else if (count > 1) header += "  swipe for next";
   uip::text(24, box.y + 14, 1, kMuted, header);
   if (a->risk.length() > 0) {
     String risk = a->risk;
@@ -2072,6 +2148,165 @@ void paintGateway() {
 // Modal
 // ---------------------------------------------------------------------------------------------
 
+constexpr int16_t kWifiListTop = kContentTop + 46;
+constexpr int16_t kWifiRowH = 46;
+constexpr int16_t kWifiKeyboardTop = 92;
+constexpr int16_t kWifiLetterW = 56, kWifiLetterH = 60;
+constexpr int16_t kWifiUtilityTop = 212, kWifiUtilityH = 44;
+Rect wifiKeyRect(size_t key) {
+  if(key>=64)return {static_cast<int16_t>(8+(key-64)*56),kWifiUtilityTop,56,kWifiUtilityH};
+  const size_t columns=wifiKeyboardColumns(wifiKeyboardSymbols);
+  return {static_cast<int16_t>(8+(key%columns)*kWifiLetterW-wifiKeyboardOffset),
+    static_cast<int16_t>(kWifiKeyboardTop+(key/columns)*kWifiLetterH),kWifiLetterW,kWifiLetterH};
+}
+int16_t wifiKeyboardMaxOffset(){return max<int16_t>(0,static_cast<int16_t>(wifiKeyboardColumns(wifiKeyboardSymbols)*kWifiLetterW-224));}
+void moveWifiKeyboard(int16_t offset) {
+  const int16_t next=max<int16_t>(0,min<int16_t>(wifiKeyboardMaxOffset(),offset));
+  if(next!=wifiKeyboardOffset){wifiKeyboardOffset=next;wifiLettersDirty=true;}
+}
+bool wifiJoinCanStart() {
+  if(wifiEditingSsid)return wifiPassword.length()>0 && wifiPassword.length()<=32;
+  return wifiTargetSupported && (wifiTargetSaved || !wifiTargetSecured || wifiPassphraseValid(wifiPassword));
+}
+void paintWifi() {
+  clearContent();
+  uip::text(14,kContentTop+6,1,kBright,wifiShowSaved ? "SAVED WI-FI" : "NEARBY / 2.4 GHz");
+  const String detail=wifiScan.scanning ? String("Searching...")
+    : wifiScan.failed && !wifiShowSaved ? String("Search failed; scan again")
+    : message.length()>0 ? message : wifiConnection.detail;
+  uip::text(14,kContentTop+23,1,kMuted,uip::fitWords(detail,35));
+  const size_t count=wifiShowSaved?wifiSavedNames.size():wifiScan.count;
+  if(!count) {
+    uip::textCentered(kWifiListTop+38,1,kMuted,wifiShowSaved?"No saved networks":"No networks found");
+    uip::textCentered(kWifiListTop+58,1,kHair,"Scan again or add a network");
+    if(!wifiShowSaved)uip::textCentered(kWifiListTop+78,1,kHair,"iPhone: enable Compatibility");
+    return;
+  }
+  for(size_t i=0;i<count;++i) {
+    const int16_t y=kWifiListTop+static_cast<int16_t>(i)*kWifiRowH-wifiScroll;
+    if(y<kWifiListTop || y+kWifiRowH>contentBottom())continue;
+    const String name=wifiShowSaved?wifiSavedNames[i]:wifiScan.networks[i].ssid;
+    String meta=name==wifiConnection.activeSsid?"CONNECTED":wifiShowSaved||wifiScan.networks[i].saved?"SAVED":wifiScan.networks[i].secured?"PASSWORD":"OPEN";
+    if(!wifiShowSaved && !wifiScan.networks[i].supported)meta="UNSUPPORTED";
+    uip::text(14,y+5,1,kText,uip::fitWords(name,34));
+    uip::text(14,y+23,1,kMuted,meta);
+    if(!wifiShowSaved)uip::textRight(kW-14,y+23,1,kHair,String(wifiScan.networks[i].rssi)+" dBm");
+    uip::divider(14,y+kWifiRowH-3,kW-28,kHair,kBg);
+  }
+}
+void paintWifiDetails() {
+  clearContent();
+  uip::textCentered(kContentTop+22,1,kMuted,"WI-FI NETWORK");
+  String lines[2];const size_t n=uip::wrapText(wifiTarget,30,lines,2);
+  for(size_t i=0;i<n;++i)uip::textCentered(kContentTop+52+i*18,1,kBright,lines[i]);
+  uip::textCentered(kContentTop+104,1,kMuted,wifiTarget==wifiConnection.activeSsid?"Currently connected":wifiTargetSaved?"Saved; connects automatically":wifiTargetSecured?"Password needed":"Open network");
+  const String hint=!wifiTargetSupported?String("Personal Wi-Fi only")
+    :message.length()?message:String("Working settings stay until joined");
+  uip::textCentered(kContentTop+138,1,kHair,uip::fitWords(hint,35));
+}
+void paintWifiEntryBand(Adafruit_GFX& canvas,int16_t bandTop,void*) {
+  canvas.setTextSize(1);canvas.setTextWrap(false);canvas.setTextColor(panelGrey(kMuted));
+  canvas.setCursor(14,kContentTop+4-bandTop);
+  canvas.print(uip::fitWords(message.length()?message:(wifiEditingSsid?String("Network name"):wifiTarget),35));
+  String shown;
+  if(wifiEditingSsid)shown=uip::fit(wifiPassword,32);
+  else if(wifiPassword.length()){for(size_t i=0;i<wifiPassword.length()&&i<24;++i)shown+='*';shown+=" ("+String(wifiPassword.length())+")";}
+  canvas.setTextColor(panelGrey(kBright));canvas.setCursor(14,kContentTop+18-bandTop);
+  canvas.print(shown.length()?shown:String("Swipe letters left / right"));
+}
+void paintWifiEntry() {
+  displayComposeBands(kContentTop,kWifiKeyboardTop-kContentTop,panelGrey(kBg),paintWifiEntryBand,nullptr);
+  wifiEntryDirty=false;
+}
+
+void paintWifiLettersBand(Adafruit_GFX& canvas,int16_t bandTop,void*) {
+  const size_t columns=wifiKeyboardColumns(wifiKeyboardSymbols);
+  canvas.setTextSize(2);canvas.setTextWrap(false);canvas.setTextColor(panelGrey(kBright));
+  for(size_t row=0;row<2;++row)for(size_t col=0;col<columns;++col) {
+    const size_t key=row*columns+col;
+    const char c=wifiKeyboardLetter(wifiKeyboardSymbols,wifiKeyboardUpper,col,row);
+    if(!c)continue;
+    const Rect r=wifiKeyRect(key);
+    if(r.x+r.w<=0 || r.x>=kW || r.y+r.h<=bandTop || r.y>=bandTop+22)continue;
+    canvas.fillRoundRect(r.x+2,r.y+2-bandTop,r.w-4,r.h-4,8,panelGrey(kSurfaceHi));
+    canvas.drawRoundRect(r.x+2,r.y+2-bandTop,r.w-4,r.h-4,8,panelGrey(kHair));
+    canvas.setCursor(r.x+(r.w-12)/2,r.y+(r.h-16)/2-bandTop);canvas.write(c);
+  }
+}
+void paintWifiLetters(){
+  if(!displayComposeBands(kWifiKeyboardTop,2*kWifiLetterH,panelGrey(kBg),paintWifiLettersBand,nullptr)) {
+    // A missing compositor must remain an explicit, recoverable setup state.
+    g().fillRect(0,kWifiKeyboardTop,kW,2*kWifiLetterH,panelGrey(kBg));
+    uip::textCentered(kWifiKeyboardTop+50,1,kMuted,"Keyboard unavailable; use phone");
+  }
+  wifiLettersDirty=false;
+}
+void paintWifiUtilitiesRaw(){
+  for(size_t i=0;i<4;++i){
+    const Rect cell=wifiKeyRect(64+i);
+    const Rect ink={static_cast<int16_t>(cell.x+2),static_cast<int16_t>(cell.y+2),52,40};
+    const char* label=i==0?"CAPS":i==1?(wifiKeyboardSymbols?"ABC":"123"):i==2?"SPACE":"DEL";
+    uip::button(ink,label,(i==0&&wifiKeyboardUpper)||(i==1&&wifiKeyboardSymbols),i!=0||!wifiKeyboardSymbols,kBg);
+  }
+  wifiUtilityDirty=false;
+}
+void paintWifiUtilities(){
+  if(!displayComposeScene(kWifiUtilityTop,kWifiUtilityH,panelGrey(kBg),[](void*){paintWifiUtilitiesRaw();},nullptr))paintWifiUtilitiesRaw();
+}
+void paintWifiPassword() {
+  paintWifiEntry();paintWifiLetters();paintWifiUtilities();
+  g().fillRect(0,kWifiUtilityTop+kWifiUtilityH,kW,contentBottom()-kWifiUtilityTop-kWifiUtilityH,panelGrey(kBg));
+}
+void paintWifiJoining() {
+  clearContent();
+  const bool failed=wifiConnection.candidateId==wifiUiCandidateId
+    && wifiConnection.candidateResult==WifiCandidateResult::Failed;
+  uip::textCentered(kContentTop+42,2,kBright,failed?"Change failed":"Connecting");
+  uip::textCentered(kContentTop+82,1,kText,uip::fitWords(wifiTarget,35));
+  String lines[3];const size_t n=uip::wrapText(failed?wifiConnection.candidateDetail:wifiConnection.detail,33,lines,3);
+  for(size_t i=0;i<n;++i)uip::textCentered(kContentTop+116+i*16,1,kMuted,lines[i]);
+}
+
+void paintWifiPhone() {
+  clearContent();
+  if(phoneSetup.waitingForHotspot) {
+    uip::textCentered(kContentTop+20,2,kBright,"Start your hotspot");
+    uip::textCentered(kContentTop+58,1,kText,"You can leave the setup page now.");
+    uip::textCentered(kContentTop+82,1,kMuted,"iPhone: Settings / Personal Hotspot");
+    uip::textCentered(kContentTop+102,1,kMuted,"Allow Others to Join: ON");
+    uip::textCentered(kContentTop+122,1,kMuted,"Maximize Compatibility: ON");
+    uip::textCentered(kContentTop+154,2,kBright,String(phoneSetup.remainingSeconds)+"s");
+    uip::textCentered(kContentTop+184,1,kHair,"Connecting automatically...");return;
+  }
+  if(phoneSetupSucceeded) {
+    uip::textCentered(kContentTop+46,2,kBright,"Wi-Fi saved");
+    uip::textCentered(kContentTop+82,1,kMuted,"Your controller is connected.");
+    uip::textCentered(kContentTop+110,1,kHair,"Return your phone to its Wi-Fi.");return;
+  }
+  if(!phoneSetup.active) {
+    uip::textCentered(kContentTop+50,2,kBright,"Setup closed");
+    uip::textCentered(kContentTop+86,1,kMuted,"Saved networks were kept.");return;
+  }
+  if(phoneSetup.hotspotHandoff && !phoneSetup.apPassword.length()) {
+    uip::textCentered(kContentTop+38,2,kBright,"Not connected");
+    String lines[4];const size_t count=uip::wrapText(phoneSetup.detail,33,lines,4);
+    for(size_t i=0;i<count;++i)uip::textCentered(kContentTop+80+i*18,1,kMuted,lines[i]);
+    uip::textCentered(kContentTop+174,1,kHair,"Saved networks are still available.");return;
+  }
+  uip::textCentered(kContentTop+4,1,kBright,phoneShowPage?"2 / OPEN SETUP PAGE":"1 / JOIN DEVICE SETUP");
+  const int16_t left=(kW-setup_qr::kPixels)/2,top=kContentTop+22;
+  g().fillRect(left,top,setup_qr::kPixels,setup_qr::kPixels,panelGrey(255));
+  if(phoneQr.size) {
+    for(int y=0;y<phoneQr.size;++y)for(int x=0;x<phoneQr.size;++x)
+      if(phoneQr.dark(x,y))g().fillRect(left+phoneQr.offset()+x*phoneQr.scale(),top+phoneQr.offset()+y*phoneQr.scale(),phoneQr.scale(),phoneQr.scale(),panelGrey(0));
+  }
+  else uip::textCentered(top+58,1,kMuted,"Use setup address below");
+  uip::textCentered(kContentTop+158,1,kMuted,phoneShowPage?"Stay on the device setup Wi-Fi":"Scan with your phone camera");
+  uip::textCentered(kContentTop+176,1,kHair,phoneShowPage?"http://192.168.4.1":"Join, then open the setup page");
+  if(phoneSetup.phase==PhoneSetupPhase::Joining || phoneSetup.phase==PhoneSetupPhase::Queued)
+    uip::textCentered(kContentTop+194,1,kText,"Connecting; saved networks kept");
+}
+
 void paintModal() {
   // The whole content region, not just the box: leaving the screen underneath visible around the
   // edges shows half a list row and reads as a rendering fault rather than as a dialog.
@@ -2082,15 +2317,19 @@ void paintModal() {
   // the one every other card on this screen wears.
   uip::card(box, 22.0f, (int16_t)kSurface, (int16_t)kHair, 1.3f, 1.8f);
 
-  const bool approval = modal == Modal::ConfirmApproval;
+  const bool approval = modal == Modal::ConfirmApproval || modal == Modal::ConfirmRejection;
+  const bool reject = modal == Modal::ConfirmRejection;
+  const bool claim = modal == Modal::ConfirmClaim;
+  const bool forgetWifi = modal == Modal::ConfirmForgetWifi;
   const bool reprovision = modal == Modal::ConfirmReprovision;
+  const bool nativeResume = modal == Modal::ConfirmNativeResume;
   uip::textCentered((int16_t)(box.y + 18), 1, kMuted,
-                    approval ? "APPROVE COMMAND"
+                    forgetWifi ? "FORGET WI-FI" : claim ? "REPLACE CLAIM CODE" : approval ? (reject ? "REJECT COMMAND" : "APPROVE COMMAND")
                              : (reprovision ? "RE-PROVISION" : "CONFIRM ACTION"));
 
   String lines[4];
-  const String subject = approval ? pendingApprovalSummary
-                                  : (reprovision ? String("Clear Wi-Fi and reopen setup")
+  const String subject = nativeResume ? String("Stop this session in its other app first. Continue saved history here?") : forgetWifi ? wifiTarget : claim ? String("The previous code stops working") : approval ? pendingApprovalSummary
+                                  : (reprovision ? String("Clear Wi-Fi, cached setup, claim code and local receipt")
                                                  : pendingControl.label);
   const size_t wrapped = uip::wrapText(subject, 30, lines, 4);
   for (size_t i = 0; i < wrapped; ++i) {
@@ -2099,8 +2338,8 @@ void paintModal() {
   // Approving runs it on the owner's own machine — the one thing on this device worth a second
   // deliberate press.
   uip::textCentered((int16_t)(box.y + box.h - 26), 1, kHair,
-                    approval ? "Runs on your machine"
-                             : (reprovision ? "Identity is kept"
+                    forgetWifi ? "Stops automatic connection to it" : claim ? "Your account is unchanged" : approval ? (reject ? "This request will not run" : "Runs on your machine")
+                             : (reprovision ? "Cloud work continues; ID kept"
                                             : uip::fitWords(threadTitle(), 30)));
 }
 
@@ -2125,6 +2364,11 @@ void paintContent() {
     case Screen::Approvals:    paintApprovals(); break;
     case Screen::Environments: paintEnvironments(); break;
     case Screen::Projects:     paintProjects(); break;
+    case Screen::Wifi:         paintWifi(); break;
+    case Screen::WifiDetails:  paintWifiDetails(); break;
+    case Screen::WifiPassword: paintWifiPassword(); break;
+    case Screen::WifiJoining:  paintWifiJoining(); break;
+    case Screen::WifiPhone:    paintWifiPhone(); break;
     case Screen::Device:       paintDevice(); break;
     case Screen::Gateway:      paintGateway(); break;
     default:                   paintStatus(); break;
@@ -2297,18 +2541,30 @@ void addAction(Act id, const char* label, bool primary, bool enabled = true) {
 // not drawn and those 58 pixels belong to the content. A permanent strip of five tabs, four of them
 // inert, was the opposite of that.
 bool uiNetworkBusy();
+extern bool deferredStopPending;
 
 void buildActions() {
   actionCount = 0;
   if (!gw) return;
-  if (uiNetworkBusy()) { addAction(Act::None, "WORKING", false, false); return; }
+  if (uiNetworkBusy() && !(screen==Screen::Wifi || screen==Screen::WifiDetails || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) {
+    if (modal == Modal::ConfirmControl && (pendingControl.kind == "stop"
+        || (pendingControl.kind == "legacy" && pendingControl.id == "stop"))) {
+      addAction(Act::ConfirmNo, "CANCEL", false);
+      addAction(Act::ConfirmYes, deferredStopPending ? "STOP QUEUED" : "STOP", true, !deferredStopPending);
+    } else {
+      addAction(Act::SavedActions, "ACTIONS", false);
+      addAction(Act::None, deferredStopPending ? "STOP QUEUED" : "WORKING", false, false);
+    }
+    return;
+  }
 
   // An open config portal takes over the screen, and nothing offered a way out of it: the only
   // exits were joining a network or pulling the power. A device in this state is usually still
   // online and still reachable — the owner opened the portal, saw they did not need it, and simply
   // wants their screen back. Offered before every other rule, including the modal, because being
   // unable to leave a screen is a worse dead end than any of them.
-  if (prov && prov->configPortalActive()) {
+  if (prov && prov->configPortalActive()
+      && !(screen==Screen::Wifi || screen==Screen::WifiDetails || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) {
     addAction(Act::ClosePortal, "DONE", true);
     return;
   }
@@ -2319,18 +2575,20 @@ void buildActions() {
   if (modal != Modal::None) {
     addAction(Act::ConfirmNo, "CANCEL", false);
     addAction(Act::ConfirmYes,
-              modal == Modal::ConfirmApproval ? "APPROVE"
-                                              : (modal == Modal::ConfirmReprovision ? "RESET"
-                                                                                    : "RUN"),
+              modal == Modal::ConfirmForgetWifi ? "FORGET" : modal == Modal::ConfirmRejection ? "REJECT" : modal == Modal::ConfirmClaim ? "NEW CODE" : modal == Modal::ConfirmApproval ? "APPROVE"
+                                              : (modal == Modal::ConfirmReprovision || pendingControl.kind == "reset" ? "RESET"
+                                                                                    : (pendingControl.kind == "stop" || pendingControl.id == "stop" ? "STOP" : "RUN")),
               true);
     return;
   }
 
   // A held clip outranks the screen. It is a recording sitting in RAM that has not been sent
   // anywhere, and there is exactly one pair of things to do with it.
-  if (clipHeld) {
-    addAction(Act::DiscardClip, "DISCARD", false);
-    addAction(Act::SendClip, "SEND", true, haveThread());
+  if (clipHeld && screen == Screen::Send) {
+    if (voice.canDismissCapture()) addAction(Act::DiscardClip, "DISCARD", false);
+    else addAction(Act::VoiceConsole, "CONSOLE", false);
+    addAction(Act::SendClip, voice.canDismissCapture() ? "SEND" : "RETRY UPLOAD", true,
+      gw->context().environmentId == voiceCaptureEnvironment && gw->context().threadId == voiceCaptureThread);
     return;
   }
 
@@ -2346,40 +2604,60 @@ void buildActions() {
         addAction(Act::Review, "REVIEW", true);
         // A blocked or unknown turn still needs independent Status/Stop controls. Never trap
         // the owner behind the console handoff by hiding the assigned Actions menu.
-        if (gw->controlCount() > 0) addAction(Act::SavedActions, "ACTIONS", false);
+        addAction(Act::SavedActions, "ACTIONS", false);
+        addAction(Act::PickThread, "CHOOSE", false);
         return;
       }
       if (!haveThread()) {
-        addAction(Act::PickThread, "CHOOSE A THREAD", true);
+        addAction(Act::PickThread, "CHOOSE", true);
+        addAction(Act::SavedActions, "ACTIONS", false);
         return;
       }
       if (gw->responseOpen() && gw->response().state == "error") {
         addAction(Act::Retry, "RETRY", true);
         // A failed reply read must not trap the owner outside saved actions.
-        if (gw->controlCount() > 0) addAction(Act::SavedActions, "ACTIONS", false);
+        addAction(Act::SavedActions, "ACTIONS", false);
+        addAction(Act::PickThread, "CHOOSE", false);
         return;
       }
-      if (audio::available()) addAction(Act::Talk, "TALK", true);
+      if (audio::available()) addAction(Act::Talk, clipHeld ? "RESUME" : voiceInJourney() ? "REQUEST" : "TALK", true);
       // The saved actions moved off the voice screen and this is how they stay reachable. There is
       // deliberately no REPLY here: the OPEN button under the picker already goes into the thread,
       // and two controls for one destination is the clutter this pass exists to remove.
-      if (gw->controlCount() > 0) addAction(Act::SavedActions, "ACTIONS", false);
+      addAction(Act::SavedActions, "ACTIONS", false);
+      addAction(Act::PickThread, "CHOOSE", false);
       return;
     }
     case Screen::Threads:
-      // Reachable whether or not a list exists — an empty folder is exactly the state this removes.
-      addAction(Act::NewThread, "NEW THREAD", threadRowCount() == 0);
-      if (threadRowCount() == 0) addAction(Act::Reload, "RELOAD", false);
+      if (agentBrowseMode) {
+        addAction(Act::AgentBack, "THREADS", false);
+        if (agentBrowseMode == 1) {
+          addAction(Act::AgentSessions, "SESSIONS", false, selectedAgentRow >= 0);
+          addAction(Act::AgentUse, "USE AGENT", true, selectedAgentRow >= 0 && haveThread());
+        } else {
+          const BrowseAgent* row = selectedAgentRow < 0 ? nullptr : browse.agent((size_t)selectedAgentRow);
+          addAction(Act::AgentResume, "RESUME", true, row && row->resumable);
+        }
+        return;
+      }
+      if (previewThreadIndex >= 0) addAction(Act::UseThread, "USE THREAD", true);
+      else addAction(Act::NewThread, "NEW THREAD", threadRowCount() == 0,
+                     browse.previewProjectId().length() > 0);
+      addAction(Act::Reload, "REFRESH", false);
+      addAction(Act::Agents, "AGENTS", false);
       return;
     case Screen::Environments:
-      if (browse.environmentCount() == 0) addAction(Act::Reload, "RELOAD", true);
-      return;
     case Screen::Projects:
-      if (browse.projectCount() == 0) addAction(Act::Reload, "RELOAD", true);
+      addAction(Act::Reload, "REFRESH", false);
       return;
     case Screen::Send:
-      // The record button IS the control, and during the journey there is nothing to press at all —
-      // offering buttons that do nothing while a clip uploads is worse than offering none.
+      if (voiceNeedsRecovery()) {
+        const bool gatewayApproval = voice.reviewReason() == "gateway_approval" && voice.commandId().length() > 0;
+        if (gatewayApproval) addAction(Act::VoiceReview, "NEEDS YOU", true);
+        if (voice.hasJob()) addAction(Act::VoiceStatus, "RECHECK", !gatewayApproval);
+        addAction(Act::VoiceConsole, "CONSOLE", false);
+        if (voice.canDismissCapture()) addAction(Act::VoiceDismiss, "NEW CLIP", false);
+      }
       return;
     case Screen::Actions:
       return;   // every row is its own control
@@ -2389,24 +2667,62 @@ void buildActions() {
         return;
       }
       const ThreadResponse& r = gw->response();
-      if (r.pageCount > 1) {
-        addAction(Act::PrevPage, "PREV", false);
-        addAction(Act::NextPage, "NEXT", false);
+      // Recovery must remain reachable even when the last readable reply had many pages.
+      if (r.state == "error") {
+        addAction(Act::Retry, "RETRY REPLY", true);
+        addAction(Act::ReturnThread, "THREAD", false);
         return;
       }
-      // A finished single page has nothing to do. Waiting, streaming and error all do.
-      if (r.state == "error") addAction(Act::Retry, "RETRY", true);
-      else if (gw->responseInFlight()) addAction(Act::Refresh, "REFRESH", false);
+      String lines[kReplyMaxLines];
+      const ResponseLayout layout = replyLayout(lines);
+      if (r.pageCount > 1 || layout.pageCount > 1) {
+        addAction(Act::PrevPage, "PREV", false, r.page > 0 || layout.page > 0);
+        addAction(Act::NextPage, "NEXT", false, r.page + 1 < r.pageCount || layout.page + 1 < layout.pageCount);
+        addAction(Act::ReturnThread, "THREAD", false);
+        return;
+      }
+      if (gw->responseInFlight()) addAction(Act::Refresh, "REFRESH", false);
+      addAction(Act::ReturnThread, "THREAD", false);
       return;
     }
     case Screen::Approvals: {
-      if (gw->approvalCount() == 0) return;
+      if (gw->approvalCount() == 0) { addAction(Act::NotNow, "BACK TO THREAD", false); return; }
       addAction(Act::Reject, "REJECT", false);
       addAction(Act::Approve, "APPROVE", true);
-      if (gw->approvalCount() > 1) addAction(Act::NextApproval, "NEXT", false);
+      addAction(Act::NotNow, "NOT NOW", false);
       return;
     }
+    case Screen::Wifi:
+      if(wifiShowSaved)addAction(Act::WifiAdd,"ADD",true);
+      else addAction(Act::WifiScan,"SCAN",true,!wifiScan.scanning);
+      addAction(Act::WifiPhone,"PHONE",false);
+      addAction(Act::WifiSaved,wifiShowSaved?"NEARBY":"SAVED",false);
+      return;
+    case Screen::WifiDetails:
+      addAction(Act::WifiConnect,wifiTargetSaved||!wifiTargetSecured?"CONNECT":"PASSWORD",true,wifiTargetSupported);
+      if(wifiTargetSaved) {
+        addAction(Act::WifiEdit,"EDIT",false);
+        addAction(Act::WifiForget,"FORGET",false,wifiTarget!=wifiConnection.activeSsid);
+      }
+      return;
+    case Screen::WifiPhone:
+      addAction(Act::WifiPhoneDone,phoneSetupSucceeded?"DONE":"CANCEL",false);
+      if(phoneSetup.active && !phoneSetupSucceeded && !phoneSetup.waitingForHotspot) {
+        if(phoneSetup.hotspotHandoff && !phoneSetup.apPassword.length())addAction(Act::WifiPhone,"SETUP AGAIN",true);
+        else addAction(Act::WifiPhonePage,phoneShowPage?"JOIN WI-FI":"OPEN PAGE",true);
+      }
+      return;
+    case Screen::WifiPassword:
+      addAction(Act::WifiCancel,"CANCEL",false);
+      addAction(Act::WifiPhone,"PHONE",false);
+      addAction(Act::WifiConnect,wifiEditingSsid?"NEXT":"CONNECT",true,wifiJoinCanStart());
+      return;
+    case Screen::WifiJoining:
+      addAction(Act::WifiCancel,wifiConnection.joinPending?"CANCEL":"BACK",false);
+      if(!wifiConnection.joinPending)addAction(Act::WifiEdit,"EDIT",true);
+      return;
     case Screen::Device:
+      addAction(Act::WifiOpen,"WI-FI",true);
       addAction(Act::Portal, "PORTAL", false);
       addAction(Act::Reprovision, "RE-PROVISION", false);
       return;
@@ -2475,6 +2791,17 @@ void paintActionBar() {
 
 // Exactly one gesture operation may be in flight. Network work never draws or mutates UI
 // state. Release/acquire publishes the bounded job and its result across the two tasks.
+bool deferredStopPending = false;
+DeviceControl deferredStop;
+String deferredStopEnvironment, deferredStopThread;
+uint32_t deferredStopRevision = 0;
+TouchTargetLatch touchTarget;
+TouchEventBuffer retainedTouches;
+bool inputWasDiscarded = false;
+bool replayingTouches = false;
+TouchPerformanceWindow touchPerformance;
+uint32_t touchPerformanceReportAt = 0;
+
 bool uiNetworkReady = false;
 std::atomic<unsigned> uiJobState{0}; // idle / queued / complete
 std::function<void()> uiJobWork;
@@ -2535,6 +2862,29 @@ void queueResponsePage(int page, bool open = false, const String& after = String
   });
 }
 
+// Local subpages are read without a network request; only crossing a gateway page starts HTTP.
+void stepReplyPage(int direction) {
+  if (!gw->responseOpen() || gw->response().state == "error") return;
+  String lines[kReplyMaxLines];
+  const ResponseLayout layout = replyLayout(lines);
+  if (direction > 0 && layout.page + 1 < layout.pageCount) ++replyLocalPage;
+  else if (direction < 0 && layout.page > 0) --replyLocalPage;
+  else {
+    const ThreadResponse& r = gw->response();
+    if ((direction > 0 && r.page + 1 >= r.pageCount) || (direction < 0 && r.page == 0)) {
+      contentDirty = true;
+      return; // A visible beginning/end never wraps into different text.
+    } else {
+      const int next = r.page + (direction > 0 ? 1 : -1);
+      replyPendingRemotePage = next;
+      replyPendingLocalPage = direction > 0 ? 0 : (size_t)-1;
+      queueResponsePage(next);
+    }
+  }
+  chromeDirty = true;
+  contentDirty = true;
+}
+
 // Paint the pending state immediately; all socket work is scheduled off the render task.
 void showBusy(const String& title, const String& detail) {
   message = "";
@@ -2550,17 +2900,10 @@ void showBusy(const String& title, const String& detail) {
 void goTo(Screen next) {
   closeDrawerNow();
   if (screen == next) return;
+  if(screen==Screen::WifiPassword)wifiPassword="";
+  if(screen==Screen::WifiPhone && next!=Screen::WifiPhone){prov->endPhoneSetup();phoneQr.clear();phoneSetup=PhoneSetupSnapshot();}
   pickerMotion = PickerMotion();
-  // Leaving the voice screen acknowledges a finished capture. Without this the orb would go on
-  // reporting "Voice failed" from HOME for the rest of the session — and because that state is
-  // classified as speaking, it would sit on the prominent line hiding the thread name behind a
-  // capture the person has already walked away from. The outcome survives in `message`.
-  if (screen == Screen::Send && voiceInJourney()
-      && (voice.stage() == VoiceStage::Failed || voice.stage() == VoiceStage::Review
-          || (voice.stage() == VoiceStage::Ready && !voice.tracking()))) {
-    message = voice.detail();
-    voice.reset();
-  }
+  // Navigation never dismisses a recording or an unresolved cloud receipt.
   screen = next;
   navigationGeneration += 1;
   pickerOpenResponse = false;
@@ -2569,10 +2912,21 @@ void goTo(Screen next) {
   contentDirty = true;
 }
 
+void refreshProjects();
+
 void goBack() {
+  if (modal != Modal::None) { modal = Modal::None; contentDirty = true; return; }
   switch (screen) {
+    case Screen::WifiPhone: goTo(Screen::Wifi);return;
+    case Screen::WifiPassword:
+      wifiPassword="";goTo(wifiEditingSsid?Screen::Wifi:Screen::WifiDetails);return;
+    case Screen::WifiDetails: goTo(Screen::Wifi);return;
+    case Screen::WifiJoining:
+      prov->cancelWifiJoin();wifiPassword="";goTo(Screen::Wifi);return;
+    case Screen::Wifi: goTo(Screen::Device);return;
     case Screen::Projects:     goTo(Screen::Environments); return;
-    case Screen::Environments: goTo(Screen::Threads); return;
+    case Screen::Environments: goTo(Screen::Home); return;
+    case Screen::Threads:      goTo(Screen::Projects); refreshProjects(); return;
     case Screen::Actions:      goTo(Screen::Home); return;
     // An unclaimed device's home IS the claim screen; sending it to a home it does not have would
     // land on a thread label for a thread it cannot see.
@@ -2668,7 +3022,9 @@ void runControlRow(const DeviceControl& c) {
   // A capture action needs a clip, and the clip comes from the microphone button. Saying so beats
   // dispatching an action with no media id and letting the gateway explain it 5 s later.
   if (c.kind == "capture_audio" || (c.kind == "remote_action" && c.mediaKind == "audio")) {
-    message = "Hold the mic button to record";
+    // A saved audio action has its own template, target and confirmation contract.
+    // Generic Talk auto-dispatches a voice note and cannot stand in for that action.
+    message = "Saved audio needs the web console";
     contentDirty = true;
     return;
   }
@@ -2688,7 +3044,7 @@ void runControlRow(const DeviceControl& c) {
 }
 
 void discardClip() {
-  if (uiNetworkBusy()) return;
+  if (uiNetworkBusy() || !voice.canDismissCapture()) return;
   clipHeld = false;
   clipHeldMs = 0;
   audio::discard();
@@ -2785,6 +3141,7 @@ void finishRecording() {
 
   if (audio::captureFailed()) {
     audio::discard();
+    voice.reset();
     clipHeld = false;
     clipHeldMs = 0;
     message = "Microphone read failed; record again";
@@ -2793,6 +3150,7 @@ void finishRecording() {
   }
   if (ms < audio::minimumClipMs() || bytes == 0) {
     audio::discard();
+    voice.reset();
     clipHeld = false;
     clipHeldMs = 0;
     message = "Too short - hold longer";
@@ -2802,6 +3160,7 @@ void finishRecording() {
 
   if (st.peak == 0) {
     audio::discard();
+    voice.reset();
     clipHeld = false;
     clipHeldMs = 0;
     message = "No microphone signal; try recording again";
@@ -2816,7 +3175,8 @@ void finishRecording() {
 }
 
 void startRecording() {
-  if (uiNetworkBusy()) return;
+  if (uiNetworkBusy() || screen != Screen::Send || modal != Modal::None || clipHeld
+      || voiceInJourney() || !voice.canStartCapture()) return;
   if (!audio::available()) {
     message = "This build has no microphone";
     contentDirty = true;
@@ -2831,10 +3191,12 @@ void startRecording() {
   // to send a clip that no longer exists.
   clipHeld = false;
   clipHeldMs = 0;
-  // A new capture retires whatever the previous one was still reporting.
-  voiceCaptureEnvironment = gw->context().environmentId;
-  voiceCaptureThread = gw->context().threadId;
-  voice.beginCapture(voiceCaptureEnvironment, voiceCaptureThread);
+  const String environment = gw->context().environmentId;
+  const String thread = gw->context().threadId;
+  if (!voice.beginCapture(environment, thread)) return;
+  voiceCaptureEnvironment = environment;
+  voiceCaptureThread = thread;
+  voiceCaptureTitle = threadTitle();
   recordArmed = true;
   audio::startRecording();
   // Wave, and the mini orb is told about it here — the pump branch below never reaches
@@ -2848,7 +3210,10 @@ void startRecording() {
   // going through clearForArrival() is what stops the previous state's destination lines being left
   // on the glass beside the capsule.
   clearForArrival();
-  paintContent();
+  if(!displayComposeScene(kContentTop,kH-kContentTop,panelGrey(kBg),[](void*){paintContent();},nullptr)) {
+    g().fillRect(0,kContentTop,kW,kH-kContentTop,panelGrey(kBg));
+    paintContent();
+  }
 }
 
 // Writes a pending selection through, or does nothing when there is none.
@@ -2891,46 +3256,76 @@ void commitPicker() {
 
 
 void refreshThreads() {
-  showBusy("Threads", "Asking the gateway");
-  enqueueUiNetworkJob([] { gw->refreshThreads(); }, [] {
-    threadsFetched = true;
-    threadScroll = 0;
-    message = gw->threadsDetail();
-  });
-}
-
-
-void goToThreads() {
-  goTo(Screen::Threads);
-  showBusy("Threads", "Asking the gateway");
+  previewThreadIndex = -1;
+  previewThreadId = "";
+  showBusy("Threads", "Refreshing destination list");
   uiStagedBrowse = browse;
-  enqueueUiNetworkJob([] {
-    if (uiStagedBrowse.environmentLabel().length() == 0) uiStagedBrowse.refreshEnvironments();
-    gw->refreshThreads();
-  }, [] {
+  enqueueUiNetworkJob([] { uiStagedBrowse.refreshPreviewThreads(); }, [] {
     browse = uiStagedBrowse;
     threadsFetched = true;
     threadScroll = 0;
-    message = gw->threadsDetail();
+    message = browse.previewDetail();
   });
 }
 
+void goToThreads() {
+  agentBrowseMode = 0; selectedAgentRow = -1;
+  browse.beginPreview(gw->context().environmentId, gw->context().projectId);
+  previewThreadIndex = -1;
+  previewThreadId = "";
+  goTo(Screen::Threads);
+  uiStagedBrowse = browse;
+  showBusy("Choose destination", "Current thread stays selected");
+  enqueueUiNetworkJob([] {
+    uiStagedBrowse.refreshEnvironments();
+    uiStagedBrowse.refreshPreviewThreads();
+  }, [] {
+    browse = uiStagedBrowse;
+    threadScroll = 0;
+    threadsFetched = true;
+    message = browse.previewDetail();
+  });
+}
 
 void selectThreadRow(size_t index) {
-  const ThreadOption* row = threadRowAt(index);
+  if (agentBrowseMode) { selectedAgentRow = (int)index; contentDirty = true; barDirty = true; return; }
+  const ThreadOption* row = browse.previewThread(index);
   if (!row) return;
-  if (index >= gw->threadCount()) { goTo(Screen::Send); return; }
-  const String targetId = row->id;
+  previewThreadIndex = (int)index;
+  previewThreadId = row->id;
+  message = "Preview only; use thread below";
+  contentDirty = true;
+  barDirty = true;
+}
+
+void usePreviewThread() {
+  const int index = previewThreadIndex;
+  const ThreadOption* row = index < 0 ? nullptr : browse.previewThread((size_t)index);
+  if (!row || row->id != previewThreadId) { message = "Choose a thread again"; return; }
   const uint32_t generation = navigationGeneration;
-  showBusy("Selecting", uip::fitWords(row->title, kCols1));
-  enqueueUiNetworkJob([index, targetId] {
-    gw->lockState();
-    const ThreadOption* current = gw->thread(index);
-    uiOperationSucceeded = current && current->id == targetId && gw->selectThread(index);
-    gw->unlockState();
-  }, [generation] {
-    message = uiOperationSucceeded ? "Thread selected" : gw->threadsDetail();
-    if (uiOperationSucceeded && generation == navigationGeneration) goTo(Screen::Send);
+  const String id = row->id;
+  const String title = row->title;
+  uiStagedBrowse = browse;
+  showBusy("Use thread", uip::fitWords(title, kCols1));
+  enqueueUiNetworkJob([index, id] {
+    const ThreadOption* candidate = uiStagedBrowse.previewThread((size_t)index);
+    uiOperationSucceeded = candidate && candidate->id == id
+      && uiStagedBrowse.commitPreviewThread((size_t)index);
+    if (uiOperationSucceeded) {
+      gw->clearContextBinding(uiStagedBrowse.boundEnvironmentId(), uiStagedBrowse.boundProjectId());
+      gw->adoptThreadBinding(id);
+    }
+  }, [generation, id, title] {
+    browse = uiStagedBrowse;
+    message = uiOperationSucceeded ? "Thread selected" : browse.previewDetail();
+    if (!uiOperationSucceeded) return;
+    createdRow = ThreadOption();
+    createdRow.id = id;
+    createdRow.title = title;
+    createdRow.selected = true;
+    browse.endPreview();
+    previewThreadIndex = -1;
+    if (generation == navigationGeneration) goTo(Screen::Home);
   });
 }
 
@@ -2980,20 +3375,55 @@ void createThreadNow() {
   // it is not selectThread(), which validates an index against a list that cannot yet contain this
   // thread. It also closes the open response, because that model is an answer about the
   // conversation the user has just left.
+  gw->clearContextBinding(browse.boundEnvironmentId(), browse.boundProjectId());
   gw->adoptThreadBinding(made.id);
 
-  // A FINISHED capture also belonged to the thread that was open a moment ago. Its outcome is not a
-  // fact about this one, and leaving it would put "Voice failed" on the prominent line of a
-  // brand-new thread — state from a conversation the user has left, which is the residue bug in
-  // another form. A capture still IN FLIGHT is left alone: it was dispatched against the old
-  // thread, that is where it is going, and its completion still deserves to be reported.
-  if (voice.stage() == VoiceStage::Failed || voice.stage() == VoiceStage::Review) voice.reset();
+  // The recording keeps its original destination and receipt until explicit safe dismissal.
 
   pickerIndex = -1;
   pickerCommitAt = 0;
   threadsFetched = true;
+  browse.endPreview();
   message = "Thread created";
+  goTo(Screen::Home);
   contentDirty = true;
+  });
+}
+
+void browseDirectAgents(bool sessions) {
+  const BrowseAgent* selected = selectedAgentRow < 0 ? nullptr : browse.agent((size_t)selectedAgentRow);
+  if (sessions && !selected) return;
+  const String runtimeId = selected ? selected->runtimeId : String();
+  const String model = selected ? selected->model : String();
+  uiStagedBrowse = browse;
+  showBusy(sessions ? "Saved sessions" : "Agents", "Reading selected folder");
+  enqueueUiNetworkJob([sessions, runtimeId, model] {
+    uiOperationSucceeded = sessions ? uiStagedBrowse.refreshNativeSessions(runtimeId, model) : uiStagedBrowse.refreshAgents();
+  }, [sessions] {
+    browse = uiStagedBrowse;
+    agentBrowseMode = uiOperationSucceeded && browse.directAgentsSupported() ? (sessions ? 2 : 1) : 0;
+    selectedAgentRow = -1; threadScroll = 0; message = browse.agentDetail(); contentDirty = true; barDirty = true;
+  });
+}
+
+void applyDirectAgent(bool resume) {
+  if (selectedAgentRow < 0) return;
+  const int index = selectedAgentRow;
+  const String thread = gw->context().threadId;
+  const String environment = gw->context().environmentId;
+  uiStagedBrowse = browse;
+  showBusy(resume ? "Continue session" : "Change agent", "Waiting for confirmation");
+  enqueueUiNetworkJob([resume, index, thread, environment] {
+    uiOperationSucceeded = gw->context().threadId == thread && gw->context().environmentId == environment
+      && (resume ? uiStagedBrowse.resumeNativeSession((size_t)index, thread) : uiStagedBrowse.useAgent((size_t)index, thread));
+    if (uiOperationSucceeded && resume) {
+      gw->clearContextBinding(uiStagedBrowse.boundEnvironmentId(), uiStagedBrowse.boundProjectId());
+      gw->adoptThreadBinding(uiStagedBrowse.createdThread().id);
+    }
+  }, [] {
+    browse = uiStagedBrowse; message = browse.agentDetail();
+    if (uiOperationSucceeded) { agentBrowseMode = 0; selectedAgentRow = -1; browse.endPreview(); goTo(Screen::Home); }
+    contentDirty = true; barDirty = true;
   });
 }
 
@@ -3018,53 +3448,33 @@ void refreshProjects() {
 
 
 void selectEnvironmentRow(size_t index) {
-  const BrowseEnvironment* row = browse.environment(index);
-  if (!row) return;
-  showBusy("Binding", uip::fitWords(row->label, kCols1));
-  const uint32_t generation = navigationGeneration;
-  uiStagedBrowse = browse;
-  enqueueUiNetworkJob([index] {
-    uiOperationSucceeded = uiStagedBrowse.selectEnvironment(index);
-  }, [generation] {
-    browse = uiStagedBrowse;
-    if (!uiOperationSucceeded) { message = browse.environmentsDetail(); return; }
-    browse.consumeContextCleared();
-    gw->clearContextBinding(browse.boundEnvironmentId(), browse.boundProjectId());
-    createdRow = ThreadOption();
-    threadsFetched = false;
-    if (generation == navigationGeneration) { goTo(Screen::Projects); refreshProjects(); }
-  });
+  if (!browse.previewEnvironment(index)) return;
+  goTo(Screen::Projects);
+  refreshProjects();
 }
 
-
 void selectProjectRow(size_t index) {
-  const BrowseProject* row = browse.project(index);
-  if (!row) return;
-  showBusy("Folder", uip::fitWords(row->title, kCols1));
-  const uint32_t generation = navigationGeneration;
-  uiStagedBrowse = browse;
-  enqueueUiNetworkJob([index] {
-    uiOperationSucceeded = uiStagedBrowse.selectProject(index);
-  }, [generation] {
-    browse = uiStagedBrowse;
-    if (!uiOperationSucceeded) { message = browse.projectsDetail(); return; }
-    browse.consumeContextCleared();
-    gw->clearContextBinding(browse.boundEnvironmentId(), browse.boundProjectId());
-    createdRow = ThreadOption();
-    threadsFetched = false;
-    if (generation == navigationGeneration) { goTo(Screen::Threads); refreshThreads(); }
-  });
+  if (!browse.previewProject(index)) return;
+  goTo(Screen::Threads);
+  refreshThreads();
 }
 
 
 void answerApproval(const String& commandId, const String& label, bool approve) {
   if (commandId.length() == 0) return;
   showBusy(approve ? "Approving" : "Rejecting", uip::fit(label, kCols1));
+  const uint32_t generation = navigationGeneration;
+  const String environment = gw->context().environmentId;
+  const String thread = gw->context().threadId;
   enqueueUiNetworkJob([commandId, approve] {
     uiDispatchResult = gw->answerApproval(commandId, approve);
-  }, [] {
+  }, [generation, environment, thread, approve] {
     message = uiDispatchResult.detail;
     approvalIndex = 0;
+    if (approve && generation == navigationGeneration
+        && environment == gw->context().environmentId && thread == gw->context().threadId) {
+      afterDispatch(uiDispatchResult, true);
+    }
   });
 }
 
@@ -3099,12 +3509,154 @@ void openCategory(Row row) {
   }
 }
 
+void refreshWifiUi() {
+  wifiScan=prov->wifiScanSnapshot();
+  wifiConnection=prov->wifiConnectionSnapshot();
+  wifiSavedNames=store->savedWifiNamesSnapshot();
+  wifiConnection.savedCount=wifiSavedNames.size();
+  for(size_t i=0;i<wifiScan.count;++i) {
+    wifiScan.networks[i].saved=false;
+    for(const auto& name:wifiSavedNames)if(name==wifiScan.networks[i].ssid)wifiScan.networks[i].saved=true;
+  }
+  wifiObservedRevision=prov->wifiRevision();
+}
+void openWifiUi() {
+  wifiPassword="";wifiScroll=0;wifiShowSaved=false;
+  refreshWifiUi();goTo(Screen::Wifi);
+  if(!wifiScan.scanning)prov->startWifiScan();
+  refreshWifiUi();message="";
+}
+void editWifiPassword(bool ssid=false) {
+  wifiEditingSsid=ssid;wifiPassword="";
+  wifiKeyboardOffset=0;wifiKeyboardSymbols=false;wifiKeyboardUpper=false;message="";
+  goTo(Screen::WifiPassword);
+}
+void chooseWifiRow(size_t index) {
+  if(wifiShowSaved) {
+    if(index>=wifiSavedNames.size())return;
+    wifiTarget=wifiSavedNames[index];wifiTargetSaved=true;wifiTargetSupported=true;wifiTargetSecured=true;
+  } else {
+    if(index>=wifiScan.count)return;
+    const auto& row=wifiScan.networks[index];
+    wifiTarget=row.ssid;wifiTargetSaved=row.saved;wifiTargetSecured=row.secured;wifiTargetSupported=row.supported;
+  }
+  message="";goTo(Screen::WifiDetails);
+}
+void wifiKeyboardTap(size_t key) {
+  const bool couldConnect=wifiJoinCanStart();message="";
+  if(key<64) {
+    const size_t columns=wifiKeyboardColumns(wifiKeyboardSymbols);
+    const char c=wifiKeyboardLetter(wifiKeyboardSymbols,wifiKeyboardUpper,key%columns,key/columns);
+    if(c && wifiPassword.length()<(wifiEditingSsid?32:64))wifiPassword+=c;
+  } else if(key==64 && !wifiKeyboardSymbols){wifiKeyboardUpper=!wifiKeyboardUpper;wifiLettersDirty=true;}
+  else if(key==65){wifiKeyboardSymbols=!wifiKeyboardSymbols;wifiKeyboardOffset=0;wifiLettersDirty=true;}
+  else if(key==66){if(wifiPassword.length()<(wifiEditingSsid?32:64))wifiPassword+=' ';}
+  else if(key==67 && wifiPassword.length())wifiPassword.remove(wifiPassword.length()-1);
+  wifiEntryDirty=true;wifiUtilityDirty=true;
+  if(couldConnect!=wifiJoinCanStart())barDirty=true;
+}
+
 void runAction(Act id) {
   switch (id) {
+    case Act::WifiOpen: openWifiUi();return;
+    case Act::WifiPhone:
+      if(screen==Screen::WifiPhone && !phoneSetup.apPassword.length())prov->endPhoneSetup();
+      if(!prov->beginPhoneSetup()){message="Phone setup could not start";contentDirty=true;return;}
+      phoneSetup=prov->phoneSetupSnapshot();phoneShowPage=false;phoneSetupSucceeded=false;
+      refreshPhoneQr();goTo(Screen::WifiPhone);phoneNextCheckAt=millis()+1000;return;
+    case Act::WifiPhonePage:phoneShowPage=!phoneShowPage;refreshPhoneQr();contentDirty=true;barDirty=true;return;
+    case Act::WifiPhoneDone:goTo(Screen::Wifi);refreshWifiUi();return;
+    case Act::WifiScan:
+      wifiShowSaved=false;wifiScroll=0;message="";prov->startWifiScan();refreshWifiUi();contentDirty=true;return;
+    case Act::WifiSaved:
+      wifiShowSaved=!wifiShowSaved;wifiScroll=0;message="";refreshWifiUi();contentDirty=true;return;
+    case Act::WifiAdd: wifiTarget="";wifiTargetSaved=false;wifiTargetSecured=true;wifiTargetSupported=true;editWifiPassword(true);return;
+    case Act::WifiEdit: wifiTargetSaved=false;editWifiPassword();return;
+    case Act::WifiForget: modal=Modal::ConfirmForgetWifi;contentDirty=true;return;
+    case Act::WifiCancel:
+      prov->cancelWifiJoin();wifiPassword="";refreshWifiUi();goTo(Screen::Wifi);return;
+    case Act::WifiConnect: {
+      if(screen==Screen::WifiPassword && wifiEditingSsid) {
+        if(!wifiJoinCanStart())return;
+        wifiTarget=wifiPassword;
+        if(!wifiTarget.length())return;
+        editWifiPassword();return;
+      }
+      if(screen==Screen::WifiDetails && !wifiTargetSaved && wifiTargetSecured){editWifiPassword();return;}
+      if(!wifiTargetSaved && wifiTargetSecured && !wifiPassphraseValid(wifiPassword))return;
+      const bool started=wifiTargetSaved?prov->connectSavedWifiNetwork(wifiTarget):prov->tryWifiNetwork(wifiTarget,wifiPassword);
+      if(started){wifiPassword="";goTo(Screen::WifiJoining);refreshWifiUi();wifiUiCandidateId=wifiConnection.candidateId;}
+      else {message=prov->wifiConnectionSnapshot().detail;contentDirty=true;}
+      return;
+    }
+    case Act::UseThread: usePreviewThread(); return;
+    case Act::NotNow: goTo(Screen::Home); return;
     case Act::Review:
       approvalIndex = 0;
       goTo(Screen::Approvals);
       return;
+    case Act::VoiceReview: {
+      const String command = voice.commandId();
+      const uint32_t generation = navigationGeneration;
+      if (voice.reviewReason() != "gateway_approval" || command.length() == 0) return;
+      enqueueUiNetworkJob([] { gw->refreshApprovals(); }, [command, generation] {
+        if (generation != navigationGeneration || command != voice.commandId()) return;
+        for (size_t i = 0; i < gw->approvalCount(); ++i) {
+          const PendingApproval* row = gw->approval(i);
+          if (row && row->commandId == command) {
+            approvalIndex = i;
+            goTo(Screen::Approvals);
+            return;
+          }
+        }
+        message = "Original approval unavailable; use console or recheck";
+        contentDirty = true;
+      });
+      return;
+    }
+    case Act::VoiceStatus:
+      if (voice.resumeStatus()) { message = "Checking original recording"; contentDirty = true; }
+      return;
+    case Act::VoiceConsole:
+      goTo(Screen::Send);
+      message = "Continue this note in the web console";
+      contentDirty = true;
+      return;
+    case Act::VoiceDismiss: {
+      if (!voice.canDismissCapture() || uiNetworkBusy()) return;
+      // Sent acknowledges dispatch, not a finished T3 turn. Transfer a background
+      // completion's cursor to the reply reader before a new draft can replace it.
+      if (voice.stage() == VoiceStage::Sent && voice.responseAfter().length() > 0) {
+        const String environment = voiceCaptureEnvironment;
+        const String thread = voiceCaptureThread;
+        const String after = voice.responseAfter();
+        const String media = voice.mediaId();
+        enqueueUiNetworkJob([environment, thread, after] {
+          gw->lockState();
+          uiOperationSucceeded = environment == gw->context().environmentId && thread == gw->context().threadId;
+          if (uiOperationSucceeded) {
+            gw->openResponse(after);
+            uiOperationSucceeded = environment == gw->context().environmentId
+              && thread == gw->context().threadId && gw->responseOpen();
+          }
+          gw->unlockState();
+        }, [media] {
+          if (media != voice.mediaId()) return;
+          if (!uiOperationSucceeded) {
+            message = "Open the original thread before starting a new clip";
+          } else {
+            voice.reset();
+            message = "Previous reply remains in the thread";
+          }
+          contentDirty = true;
+        });
+        return;
+      }
+      voice.reset();
+      message = "Previous note remains in the console";
+      contentDirty = true;
+      return;
+    }
     case Act::Talk:
       goTo(Screen::Send);
       return;
@@ -3114,6 +3666,11 @@ void runAction(Act id) {
     case Act::NewThread:
       createThreadNow();
       return;
+    case Act::Agents: browseDirectAgents(false); return;
+    case Act::AgentSessions: browseDirectAgents(true); return;
+    case Act::AgentUse: applyDirectAgent(false); return;
+    case Act::AgentResume: modal = Modal::ConfirmNativeResume; contentDirty = true; return;
+    case Act::AgentBack: goToThreads(); return;
     case Act::PickThread:
       goToThreads();
       return;
@@ -3144,22 +3701,15 @@ void runAction(Act id) {
       contentDirty = true;
       return;
     }
-    case Act::PrevPage: {
-      const ThreadResponse& r = gw->response();
-      if (r.pageCount <= 1) return;
-      showBusy("Reply", "Loading page");
-      queueResponsePage(r.page > 0 ? r.page - 1 : r.pageCount - 1);
-      contentDirty = true;
+    case Act::PrevPage:
+      stepReplyPage(-1);
       return;
-    }
-    case Act::NextPage: {
-      const ThreadResponse& r = gw->response();
-      if (r.pageCount <= 1) return;
-      showBusy("Reply", "Loading page");
-      queueResponsePage((r.page + 1) % r.pageCount);
-      contentDirty = true;
+    case Act::NextPage:
+      stepReplyPage(1);
       return;
-    }
+    case Act::ReturnThread:
+      goTo(Screen::Home);
+      return;
     case Act::Approve: {
       const PendingApproval* a = gw->approval(approvalIndex);
       if (!a) return;
@@ -3171,7 +3721,12 @@ void runAction(Act id) {
     }
     case Act::Reject: {
       const PendingApproval* a = gw->approval(approvalIndex);
-      if (a) answerApproval(a->commandId, a->intentType, false);
+      if (a) {
+        pendingApprovalId = a->commandId;
+        pendingApprovalSummary = a->summary;
+        modal = Modal::ConfirmRejection;
+        contentDirty = true;
+      }
       return;
     }
     case Act::NextApproval:
@@ -3211,7 +3766,17 @@ void runAction(Act id) {
     case Act::ConfirmYes: {
       const Modal which = modal;
       modal = Modal::None;
-      if (which == Modal::ConfirmApproval) {
+      if (which == Modal::ConfirmNativeResume) { applyDirectAgent(true); return; }
+      if(which==Modal::ConfirmForgetWifi) {
+        const bool removed=store->forgetWifiNetwork(wifiTarget);
+        message=removed?"Saved network removed":"Switch networks before forgetting";
+        refreshWifiUi();goTo(Screen::Wifi);
+      } else if (which == Modal::ConfirmClaim) {
+        showBusy("New code", "Previous code will stop working");
+        enqueueUiNetworkJob([] { gw->requestNewClaimCode(); }, [] {});
+      } else if (which == Modal::ConfirmRejection) {
+        answerApproval(pendingApprovalId, pendingApprovalSummary, false);
+      } else if (which == Modal::ConfirmApproval) {
         answerApproval(pendingApprovalId, pendingApprovalSummary, true);
       } else if (which == Modal::ConfirmReprovision) {
         message = "Re-entering provisioning";
@@ -3248,6 +3813,20 @@ void runAction(Act id) {
         }
         // Re-entered with the confirmation already given, which is why local confirmation lives
         // here and not inside runControl(): the gate must not loop back on itself.
+        if (uiNetworkBusy()) {
+          if (pendingControl.kind != "stop" && !(pendingControl.kind == "legacy" && pendingControl.id == "stop")) {
+            message = "Request pending; review again when finished"; return;
+          }
+          if (!deferredStopPending) {
+            deferredStop = pendingControl;
+            deferredStopEnvironment = pendingControlEnvironment;
+            deferredStopThread = pendingControlThread;
+            deferredStopRevision = pendingControlRevision;
+            deferredStopPending = true;
+          }
+          message = "Stop queued after the pending request";
+          contentDirty = true; return;
+        }
         dispatchControl(pendingControl);
       }
       return;
@@ -3300,24 +3879,23 @@ void handleDrawerTap(int16_t x, int16_t y) {
 
 void handleContentTap(int16_t x, int16_t y) {
   switch (screen) {
+    case Screen::Wifi: {
+      if(y<kWifiListTop || y>=contentBottom())return;
+      chooseWifiRow(static_cast<size_t>((y-kWifiListTop+wifiScroll)/kWifiRowH));return;
+    }
+    case Screen::WifiPassword:
+      if(x>=8 && x<232 && y>=kWifiKeyboardTop && y<kWifiUtilityTop) {
+        const size_t col=static_cast<size_t>((x-8+wifiKeyboardOffset)/kWifiLetterW);
+        const size_t row=static_cast<size_t>((y-kWifiKeyboardTop)/kWifiLetterH);
+        wifiKeyboardTap(row*wifiKeyboardColumns(wifiKeyboardSymbols)+col);
+      } else if(x>=8 && x<232 && y>=kWifiUtilityTop && y<kWifiUtilityTop+kWifiUtilityH)
+        wifiKeyboardTap(64+(x-8)/56);
+      return;
     case Screen::Home: {
       if (!uip::hit(homeActionRect(), x, y)) return;
-      if (pickerOnNew()) { createThreadNow(); return; }
-      // OPEN goes into the thread the line is pointing at. With nothing bound it is CHOOSE, and it
-      // takes the person somewhere they can pick one rather than leaving them on a dead line.
-      if (pickerTarget() < 0 && !haveThread()) { goToThreads(); return; }
-      // Committed first, so OPEN can never open a thread the device is not actually bound to.
-      if (pickerCommitAt != 0) {
-        pickerOpenResponse = true;
-        commitPicker();
-        return;
-      }
+      if (!haveThread()) { goToThreads(); return; }
       goTo(Screen::Response);
-      if (!gw->responseOpen() && haveThread()) {
-        showBusy("Reply", "Loading the latest");
-        queueResponsePage(0, true);
-        contentDirty = true;
-      }
+      if (!gw->responseOpen()) queueResponsePage(0, true);
       return;
     }
     case Screen::Actions: {
@@ -3331,7 +3909,7 @@ void handleContentTap(int16_t x, int16_t y) {
     case Screen::Threads: {
       if (uip::hit(kBreadcrumb, x, y)) {
         goTo(Screen::Environments);
-        if (browse.environmentCount() == 0) refreshEnvironments();
+        refreshEnvironments();
         return;
       }
       const int16_t local = (int16_t)(y - kThreadListTop + threadScroll);
@@ -3464,23 +4042,20 @@ void handleTap(int16_t x, int16_t y) {
     return;
   }
 
+  if (barVisible() && y >= kH - kBarH) { handleBarTap(x); return; }
+  if (modal != Modal::None) return;
+
   if (screen == Screen::Status) {
     // The one thing an unclaimed device can be asked for: a replacement code. Deliberately behind a
     // tap on the code itself rather than anything ambient — rotating invalidates the code the owner
     // may be part-way through typing, which is also why this is not an action-bar button.
     if (unclaimed() && y >= kClaimTop && y < kClaimTop + 46) {
-      showBusy("New code", "Asking the gateway");
-      enqueueUiNetworkJob([] {
-        gw->lockState();
-        gw->requestNewClaimCode();
-        gw->unlockState();
-      }, [] {});
+      modal = Modal::ConfirmClaim;
       contentDirty = true;
     }
     return;
   }
 
-  if (barVisible() && y >= kH - kBarH) { handleBarTap(x); return; }
   // A modal owns the content region; its two answers live in the action bar, and a tap anywhere
   // else inside the dialog does nothing rather than something surprising.
   if (modal != Modal::None) return;
@@ -3562,6 +4137,176 @@ void handleDrag(int16_t y, int16_t dy) {
     if (next > limit) next = limit;
     if (next != actionScroll) { actionScroll = next; contentDirty = true; }
   }
+  if(screen==Screen::Wifi) {
+    const size_t count=wifiShowSaved?wifiSavedNames.size():wifiScan.count;
+    const int16_t limit=maxScroll(count,kWifiRowH,kWifiListTop);
+    const int16_t next=max<int16_t>(0,min<int16_t>(limit,wifiScroll-dy));
+    if(next!=wifiScroll){wifiScroll=next;contentDirty=true;}
+  }
+
+}
+
+struct TouchTargetInfo { uint32_t identity = 0; Rect rect{0,0,0,0}; };
+uint32_t touchIdentity(const String& label) {
+  uint32_t value = 2166136261u;
+  for (size_t i=0; i<label.length(); ++i) { value ^= static_cast<uint8_t>(label[i]); value *= 16777619u; }
+  return value == 0 ? 1 : value;
+}
+TouchTargetInfo touchTargetAt(int16_t x, int16_t y) {
+  auto target = [&](const String& name, const Rect& rect) {
+    // Semantic identity prevents a row replacement or changed confirmation from inheriting a tap.
+    const String scope = String(static_cast<int>(screen)) + ":" + String(static_cast<int>(modal))
+      + ":" + gw->context().environmentId + ":" + gw->context().threadId + ":" + name;
+    return TouchTargetInfo{touchIdentity(scope),rect};
+  };
+  if (drawerT > 0.05f) {
+    if (y < kContentTop) return target("drawer-close",{0,0,kW,kContentTop});
+    for (uint8_t i=0;i<drawerRowCount;++i) {
+      const Rect r=drawerRowRect(i);
+      if (r.y+r.h > kContentTop+drawerShownPx-12) break;
+      if (uip::hit(r,x,y)) return target(String("drawer:")+String(static_cast<int>(drawerRows[i])),r);
+    }
+    return target("drawer-dismiss",{0,static_cast<int16_t>(kContentTop+drawerShownPx),kW,kH});
+  }
+  if (y < kContentTop) {
+    if (canGoBack() && uip::hit(kBackHit,x,y)) return target("back",kBackHit);
+    if (uip::hit(kHandleHit,x,y)) return target("drawer",kHandleHit);
+    return {};
+  }
+  if (barVisible() && y>=kH-kBarH) {
+    for(uint8_t i=0;i<actionCount;++i) {
+      const Rect button=actionRect(i,kH-kBarH);
+      const Rect r{static_cast<int16_t>(button.x-4),static_cast<int16_t>(kH-kBarH),static_cast<int16_t>(button.w+8),kBarH};
+      if(uip::hit(r,x,y) && actions[i].enabled) {
+        const String name=String("action:")+String(static_cast<int>(actions[i].id))+":"+String(gw->controlsRevision())
+          +":"+pendingControl.id+":"+pendingApprovalId+":"+previewThreadId
+          +":"+browse.previewEnvironmentId()+":"+browse.previewProjectId()+":"+wifiTarget;
+        return target(name,r);
+      }
+    }
+    return {};
+  }
+  if (screen==Screen::Status && modal==Modal::None) {
+    if (unclaimed() && y>=kClaimTop && y<kClaimTop+46) return target("claim",{0,kClaimTop,kW,46});
+    return {};
+  }
+  if(modal!=Modal::None || (!operable() && !configScreen())) return {};
+  if(screen==Screen::WifiPassword && x>=8 && x<232) {
+    size_t key=100;
+    if(y>=kWifiKeyboardTop && y<kWifiUtilityTop) {
+      const size_t col=static_cast<size_t>((x-8+wifiKeyboardOffset)/kWifiLetterW);
+      const size_t row=static_cast<size_t>((y-kWifiKeyboardTop)/kWifiLetterH);
+      if(wifiKeyboardLetter(wifiKeyboardSymbols,wifiKeyboardUpper,col,row))key=row*wifiKeyboardColumns(wifiKeyboardSymbols)+col;
+    } else if(y>=kWifiUtilityTop && y<kWifiUtilityTop+kWifiUtilityH)key=64+(x-8)/56;
+    if(key<68) {
+      const Rect r=wifiKeyRect(key);
+      if(r.x<0 || r.x+r.w>kW)return {};
+      return target(String("wifi-key:")+String(key)+":"+String(wifiKeyboardOffset)+":"+String(wifiKeyboardUpper)+":"+String(wifiKeyboardSymbols),r);
+    }
+    return {};
+  }
+  if(screen==Screen::Wifi && y>=kWifiListTop && y<contentBottom()) {
+    const size_t index=static_cast<size_t>((y-kWifiListTop+wifiScroll)/kWifiRowH);
+    const size_t count=wifiShowSaved?wifiSavedNames.size():wifiScan.count;
+    if(index>=count)return {};
+    const int16_t rowTop=kWifiListTop+static_cast<int16_t>(index)*kWifiRowH-wifiScroll;
+    if(rowTop<kWifiListTop || rowTop+kWifiRowH>contentBottom())return {};
+    const String name=wifiShowSaved?wifiSavedNames[index]:wifiScan.networks[index].ssid;
+    const int16_t top=max<int16_t>(kWifiListTop,kWifiListTop+index*kWifiRowH-wifiScroll);
+    return target(String("wifi:")+name,{0,top,kW,static_cast<int16_t>(min<int16_t>(contentBottom(),kWifiListTop+(index+1)*kWifiRowH-wifiScroll)-top)});
+  }
+  if(screen==Screen::Home && uip::hit(homeActionRect(),x,y))
+    return target(String("home:")+String(pickerSlot()),homeActionRect());
+  if(screen==Screen::Threads && uip::hit(kBreadcrumb,x,y)) return target("breadcrumb",kBreadcrumb);
+  if(screen==Screen::Send && !voiceInJourney() && uip::hit(micButtonRect(),x,y)) return target("microphone",micButtonRect());
+  if(screen==Screen::Response && gw->responseOpen()) {
+    const ThreadResponse& reply=gw->response();
+    for(size_t i=0;i<reply.followUpCount && i<2;++i) {
+      const Rect r=i==0?kFollowLeft:kFollowRight;
+      if(uip::hit(r,x,y)) return target(String("follow:")+reply.followUps[i].id,r);
+    }
+  }
+  int16_t top=0,rowH=0,scroll=0;
+  size_t count=0;
+  if(screen==Screen::Actions){top=kActionListTop;rowH=kActionRowH;scroll=actionScroll;count=gw->controlCount();}
+  if(screen==Screen::Threads){top=kThreadListTop;rowH=kThreadRowH;scroll=threadScroll;count=threadRowCount();}
+  if(screen==Screen::Projects){top=kBrowseListTop;rowH=kBrowseRowH;scroll=projectScroll;count=browse.projectCount();}
+  if(screen==Screen::Environments){top=kBrowseListTop;rowH=kBrowseRowH;scroll=envScroll;count=browse.environmentCount();}
+  if(rowH==0 || y<top || y>=contentBottom()) return {};
+  const size_t index=static_cast<size_t>((y-top+scroll)/rowH);
+  if(index>=count) return {};
+  String identity;
+  if(screen==Screen::Actions){const auto* row=gw->control(index); if(!row||!row->enabled)return {};identity=row->id+":"+String(gw->controlsRevision());}
+  if(screen==Screen::Threads){const auto* row=threadRowAt(index);if(!row)return {};identity=row->id;}
+  if(screen==Screen::Projects){const auto* row=browse.project(index);if(!row)return {};identity=row->id;}
+  if(screen==Screen::Environments){const auto* row=browse.environment(index);if(!row)return {};identity=row->id;}
+  const int16_t rowTop=max(top,static_cast<int16_t>(top+index*rowH-scroll));
+  const int16_t rowBottom=min(contentBottom(),static_cast<int16_t>(top+(index+1)*rowH-scroll));
+  return target(String("row:")+identity,{0,rowTop,kW,static_cast<int16_t>(rowBottom-rowTop)});
+}
+void reportTouchPerformance() {
+  const uint32_t now=millis();
+  if(touchPerformanceReportAt==0){touchPerformanceReportAt=now;return;}
+  if(now-touchPerformanceReportAt<60000)return;
+  if(touchPerformance.frames || touchPerformance.inputs || touchPerformance.lockSkips) {
+    Serial.printf("[ui-perf] window_ms=%u frames=%u frame_gap_max_ms=%u lock_skips=%u input_n=%u sample_dispatch_max_ms=%u sample_dispatch_p95_upper_ms=%u retained=%u discard_batches=%u\n",
+      static_cast<unsigned>(now-touchPerformanceReportAt),static_cast<unsigned>(touchPerformance.frames),
+      static_cast<unsigned>(touchPerformance.maxFrameGap),static_cast<unsigned>(touchPerformance.lockSkips),
+      static_cast<unsigned>(touchPerformance.inputs),static_cast<unsigned>(touchPerformance.maxInputAge),
+      static_cast<unsigned>(touchPerformance.p95UpperMs()),static_cast<unsigned>(touchPerformance.retained),static_cast<unsigned>(touchPerformance.discarded));
+  }
+  touchPerformance.resetWindow();touchPerformanceReportAt=now;
+}
+void dirtyTouchFeedback() {
+  if(screen==Screen::WifiPassword && modal==Modal::None && drawerT<=0.001f
+      && touchTarget.y>=kWifiKeyboardTop && touchTarget.y<kWifiUtilityTop+kWifiUtilityH) {
+    if(touchTarget.y<kWifiUtilityTop)wifiLettersDirty=true;else wifiUtilityDirty=true;
+    return;
+  }
+  // Pressed feedback is a bounded outline; repaint its region only when removing it.
+  if(touchTarget.active && touchDown())return;
+  if(drawerT>0.001f){drawerDirty=true;return;}
+  if(touchTarget.y<kContentTop){chromeDirty=true;return;}
+  if(touchTarget.y>=kH-kBarH){barDirty=true;return;}
+  contentDirty=true;
+}
+void paintPressedTarget() {
+  if(!touchTarget.active || !touchDown()) return;
+  if(touchTarget.generation!=navigationGeneration){touchTarget.cancel();return;}
+  // A bounded outline preserves the existing text, with no permanent animation or fill.
+  const int16_t top=max<int16_t>(0,touchTarget.y);
+  const int16_t bottom=min<int16_t>(kH,touchTarget.y+touchTarget.h);
+  if(bottom>top) g().drawRoundRect(touchTarget.x+1,top+1,max<int16_t>(1,touchTarget.w-2),bottom-top-2,4,panelGrey(kBright));
+}
+void handleBusyLocalTap(int16_t x,int16_t y) {
+  if(drawerT>0.05f) {
+    if(y<kContentTop){closeDrawer();return;}
+    for(uint8_t i=0;i<drawerRowCount;++i) {
+      const Rect r=drawerRowRect(i);
+      if(r.y+r.h>kContentTop+drawerShownPx-12)break;
+      if(!uip::hit(r,x,y))continue;
+      const Row row=drawerRows[i];closeDrawerNow();
+      goTo(row==Row::Device?Screen::Device:row==Row::Gateway?Screen::Gateway:row==Row::Thread?Screen::Threads:gw->hasBlockingRequests()?Screen::Approvals:Screen::Response);
+      return;
+    }
+    closeDrawer();return;
+  }
+  if(y<kContentTop){handleTap(x,y);return;}
+  if(barVisible() && y>=kH-kBarH) {
+    // The busy bar exposes local navigation and one deliberate, serialized Stop confirmation.
+    for(uint8_t i=0;i<actionCount;++i) {
+      const Rect r=actionRect(i,kH-kBarH);
+      if(x<r.x-4 || x>=r.x+r.w+4 || !actions[i].enabled)continue;
+      if(actions[i].id==Act::SavedActions || actions[i].id==Act::ConfirmNo || actions[i].id==Act::ConfirmYes) runAction(actions[i].id);
+      return;
+    }
+  }
+  if(screen==Screen::Actions && modal==Modal::None && y>=kActionListTop && y<contentBottom()) {
+    const size_t index=static_cast<size_t>((y-kActionListTop+actionScroll)/kActionRowH);
+    const DeviceControl* control=gw->control(index);
+    if(control && control->enabled && (control->kind=="stop" || (control->kind=="legacy" && control->id=="stop"))) confirmControl(*control);
+    else {message="Request pending; only Stop can be queued";contentDirty=true;}
+  }
 }
 
 }  // namespace
@@ -3593,12 +4338,49 @@ bool uiBegin(GatewayClient& gateway, Provisioning& provisioning, DeviceStore& de
 
 void uiHandleTouch(const TouchEvent& event) {
   if (!displayReady() || !gw || !prov) return;
-  if (!gw->tryLockState(0)) return;
+  if (!replayingTouches && !retainedTouches.empty()) {
+    if(event.gesture==TouchGesture::Drag){touchTarget.move(event);dirtyTouchFeedback();}
+    if(event.gesture!=TouchGesture::Drag && event.gesture!=TouchGesture::None)++touchPerformance.retained;
+    if(!retainedTouches.push(event,navigationGeneration,lastRevision,millis())){touchTarget.cancel();inputWasDiscarded=true;}
+    return;
+  }
+  if (!gw->tryLockState(0)) {
+    if(event.gesture==TouchGesture::Drag){touchTarget.move(event);dirtyTouchFeedback();}
+    if(event.gesture!=TouchGesture::Drag && event.gesture!=TouchGesture::None)++touchPerformance.retained;
+    if(!retainedTouches.push(event,navigationGeneration,lastRevision,millis())) { touchTarget.cancel();inputWasDiscarded=true; }
+    return;
+  }
   struct TouchStateGuard { GatewayClient* client; ~TouchStateGuard() { client->unlockState(); } } touchGuard{gw};
-  // A second tap cannot dispatch twice or change the destination of an in-flight upload.
-  // Keep the header Back affordance available; the late completion cannot navigate over it.
-  if (uiNetworkBusy()) {
-    if (event.gesture == TouchGesture::Tap && event.y < kHeaderH && event.x < 48) goBack();
+  if(event.gesture!=TouchGesture::None && event.gesture!=TouchGesture::Drag)touchPerformance.dispatched(millis()-event.sampledAt);
+  if(event.gesture==TouchGesture::Press && event.y>=kContentTop && lastRevision!=gw->revision()) {
+    touchTarget.cancel();message="Screen changed; tap again";dirtyTouchFeedback();return;
+  }
+  if(event.gesture==TouchGesture::Press) {
+    const TouchTargetInfo target=touchTargetAt(event.x,event.y);
+    touchTarget.begin(event,target.identity,navigationGeneration,target.rect.x,target.rect.y,target.rect.w,target.rect.h);
+    dirtyTouchFeedback();
+    dragTravel=0;dragTravelX=0;dragAxis=DragAxis::Undecided;
+    wifiKeyboardDragStart=wifiKeyboardOffset;wifiKeyboardDragged=false;
+    wifiKeyboardDragging=screen==Screen::WifiPassword && event.y>=kWifiKeyboardTop && event.y<kWifiUtilityTop;
+    dragOwner=event.y<kContentTop?DragOwner::Drawer:drawerT>0.05f?DragOwner::DrawerList:DragOwner::Content;
+  } else if(event.gesture==TouchGesture::Drag) {
+    const bool before=touchTarget.active;
+    touchTarget.move(event);
+    if(before!=touchTarget.active)dirtyTouchFeedback();
+  } else if(event.gesture==TouchGesture::Tap) {
+    const TouchTargetInfo target=touchTargetAt(event.x,event.y);
+    const bool activate=touchTarget.accepts(event,target.identity,navigationGeneration);
+    touchTarget.cancel();dirtyTouchFeedback();
+    if(recordArmed){finishRecording();return;}
+    if(!activate)return;
+  } else if(event.gesture!=TouchGesture::None) {
+    touchTarget.cancel();dirtyTouchFeedback();
+  }
+  // Local navigation stays usable. Mutations remain serialized; only an explicitly confirmed
+  // Stop may be held behind one existing job, with context/revision revalidation at execution.
+  if(uiNetworkBusy() && !(screen==Screen::Wifi || screen==Screen::WifiDetails || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) {
+    if(event.gesture==TouchGesture::Tap)handleBusyLocalTap(event.x,event.y);
+    else if(event.gesture==TouchGesture::Drag) {dragTravelX+=event.dx;handleDrag(event.y,event.dy);}
     return;
   }
 
@@ -3613,7 +4395,8 @@ void uiHandleTouch(const TouchEvent& event) {
       else dragOwner = DragOwner::Content;
       // Push-to-talk starts on contact, not on release: waiting for the lift would record nothing.
       if (operable() && modal == Modal::None && screen == Screen::Send && !clipHeld
-          && drawerT <= 0.05f && uip::hit(micButtonRect(), event.x, event.y)) {
+          && !voiceInJourney() && voice.canStartCapture()
+          && touchDown() && event.contactId==touchContactId() && drawerT <= 0.05f && uip::hit(micButtonRect(), event.x, event.y)) {
         startRecording();
       }
       return;
@@ -3621,6 +4404,9 @@ void uiHandleTouch(const TouchEvent& event) {
     case TouchGesture::Drag:
       dragTravelX = (int16_t)(dragTravelX + event.dx);
       handleDrag(event.y, event.dy);
+      if(wifiKeyboardDragging && dragAxis==DragAxis::Horizontal) {
+        wifiKeyboardDragged=true;moveWifiKeyboard(wifiKeyboardDragStart-dragTravelX);return;
+      }
       if (dragAxis == DragAxis::Horizontal && dragOwner == DragOwner::Content) {
         updateHomePickerDrag(dragTravelX);
       }
@@ -3642,6 +4428,11 @@ void uiHandleTouch(const TouchEvent& event) {
 
     case TouchGesture::SwipeLeft:
     case TouchGesture::SwipeRight: {
+      if(screen==Screen::WifiPassword && wifiKeyboardDragging) {
+        if(!wifiKeyboardDragged && dragAxis!=DragAxis::Vertical)
+          moveWifiKeyboard(wifiKeyboardOffset+(event.gesture==TouchGesture::SwipeLeft?168:-168));
+        wifiKeyboardDragging=false;wifiKeyboardDragged=false;dragTravel=0;dragTravelX=0;dragAxis=DragAxis::Undecided;return;
+      }
       dragTravel = 0;
       dragTravelX = 0;
       if (recordArmed) { finishRecording(); return; }
@@ -3656,7 +4447,14 @@ void uiHandleTouch(const TouchEvent& event) {
       const int forward = event.gesture == TouchGesture::SwipeLeft ? 1 : -1;
 
       // HOME's line under the orb is the destination picker.
-      if (screen == Screen::Home) { pickerStep(forward); return; }
+      if (screen == Screen::Home) { goToThreads(); return; }
+
+      if (screen == Screen::Approvals && gw->approvalCount() > 1) {
+        const int count = (int)gw->approvalCount();
+        approvalIndex = (size_t)(((int)approvalIndex + forward + count) % count);
+        contentDirty = true;
+        return;
+      }
 
       // The three levels.
       if (screen == Screen::Threads || screen == Screen::Projects
@@ -3667,14 +4465,7 @@ void uiHandleTouch(const TouchEvent& event) {
 
       // Paging the reply, which is the meaning this gesture already had here.
       if (screen != Screen::Response || !gw->responseOpen()) return;
-      const ThreadResponse& r = gw->response();
-      if (r.pageCount <= 1) return;
-      const int next = forward > 0
-        ? (r.page + 1) % r.pageCount
-        : (r.page + r.pageCount - 1) % r.pageCount;
-      showBusy("Reply", "Loading page");
-      queueResponsePage(next);
-      contentDirty = true;
+      stepReplyPage(forward);
       return;
     }
 
@@ -3734,7 +4525,7 @@ int uiBenchThreadRowCount() { return (int)threadRowCount(); }
 const char* uiBenchScreenName() {
   switch (screen) {
     case Screen::Status: return "Status";
-    case Screen::Home: return "Home";
+    case Screen::Home: return "Thread";
     case Screen::Threads: return "Threads";
     case Screen::Send: return "Send";
     case Screen::Actions: return "Actions";
@@ -3744,6 +4535,10 @@ const char* uiBenchScreenName() {
     case Screen::Projects: return "Projects";
     case Screen::Device: return "Device";
     case Screen::Gateway: return "Gateway";
+    case Screen::Wifi: return "Wi-Fi";
+    case Screen::WifiDetails: return "Wi-Fi network";
+    case Screen::WifiPassword: return "Wi-Fi entry";
+    case Screen::WifiJoining: return "Wi-Fi connecting";
     default: return "?";
   }
 }
@@ -3788,6 +4583,51 @@ void uiBenchMicRect(int16_t* x, int16_t* y, int16_t* w, int16_t* h) {
   const Rect r = micButtonRect();
   *x = r.x; *y = r.y; *w = r.w; *h = r.h;
 }
+
+bool uiQualificationBusy() {
+  return uiNetworkBusy() || recordArmed || audio::recording() || clipHeld || voice.tracking()
+    || (!voice.canDismissCapture() && voice.hasJob()) || screen==Screen::WifiPassword
+    || screen==Screen::WifiJoining || screen==Screen::WifiPhone || screen==Screen::Wifi
+    || screen==Screen::WifiDetails || modal!=Modal::None;
+}
+bool uiQualificationStep(unsigned step) {
+  if(uiQualificationBusy() || !gw->tryLockState(0))return false;
+  struct Guard { GatewayClient* c;~Guard(){c->unlockState();} } guard{gw};
+  switch(step%10) {
+    case 0: goTo(Screen::Home);return true;
+    case 1: runAction(Act::PickThread);return true;
+    case 2: if(browse.previewThreadCount())selectThreadRow(0);return true;
+    case 3: goBack();return true;
+    case 4: runAction(Act::SavedActions);return true;
+    case 5: goTo(Screen::Home);return true;
+    case 6: runAction(Act::Talk);return true;
+    case 7: goTo(Screen::Home);return true;
+    case 8: runAction(Act::Refresh);return true;
+    default: goTo(Screen::Home);return true;
+  }
+}
+bool uiQualificationVerify() {
+#ifndef NEXT_CODER_QUALIFICATION_VERIFY_ACTION_ID
+  // A mutable display label is not authority to dispatch a production action.
+  return false;
+#else
+  if(uiQualificationBusy() || !gw->tryLockState(0))return false;
+  struct Guard { GatewayClient* c;~Guard(){c->unlockState();} } guard{gw};
+  for(size_t i=0;i<gw->controlCount();++i) {
+    const DeviceControl* row=gw->control(i);
+    if(!row || row->actionId!=NEXT_CODER_QUALIFICATION_VERIFY_ACTION_ID
+        || row->kind!="remote_action" || !row->enabled || row->mediaKind.length())continue;
+    runControlRow(*row);
+    if(modal==Modal::ConfirmControl) {
+      uiBenchRunAction("RUN");
+      uiBenchRunAction("RUN"); // Deliberate duplicate: busy/replaced footer must reject it.
+    }
+    return uiNetworkBusy();
+  }
+  return false;
+#endif
+}
+
 #endif
 
 void uiTick() {
@@ -3798,9 +4638,63 @@ void uiTick() {
   if (!gw || !prov) return;
   // Read models and draw from one coherent state. A socket drops this lock; only compact
   // parsing can defer a frame. Never block the render task waiting for another task.
-  if (!gw->tryLockState(0)) return;
+  reportTouchPerformance();
+  if (!gw->tryLockState(0)) { ++touchPerformance.lockSkips;nextFrameAt=millis()+kFrameMs; return; }
   struct FrameStateGuard { GatewayClient* client; ~FrameStateGuard() { client->unlockState(); } } frameGuard{gw};
   completeUiNetworkJob();
+  if(screen==Screen::WifiPhone && static_cast<int32_t>(millis()-phoneNextCheckAt)>=0) {
+    phoneNextCheckAt=millis()+1000;
+    auto latest=prov->phoneSetupSnapshot();
+    if(latest.revision!=phoneSetup.revision || latest.active!=phoneSetup.active
+        || (latest.waitingForHotspot && latest.remainingSeconds!=phoneSetup.remainingSeconds)) {
+      const bool newQr=latest.apName!=phoneSetup.apName || latest.apPassword!=phoneSetup.apPassword || latest.active!=phoneSetup.active;
+      phoneSetup=latest;
+      if(phoneSetup.phase==PhoneSetupPhase::Succeeded){phoneSetupSucceeded=true;phoneQr.clear();}
+      else if(phoneSetup.waitingForHotspot)phoneQr.clear();
+      else if(newQr)refreshPhoneQr();
+      contentDirty=true;barDirty=true;
+    }
+  }
+  if(wifiObservedRevision!=prov->wifiRevision()) {
+    refreshWifiUi();
+    if(wifiConnection.phase==WifiConnectionPhase::TryingAlternate) {
+      wifiHadDisconnect=true;
+      wifiNotice="Trying saved Wi-Fi";wifiNoticeUntil=millis()+8000;
+    } else if(wifiConnection.phase==WifiConnectionPhase::Joining
+        && !wifiConnection.activeSsid.length() && wifiPreviousActive.length()) {
+      wifiHadDisconnect=true;
+      wifiNotice="Reconnecting Wi-Fi";wifiNoticeUntil=millis()+8000;
+    } else if(wifiConnection.phase==WifiConnectionPhase::Connected) {
+      if(wifiPreviousActive.length() && (wifiConnection.activeSsid!=wifiPreviousActive || wifiHadDisconnect)) {
+        wifiNotice=wifiConnection.activeSsid==wifiPreviousActive?String("Wi-Fi restored"):String("Wi-Fi: ")+wifiConnection.activeSsid;
+        wifiNoticeUntil=millis()+8000;
+      }
+      wifiPreviousActive=wifiConnection.activeSsid;wifiHadDisconnect=false;
+    }
+    if(screen==Screen::Wifi)message=wifiConnection.detail;
+    if(screen==Screen::WifiJoining && wifiConnection.candidateId==wifiUiCandidateId
+        && wifiConnection.candidateResult==WifiCandidateResult::Succeeded) {
+      wifiPassword="";wifiShowSaved=true;message=wifiConnection.candidateDetail;goTo(Screen::Wifi);
+    }
+    chromeDirty=true;contentDirty=true;
+  }
+  if(wifiNoticeUntil && static_cast<int32_t>(millis()-wifiNoticeUntil)>=0){wifiNoticeUntil=0;wifiNotice="";chromeDirty=true;}
+  TouchEventBuffer::Item retained;
+  replayingTouches=true;
+  while(retainedTouches.pop(retained)) {
+    if(!TouchEventBuffer::current(retained,navigationGeneration,gw->revision(),millis())) {
+      touchTarget.cancel();inputWasDiscarded=true;continue;
+    }
+    uiHandleTouch(retained.event);
+  }
+  replayingTouches=false;
+  if(inputWasDiscarded){++touchPerformance.discarded;inputWasDiscarded=false;message="Screen changed; tap again";dirtyTouchFeedback();}
+  if(deferredStopPending && !uiNetworkBusy()) {
+    deferredStopPending=false;
+    if(deferredStopEnvironment==gw->context().environmentId && deferredStopThread==gw->context().threadId
+        && deferredStopRevision==gw->controlsRevision()) dispatchControl(deferredStop);
+    else {message="Stop context changed; review again";contentDirty=true;}
+  }
 
   // Recording owns the loop while it runs. The I2S ring holds tens of milliseconds, so the pump
   // has to be tighter than the frame budget; the orb stops for the duration and the button's own
@@ -3826,11 +4720,13 @@ void uiTick() {
     }
 
     const uint32_t now = millis();
+    bool capturePainted=false;
     // Only the digits, at a fixed origin. Repainting the whole capsule here cost about 4 ms of a
     // 25 ms pump slice, four times a second, for a number that changes in one place.
     if (now - recordPaintedAt >= 250) {
       recordPaintedAt = now;
       paintMicTimer(audio::recordedMs());
+      capturePainted=true;
     }
     // THE ORB, INSIDE THE PUMP'S SLICE.
     //
@@ -3851,7 +4747,9 @@ void uiTick() {
       // note where recordOrbAt is set. Verified by the bench harness, not by reasoning: a full
       // 4 s hold still returns every sample.
       displayDrawOrb(orb, kOrbCx, voiceLayout().orbCy, now - orbStartedAt, kOrbDrawPx);
+      capturePainted=true;
     }
+    if(capturePainted)touchPerformance.frame(millis());
     // A ceiling was hit while the finger is still down: stop here rather than waiting for a lift
     // that may not come for another twenty seconds.
     if (!audio::recording()) finishRecording();
@@ -3920,7 +4818,10 @@ void uiTick() {
   }
   if (gw->revision() != lastRevision) {
     lastRevision = gw->revision();
-    contentDirty = true;
+    // Local network entry has no dependency on thread/display refreshes. Repainting the
+    // complete keyboard for those updates adds work underneath an owner's active contact.
+    if (!(screen==Screen::Wifi || screen==Screen::WifiDetails
+          || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) contentDirty = true;
     drawerDirty = true;
     modeDirty = true;
     // The header is painted on chromeDirty, which revision() does not set — so the device's own
@@ -3935,7 +4836,8 @@ void uiTick() {
   }
   if (browse.revision() != lastBrowseRevision) {
     lastBrowseRevision = browse.revision();
-    contentDirty = true;
+    if (!(screen==Screen::Wifi || screen==Screen::WifiDetails
+          || screen==Screen::WifiPassword || screen==Screen::WifiJoining || screen==Screen::WifiPhone)) contentDirty = true;
   }
   if (gw->approvalCount() != lastApprovalCount) {
     lastApprovalCount = gw->approvalCount();
@@ -4016,7 +4918,7 @@ void uiTick() {
     contentDirty = true;
   }
 
-  if (chromeDirty) drawChrome();
+  if (chromeDirty && !displayComposeScene(0,kContentTop,panelGrey(kBg),[](void*){drawChrome();},nullptr))drawChrome();
 
   // Order is load-bearing, three times over.
   //
@@ -4031,7 +4933,9 @@ void uiTick() {
   // The CONTENT goes last and only when the drawer is fully away, because the drawer covers the
   // whole page and repainting underneath it is work nobody can see.
   // Never while the drawer owns the screen — see openDrawer() for what interleaving the two did.
-  if ((barMoved || barDirty) && !drawerOpen && drawerT <= 0.001f) paintActionBar();
+  if ((barMoved || barDirty) && !drawerOpen && drawerT <= 0.001f) {
+    if(!displayComposeScene(kH-kBarH,kBarH,panelGrey(kBg),[](void*){paintActionBar();},nullptr))paintActionBar();
+  }
 
   const bool drawerActive = drawerMoved || drawerT > 0.0f || drawerShownPx > 0;
   if (drawerActive && (drawerMoved || drawerDirty)) {
@@ -4042,7 +4946,14 @@ void uiTick() {
   drawerDirty = false;
 
   const bool repaintedContent = contentDirty && drawerT <= 0.001f;
-  if (repaintedContent) paintContent();
+  if (repaintedContent) {
+    if(screen==Screen::WifiPassword || !displayComposeScene(kContentTop,contentBottom()-kContentTop,panelGrey(kBg),[](void*){paintContent();},nullptr))paintContent();
+  }
+  if(!repaintedContent && screen==Screen::WifiPassword && modal==Modal::None && drawerT<=0.001f) {
+    if(wifiEntryDirty)paintWifiEntry();
+    if(wifiLettersDirty)paintWifiLetters();
+    if(wifiUtilityDirty)paintWifiUtilities();
+  }
 
   const bool paintedPickerMotion = pickerMoving && screen == Screen::Home
     && modal == Modal::None && drawerT <= 0.001f;
@@ -4094,6 +5005,8 @@ void uiTick() {
   // the header, a dot stands in for it so the drawer's tap target keeps its mark.
   if ((bigOrb || voiceShowsOrb()) && orbReady) drawHeaderStatusDot();
 
+  paintPressedTarget();
+  touchPerformance.frame(millis());
   const uint32_t drawMs = millis() - drawStart;
   if (drawMs > stats.worstDrawMs) stats.worstDrawMs = drawMs;
   stats.frames++;
@@ -4125,7 +5038,7 @@ void uiTick() {
   // for the same reason the poll below does. A failed write REVERTS the highlight: the line under
   // the orb is what tells a person where their voice is going, and showing thread B while bound to
   // thread A would send it to the wrong place.
-  if (pickerCommitAt != 0 && (int32_t)(millis() - pickerCommitAt) >= 0) commitPicker();
+  // Destination browsing never writes on a timer; USE THREAD is the only commit.
 
   // Network polling runs on the same bounded worker as browse/action requests. Render state is a
   // private worker copy until completion, so an in-flight TLS read never races the orb renderer.

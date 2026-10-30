@@ -1,0 +1,219 @@
+{
+  "verifiedAt": "2026-10-23T07:06:14.173Z",
+  "method": "Browser walkthrough of all corrected current-flow journeys; explanatory model, not physical firmware execution",
+  "mappedStates": 89,
+  "journeys": [
+    {
+      "journey": "Saved action → reply",
+      "frames": [
+        "Home and selected destination",
+        "Assigned action list",
+        "Review before running",
+        "Submit action",
+        "Load fresh reply",
+        "Streaming reply",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Voice → local Parakeet → T3",
+      "frames": [
+        "Home and selected destination",
+        "Ready to record",
+        "Recording while held",
+        "Review held recording",
+        "Upload recording",
+        "Local transcription in progress",
+        "Send transcript through policy",
+        "Load fresh reply",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "First-time setup & claim",
+      "frames": [
+        "Power on",
+        "First-time Wi-Fi setup",
+        "Joining Wi-Fi",
+        "Connect to cloud",
+        "Claim this controller",
+        "Home and selected destination",
+        "Status drawer navigation",
+        "Select a thread"
+      ]
+    },
+    {
+      "journey": "Select environment, folder, thread",
+      "frames": [
+        "Home and selected destination",
+        "Status drawer navigation",
+        "Select a thread",
+        "Pick environment",
+        "Pick folder",
+        "Select a thread",
+        "Ready to record"
+      ]
+    },
+    {
+      "journey": "Create a new thread",
+      "frames": [
+        "Home and selected destination",
+        "Swipe destination on Home",
+        "Virtual new-thread slot",
+        "Create and bind thread",
+        "Home and selected destination"
+      ]
+    },
+    {
+      "journey": "Configure and run a saved action",
+      "frames": [
+        "Configure a saved action",
+        "Assigned action list",
+        "Review before running",
+        "Submit action",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Gateway approve vs reject",
+      "frames": [
+        "Home and selected destination",
+        "Gateway policy hold",
+        "Confirm gateway approval",
+        "Approval answer result",
+        "Home and selected destination",
+        "Load fresh reply",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Provider approval handoff",
+      "frames": [
+        "Load fresh reply",
+        "Provider needs permission",
+        "Answer provider request in console",
+        "Streaming reply",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Agent question handoff",
+      "frames": [
+        "Load fresh reply",
+        "Agent needs an answer",
+        "Streaming reply",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Reply retry without duplicate turn",
+      "frames": [
+        "Submit action",
+        "Load fresh reply",
+        "Response fetch failed",
+        "Load fresh reply",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Upload recovery preserves clip",
+      "frames": [
+        "Review held recording",
+        "Upload recording",
+        "Upload failed; clip retained",
+        "Upload recording",
+        "Local transcription in progress",
+        "Send transcript through policy",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Voice requires transcript review",
+      "frames": [
+        "Review held recording",
+        "Upload recording",
+        "Local transcription in progress",
+        "Transcript needs review",
+        "Home and selected destination",
+        "Load fresh reply",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Laptop sleeps during voice job",
+      "frames": [
+        "Upload recording",
+        "Local transcription in progress",
+        "Local computer unavailable",
+        "Local transcription in progress",
+        "Send transcript through policy",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Cancel and reject are different",
+      "frames": [
+        "Gateway policy hold",
+        "Confirm gateway approval",
+        "Gateway policy hold",
+        "Gateway command rejected",
+        "Nothing awaiting gateway approval"
+      ]
+    },
+    {
+      "journey": "Connection recovery",
+      "frames": [
+        "Home and selected destination",
+        "Wi-Fi disconnected",
+        "Connect to cloud",
+        "Home and selected destination"
+      ]
+    },
+    {
+      "journey": "Stale action confirmation",
+      "frames": [
+        "Assigned action list",
+        "Review before running",
+        "Stale confirmation rejected",
+        "Assigned action list"
+      ]
+    },
+    {
+      "journey": "Stop a turn",
+      "frames": [
+        "Home and selected destination",
+        "Assigned action list",
+        "Confirm Stop",
+        "Stop result",
+        "Home and selected destination"
+      ]
+    },
+    {
+      "journey": "Leave a held recording and return",
+      "frames": [
+        "Ready to record",
+        "Recording while held",
+        "Review held recording",
+        "Held clip survives Back",
+        "Upload recording",
+        "Voice continues after navigation",
+        "Home and selected destination",
+        "Load fresh reply",
+        "Read completed reply"
+      ]
+    },
+    {
+      "journey": "Re-provision safely",
+      "frames": [
+        "Home and selected destination",
+        "Status drawer navigation",
+        "Inspect controller",
+        "Confirm re-provisioning",
+        "First-time Wi-Fi setup",
+        "Joining Wi-Fi",
+        "Connect to cloud",
+        "Home and selected destination"
+      ]
+    }
+  ]
+}

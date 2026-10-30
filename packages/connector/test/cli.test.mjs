@@ -164,6 +164,89 @@ function capture() { let text = ""; return { write(value) { text += value; }, va
 
 function main(args, dependencies = {}) { return realMain(args, { inspectVoiceRuntime: async () => ({ ready: true }), prepareVoiceRuntime: async () => ({ url: "http://127.0.0.1:8977/v1/transcribe", close: async () => {}, ensureReady: async () => {} }), ...dependencies }); }
 
+test("connect takes --t3-version, forwards it to the T3 launch and pairing, and documents it in help", async () => {
+  assert.equal(parseArgs(["connect", "--server", "https://cloud.example", "--code", "code", "--t3-version", "0.1.4"]).t3Version, "0.1.4");
+  assert.throws(() => parseArgs(["status", "--t3-version", "0.1.4"]), /Unknown option/);
+  const stateDir = await mkdtemp(join(tmpdir(), "connector-cli-t3-version-"));
+  const output = capture();
+  let ensureOptions;
+  let pairingOptions;
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/oauth/token")) return new Response(JSON.stringify({ access_token: "local-access" }));
+    if (String(url).endsWith("/v1/connectors/enroll")) return new Response(JSON.stringify({ connector: { id: "con-flag" }, environment: { id: "env" }, secret: "standing" }), { status: 201 });
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  class MockConnector { async run() {} stop() {} }
+  const result = await main(["connect", "--server", "https://cloud.example", "--code", "code", "--t3-version", "0.1.4", "--once"], {
+    stateDir,
+    platform: "linux",
+    env: {},
+    stdout: output,
+    stderr: output,
+    fetchImpl,
+    WebSocketImpl: class {},
+    Connector: MockConnector,
+    ensureT3: async (options) => {
+      ensureOptions = options;
+      return { baseUrl: "http://127.0.0.1:3773", info: { version: "0.0.32" }, owned: true, started: true, async stop() {} };
+    },
+    createT3PairingToken: async (options) => { pairingOptions = options; return "pairing-token"; },
+  });
+  assert.equal(result, 0);
+  assert.equal(ensureOptions.explicitT3Version, "0.1.4");
+  assert.equal(pairingOptions.explicitT3Version, "0.1.4");
+  const help = capture();
+  assert.equal(await main(["connect", "--help"], { stdout: help, stderr: help }), 0);
+  assert.match(help.value(), /--t3-version VERSION {4}Exact T3 Code release to auto-start \(default 0\.1\.5\)/u);
+});
+
+test("--install-service carries the T3 launch options the operator set into the installed service", async () => {
+  // The whole cli -> serviceOptions -> installService path had no coverage, which is exactly how
+  // the options came to be dropped: `serviceOptions` discards unknown keys, so an operator running
+  // `connect --t3-version X --install-service` got a service that silently started the pinned
+  // version instead. An unset option must still write nothing, or a plain install would freeze
+  // today's pin into the service definition and survive a later connector upgrade.
+  const output = capture();
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/oauth/token")) return new Response(JSON.stringify({ access_token: "local-access" }));
+    if (String(url).endsWith("/v1/connectors/enroll")) return new Response(JSON.stringify({ connector: { id: "con-svc" }, environment: { id: "env" }, secret: "standing" }), { status: 201 });
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  class MockConnector { async run() {} stop() {} }
+  const run = async (argv) => {
+    let installed;
+    // A fresh state directory per run: a second `connect --code` against an already-enrolled
+    // state is a usage error, not the path under test.
+    const stateDir = await mkdtemp(join(tmpdir(), "connector-cli-service-t3-"));
+    const code = await main(argv, {
+      stateDir,
+      platform: "linux",
+      env: {},
+      stdout: output,
+      stderr: output,
+      fetchImpl,
+      WebSocketImpl: class {},
+      Connector: MockConnector,
+      installService: async (options) => { installed = options; },
+      ensureT3: async () => ({ baseUrl: "http://127.0.0.1:3773", info: { version: "0.0.32" }, owned: true, started: true, async stop() {} }),
+      createT3PairingToken: async () => "pairing-token",
+    });
+    assert.equal(code, 0);
+    return installed;
+  };
+
+  const withOptions = await run(["connect", "--server", "https://cloud.example", "--code", "code",
+    "--t3-version", "0.1.4", "--t3-port", "4100", "--t3-start-timeout-ms", "90000", "--install-service"]);
+  assert.equal(withOptions.t3Launch.version, "0.1.4");
+  assert.equal(withOptions.t3Launch.port, 4100);
+  assert.equal(withOptions.t3Launch.startTimeoutMs, 90000);
+
+  const bare = await run(["connect", "--server", "https://cloud.example", "--code", "code", "--install-service"]);
+  assert.equal(bare.t3Launch.version, undefined, "an unset version must not be frozen into the service");
+  assert.equal(bare.t3Launch.port, undefined);
+  assert.equal(bare.t3Launch.startTimeoutMs, undefined);
+});
+
 test("voice setup and status use managed runtime without connector enrollment", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "connector-voice-cli-")); const output = capture();
   let installed = 0;

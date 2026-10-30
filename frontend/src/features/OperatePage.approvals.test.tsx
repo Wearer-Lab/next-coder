@@ -1,10 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 
 import type { Controller } from "../controller";
 import { applyThreadSnapshot, createLiveThreadState } from "../liveThread";
+import type { ProviderApproval } from "../providerApprovals";
 import { ConfirmProvider } from "../ui";
-import { OperatePage } from "./OperatePage";
+import { OperatePage, ProviderApprovalCard } from "./OperatePage";
 
 const TARGET = { environmentId: "env_1", threadId: "thread_1" };
 
@@ -193,4 +194,166 @@ test("a resolved approval is not shown as waiting", () => {
 
   renderOperate({ liveThread: live });
   expect(screen.queryByText("Agent is waiting")).toBeNull();
+});
+
+function providerApproval(overrides: Partial<ProviderApproval> = {}): ProviderApproval {
+  return {
+    kind: "provider",
+    requestId: "req_2",
+    threadId: "thread_1",
+    requestKind: "command",
+    detail: "npm test",
+    summary: "Run a command",
+    turnId: "turn_1",
+    requestedAt: "2026-08-24T12:00:00.000Z",
+    status: "pending",
+    decision: null,
+    resolvedAt: null,
+    failure: null,
+    localDecision: null,
+    ...overrides,
+  };
+}
+
+function buttonNames(root: ParentNode = document): string[] {
+  return within(root as HTMLElement).getAllByRole("button").map((button) => button.textContent?.trim() ?? "");
+}
+
+test("a request's own allowedDecisions decides which buttons it offers", () => {
+  render(
+    <ProviderApprovalCard
+      approval={providerApproval({ allowedDecisions: ["accept", "decline"] })}
+      busyAction={null}
+      canAnswer
+      onDecide={vi.fn()}
+    />,
+  );
+
+  expect(buttonNames()).toEqual([expect.stringMatching(/Allow once/u), expect.stringMatching(/Decline/u)]);
+  expect(screen.queryByRole("button", { name: /Allow for this session/u })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Cancel the turn/u })).toBeNull();
+});
+
+test("a request's own allowedDecisions takes precedence over the top-level list", () => {
+  render(
+    <ProviderApprovalCard
+      approval={providerApproval({ allowedDecisions: ["cancel"] })}
+      busyAction={null}
+      canAnswer
+      allowedDecisions={["accept", "acceptForSession", "decline", "cancel"]}
+      onDecide={vi.fn()}
+    />,
+  );
+
+  expect(buttonNames()).toEqual([expect.stringMatching(/Cancel the turn/u)]);
+});
+
+test("an approval without its own allowedDecisions falls back to the top-level list", () => {
+  render(
+    <ProviderApprovalCard
+      approval={providerApproval()}
+      busyAction={null}
+      canAnswer
+      allowedDecisions={["accept", "decline"]}
+      onDecide={vi.fn()}
+    />,
+  );
+
+  expect(buttonNames()).toEqual([expect.stringMatching(/Allow once/u), expect.stringMatching(/Decline/u)]);
+});
+
+test("a request's decisions travel through the live stream to the buttons on screen", () => {
+  const live = applyThreadSnapshot(createLiveThreadState(TARGET), {
+    ...TARGET,
+    reset: true,
+    gap: false,
+    snapshotSequence: 100,
+    page: null,
+    thread: {
+      id: "thread_1",
+      messages: [],
+      activities: [{
+        ...approvalRequested("req_1"),
+        payload: {
+          requestId: "req_1",
+          requestKind: "command",
+          requestType: "command_approval",
+          detail: "npm test",
+          decisions: ["decline", "accept"],
+        },
+      }],
+      session: null,
+    },
+  });
+
+  renderOperate({ liveThread: live });
+
+  const card = document.querySelector<HTMLElement>('[data-approval-kind="provider"]');
+  expect(card).not.toBeNull();
+  expect(buttonNames(card as HTMLElement)).toEqual([expect.stringMatching(/Allow once/u), expect.stringMatching(/Decline/u)]);
+});
+
+test("a profile without approval_response sees the request but is offered no buttons", () => {
+  render(
+    <ProviderApprovalCard
+      approval={providerApproval({ allowedDecisions: ["accept", "decline"] })}
+      busyAction={null}
+      canAnswer={false}
+      onDecide={vi.fn()}
+    />,
+  );
+
+  // It still sees the request itself.
+  expect(screen.getByText("npm test")).toBeTruthy();
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+  expect(screen.getByText("This profile can see approvals but not answer them.")).toBeTruthy();
+});
+
+test("the profile reason wins even when the agent also offered nothing", () => {
+  render(
+    <ProviderApprovalCard
+      approval={providerApproval({ allowedDecisions: [] })}
+      busyAction={null}
+      canAnswer={false}
+      onDecide={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByText("This profile can see approvals but not answer them.")).toBeTruthy();
+  expect(screen.queryByText(/The agent offered no decision/u)).toBeNull();
+});
+
+test("an agent that named only unrecognised decisions is not blamed on the profile", () => {
+  const onDecide = vi.fn();
+  render(
+    <ProviderApprovalCard
+      approval={providerApproval({ allowedDecisions: [] })}
+      busyAction={null}
+      canAnswer
+      onDecide={onDecide}
+    />,
+  );
+
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+  expect(screen.getByText(
+    "The agent offered no decision this console can send, so answer it where the agent is running.",
+  )).toBeTruthy();
+  expect(screen.queryByText(/This profile can see approvals/u)).toBeNull();
+  expect(onDecide).not.toHaveBeenCalled();
+});
+
+test("an approval that states no set keeps all four decisions, even when the top-level list is empty", () => {
+  render(
+    <ProviderApprovalCard
+      approval={providerApproval()}
+      busyAction={null}
+      canAnswer
+      allowedDecisions={[]}
+      onDecide={vi.fn()}
+    />,
+  );
+
+  // The top-level list is the profile's answer, so it reads as the profile message, not the agent's.
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+  expect(screen.getByText("This profile can see approvals but not answer them.")).toBeTruthy();
 });

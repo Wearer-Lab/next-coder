@@ -507,8 +507,10 @@ void GatewayClient::requestNewClaimCode() {
 }
 
 void GatewayClient::goOffline() {
+  if (!tryLockState(0)) return;
   // The portal owns the screen while offline, and polling here would only stack up failures.
   if (link_ != GatewayLink::NoIdentity) link_ = GatewayLink::Idle;
+  unlockState();
 }
 
 void GatewayClient::lockState() {
@@ -617,6 +619,7 @@ void GatewayClient::startNetworkTask() {
 }
 
 void GatewayClient::eventTaskLoop() {
+  bool initialReconcile = true;
   for (;;) {
     String base, deviceId, deviceSecret;
     bool eligible = false;
@@ -631,86 +634,99 @@ void GatewayClient::eventTaskLoop() {
       }
       unlockState();
     }
-    if (!eligible) {
+    if (!eligible || base.length() == 0) {
       vTaskDelay(pdMS_TO_TICKS(500));
       continue;
     }
 
-    if (base.length() == 0) {
-      vTaskDelay(pdMS_TO_TICKS(2000));
+    // Read authoritative projections before the first subscription. Every later established
+    // stream exit schedules this once, AFTER freeing its TLS session. Re-dirtying on reconnect
+    // would force a foreground read, preempt the stream again, and create an endless churn loop.
+    if (initialReconcile) {
+      lockState();
+      markOperateDue(millis());
+      nextConfigAt_ = millis();
+      unlockState();
+      gateway_tls::deferEventSession();
+      initialReconcile = false;
+      vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
 
-    gateway_http::YieldingClient<WiFiClientSecure> secure;
-    gateway_http::YieldingClient<WiFiClient> plain;
-    HTTPClient http;
-    http.useHTTP10(true);  // close-delimited body: no chunk frames mixed into the SSE lines
-    http.setConnectTimeout(kTimeoutMs);
-    http.setTimeout(kTimeoutMs);
-    const String url = base + "/v1/device/events";
-    if (!gateway_tls::beginHttp(http, plain, secure, url, "events")) {
-      vTaskDelay(pdMS_TO_TICKS(2000));
-      continue;
-    }
-    http.addHeader("x-device-id", deviceId);
-    http.addHeader("x-device-secret", deviceSecret);
+    enum class StreamExit { Deferred, NotEstablished, RateLimited, Disconnected, Preempted };
+    const StreamExit exit = [&]() -> StreamExit {
+      // Hold the global lease for the ENTIRE established session. Foreground intent asks this
+      // task to close cooperatively; no other task ever stops a socket it does not own.
+      gateway_tls::EventSessionLock tls;
+      if (!tls.held()) return StreamExit::Deferred;
+      gateway_http::YieldingClient<WiFiClientSecure> secure;
+      gateway_http::YieldingClient<WiFiClient> plain;
+      HTTPClient http;
+      http.useHTTP10(true); // close-delimited SSE, without chunk framing
+      http.setConnectTimeout(kConnectTimeoutMs);
+      http.setTimeout(kTimeoutMs);
+      const String url = base + "/v1/device/events";
+      if (!gateway_tls::beginHttp(http, plain, secure, url, "events")) return StreamExit::NotEstablished;
+      http.addHeader("x-device-id", deviceId);
+      http.addHeader("x-device-secret", deviceSecret);
+      // A request can arrive during setup. Avoid starting a handshake it has already superseded.
+      if (gateway_tls::eventSessionShouldYield()) return StreamExit::Deferred;
+      const int code = http.GET();
+      if (code != 200) {
+        Serial.printf("[gateway] device event stream failed code=%d\n", code);
+        return code == 429 ? StreamExit::RateLimited : StreamExit::NotEstablished;
+      }
 
-    // The event stream keeps its established session, but its handshake must share the same
-    // allocation gate as request/probe/OTA handshakes on this constrained board.
-    if (!gateway_tls::lockTls()) {
-      vTaskDelay(pdMS_TO_TICKS(2000));
-      continue;
-    }
-    const int code = http.GET();
-    gateway_tls::unlockTls();
-    if (code != 200) {
-      Serial.printf("[gateway] device event stream failed code=%d\n", code);
-      http.end();
-      vTaskDelay(pdMS_TO_TICKS(code == 429 ? 5000 : 2000));
-      continue;
-    }
-
-    // SSE has no durable replay cursor on the device route. Reconnect explicitly refreshes the
-    // authoritative compact models rather than pretending that missed events were delivered.
-    lockState();
-    markOperateDue(millis());
-    nextConfigAt_ = millis();
-    unlockState();
-    WiFiClient* stream = http.getStreamPtr();
-    gateway_http::EventFrame frame;
-    uint32_t lastByteAt = millis();
-    uint32_t nextIdentityCheckAt = millis() + 1000;
-    while (WiFi.status() == WL_CONNECTED && !networkPaused_
-           && (stream->connected() || stream->available())) {
-      const uint32_t now = millis();
-      // The gateway emits a heartbeat every 25 s. A half-open TLS socket can otherwise remain
-      // connected forever after a router/gateway change and silently miss all refresh events.
-      if (now - lastByteAt > 90000) break;
-      if ((int32_t)(now - nextIdentityCheckAt) >= 0) {
-        nextIdentityCheckAt = now + 1000;
-        if (tryLockState()) {
-          const auto settings = store_->transportSnapshot();
-          const bool changed = settings.gatewayUrl != base
-              || settings.deviceSecret != deviceSecret || link_ != GatewayLink::Claimed;
+      WiFiClient* stream = http.getStreamPtr();
+      gateway_http::EventFrame frame;
+      uint32_t lastByteAt = millis();
+      uint32_t nextIdentityCheckAt = millis() + 1000;
+      while (WiFi.status() == WL_CONNECTED && !networkPaused_
+             && (stream->connected() || stream->available())) {
+        if (gateway_tls::eventSessionShouldYield()) return StreamExit::Preempted;
+        const uint32_t now = millis();
+        if (now - lastByteAt > 90000) break;
+        if ((int32_t)(now - nextIdentityCheckAt) >= 0) {
+          nextIdentityCheckAt = now + 1000;
+          if (tryLockState()) {
+            const auto settings = store_->transportSnapshot();
+            const bool changed = settings.gatewayUrl != base
+                || settings.deviceSecret != deviceSecret || link_ != GatewayLink::Claimed;
+            unlockState();
+            if (changed) break;
+          }
+        }
+        if (!stream->available()) {
+          vTaskDelay(pdMS_TO_TICKS(20));
+          continue;
+        }
+        const int value = stream->read();
+        if (value < 0) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
+        lastByteAt = millis();
+        if (frame.feed(static_cast<char>(value))) {
+          // Never wait on model state while retaining the SSE lease: a foreground owner may
+          // need that lease. A contended event is recovered by the post-close snapshot instead.
+          if (!tryLockState(0)) return StreamExit::Disconnected;
+          if (frame.event() == "threads.changed") applyThreadChangedEvent(frame.data());
+          else applyRefreshEvent(frame.event(), frame.data());
           unlockState();
-          if (changed) break;
+          frame.reset();
         }
       }
-      if (!stream->available()) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-        continue;
-      }
-      const int value = stream->read();
-      if (value < 0) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
-      lastByteAt = millis();
-      if (frame.feed(static_cast<char>(value))) {
-        if (frame.event() == "threads.changed") applyThreadChangedEvent(frame.data());
-        else applyRefreshEvent(frame.event(), frame.data());
-        frame.reset();
-      }
+      return gateway_tls::eventSessionShouldYield() ? StreamExit::Preempted : StreamExit::Disconnected;
+    }(); // HTTPClient and both clients are destroyed before EventSessionLock releases the lease.
+
+    if (exit == StreamExit::Disconnected || exit == StreamExit::Preempted) {
+      // There is no durable replay cursor on this device SSE route. A deliberate quiet window
+      // misses events too, so reconcile once per exit and let queued snapshots drain first.
+      lockState();
+      markOperateDue(millis());
+      nextConfigAt_ = millis();
+      unlockState();
+      gateway_tls::deferEventSession();
     }
-    http.end();
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelay(pdMS_TO_TICKS(exit == StreamExit::Deferred || exit == StreamExit::Preempted
+      ? 100 : exit == StreamExit::RateLimited ? 5000 : 2000));
   }
 }
 

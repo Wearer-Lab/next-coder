@@ -151,6 +151,7 @@ export interface EnvironmentHealth {
 export type T3CapabilityState = "supported" | "unsupported" | "unknown";
 
 export interface T3CapabilityManifest {
+  runtimeKind?: "direct";
   schema: "next-coder.t3-capabilities.v1";
   contractVersion: string;
   installedVersion: string | null;
@@ -169,7 +170,16 @@ export interface T3CapabilityManifest {
   };
   runtimeModes: string[];
   interactionModes: string[];
+  /**
+   * The four decisions T3's own UI offers. Deliberately NOT the full vocabulary: a client that drew
+   * buttons straight from this list would offer `acceptAlways`, which Claude denies.
+   */
   approvalDecisions: string[];
+  /**
+   * Decisions that exist in this environment but are answerable only when a specific request lists
+   * them in its own `options[]`. Informational: it never widens the offered set on its own.
+   */
+  requestScopedApprovalDecisions?: string[];
   recovery: { code: string; action: string } | null;
 }
 
@@ -366,14 +376,19 @@ export interface T3ModelOptionChoice {
   id: string;
   label: string;
   isDefault: boolean;
+  /** Provider-supplied explanation, e.g. Claude's "xhigh effort plus multi-agent orchestration". */
+  description?: string | null;
 }
 
 export interface T3ModelOption {
   id: string;
   label: string;
+  /** T3 declares "select" or "boolean"; treated as "select" when a provider omits it. */
   type: string;
-  currentValue: string | null;
+  /** A boolean descriptor's current value is a boolean, not a string. */
+  currentValue: string | boolean | null;
   choices: T3ModelOptionChoice[];
+  description?: string | null;
 }
 
 export interface T3HarnessModel {

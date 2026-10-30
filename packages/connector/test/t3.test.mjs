@@ -3,7 +3,7 @@ import "./support/closeEvent.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
-import { createT3Client } from "../src/t3.mjs";
+import { createT3Client, exchangePairingToken, T3_PAIRING_SCOPES, T3_WS_METHODS } from "../src/t3.mjs";
 
 test("local T3 HTTP client handles metadata, snapshot, detail, and dispatch", async (t) => {
   const requests = [];
@@ -85,4 +85,34 @@ test("capability probe returns only bounded contract evidence", async () => {
   assert.equal(probe.probes.threadDetail, "passed");
   assert.equal(probe.serverCapabilities.threadSnapshotPagination, true);
   assert.doesNotMatch(JSON.stringify(probe), /private-project|private-thread|private prompt|private-ticket|private-token|Users/u);
+});
+
+test("pairing exchange asks only for scopes T3 defines, on every protocol", async () => {
+  // `orchestration:write` is not a T3 scope at any version: 0.0.32 answers it with `invalid_scope`
+  // (0.0.32:src/auth/http.ts:261-277) and 0.1.x silently drops it, leaving a token without operate.
+  const REAL_T3_SCOPES = new Set(["orchestration:read", "orchestration:operate", "terminal:operate"]);
+  for (const orchestrationProtocolVersion of [undefined, 1, 2]) {
+    let form;
+    const result = await exchangePairingToken({
+      baseUrl: "http://127.0.0.1:3774",
+      pairingToken: "fixture",
+      ...(orchestrationProtocolVersion === undefined ? {} : { orchestrationProtocolVersion }),
+      fetchImpl: async (url, options) => {
+        assert.equal(new URL(url).pathname, "/oauth/token");
+        form = options.body;
+        return Response.json({ access_token: "fixture_access" });
+      },
+    });
+    assert.equal(result.access_token, "fixture_access");
+    const scopes = form.get("scope").split(" ");
+    assert.deepEqual(scopes, [...T3_PAIRING_SCOPES]);
+    assert.ok(scopes.every((scope) => REAL_T3_SCOPES.has(scope)), `unexpected scope in ${form.get("scope")}`);
+    assert.ok(scopes.includes("orchestration:operate"), "dispatch needs operate at every T3 version");
+    assert.doesNotMatch(form.get("scope"), /orchestration:write/u);
+  }
+});
+
+test("the RPC method table carries no tag removed from T3 0.1.5", () => {
+  // server.getSettings exists in 0.0.32 and 0.1.1 and is gone in 0.1.5 (audit M5).
+  assert.equal(Object.values(T3_WS_METHODS).includes("server.getSettings"), false);
 });

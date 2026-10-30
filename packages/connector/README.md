@@ -226,3 +226,9 @@ The NVIDIA Parakeet TDT 0.6B v2 model and
 are distributed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 This package uses int8 inference at model revision
 `0bbb45a3365852604aef28b538a8f066f4ccaa85`; model terms are separate from its Apache-2.0 source license.
+## Direct agents
+
+`connect --agents-file /absolute/path/to/agents.json` selects native Codex, Claude and generic
+ACP integration without starting T3. The configuration and conversation journal stay local.
+See [direct-agent setup and limitations](../../docs/direct-agents.md) in the source repository.
+For an installed npm package, consult the repository documentation at the package homepage.

@@ -145,6 +145,19 @@ function environmentUrlValid(value: string, mode: EnvironmentAccessMode) {
   return new URL(value.trim()).protocol === "https:";
 }
 
+/**
+ * Name a directly paired environment after the host in its URL.
+ *
+ * Only the direct/advanced path needs this. A connector reports the computer's own name when it
+ * enrolls, but nothing on the direct path ever does, so without this every unnamed direct
+ * environment would be called "T3 Code" and two of them would be indistinguishable.
+ */
+function hostLabelFromUrl(value: string): string | null {
+  if (!isHttpUrl(value)) return null;
+  const host = new URL(value.trim()).hostname.replace(/\.local$/iu, "");
+  return host.length > 0 ? host : null;
+}
+
 function credentialExpired(environment: Environment): boolean {
   return Boolean(
     environment.status === "token_expired"
@@ -799,7 +812,10 @@ export function ConnectEnvironmentDialog({
   const repairing = Boolean(environment);
   const cloudDeployment = c.authConfig?.deploymentMode === "cloud";
   const [step, setStep] = useState(0);
-  const [label, setLabel] = useState("Mac T3 Code");
+  // Empty, not a guess. The previous default was the literal string "Mac T3 Code", so a Windows
+  // or Linux host enrolled under a Mac's name and a second workspace was indistinguishable from
+  // the first. Left blank, the connector's own host-derived name is used instead.
+  const [label, setLabel] = useState("");
   const [computerTarget, setComputerTarget] = useState<EnvironmentComputerTarget>("this-computer");
   const [directAccessMode, setDirectAccessMode] = useState<EnvironmentAccessMode>("local");
   const [mint, setMint] = useState<ConnectSessionMint | null>(null);
@@ -818,7 +834,7 @@ export function ConnectEnvironmentDialog({
     // Re-pairing already knows the answers to the first two steps, so it starts on the command and
     // pre-fills both from the environment rather than asking again.
     setStep(repairing ? 2 : 0);
-    setLabel(environment?.label ?? "Mac T3 Code");
+    setLabel(environment?.label ?? "");
     setComputerTarget("this-computer");
     setDirectAccessMode(environment ? inferEnvironmentAccessMode(environment.baseUrl) : "local");
     setMint(null);
@@ -893,14 +909,17 @@ export function ConnectEnvironmentDialog({
 
   if (!open) return null;
 
-  const manualValid = Boolean(label.trim() && environmentUrlValid(baseUrl, directAccessMode) && credential.trim());
-  const canContinue = step === 1 ? Boolean(label.trim()) : true;
+  // A blank label is a valid choice, not an incomplete form: it means "use the computer's own
+  // name". The connector reports that name at enrollment; on the direct path, where no connector
+  // ever speaks, the host from the URL is a better guess than a generic fallback.
+  const manualValid = Boolean(environmentUrlValid(baseUrl, directAccessMode) && credential.trim());
+  const canContinue = true;
 
   const connectManually = async () => {
     if (cloudDeployment) return;
     const saved = await c.run("pair-environment", "T3 environment connected.", async () => {
       const body = {
-        label: label.trim() || "T3 Code",
+        label: label.trim() || hostLabelFromUrl(baseUrl) || "T3 Code",
         baseUrl: baseUrl.trim(),
         [credentialType]: credential.trim(),
       };
@@ -1019,8 +1038,18 @@ export function ConnectEnvironmentDialog({
                   <h3 className="ac-display text-base">Where will you run the connector?</h3>
                   <p className="mt-1 text-sm text-ink-muted">Both choices create the same secure outbound connection. Only the handoff instructions differ.</p>
                 </div>
-                <Field label="Environment label" htmlFor="connect-environment-label">
-                  <input id="connect-environment-label" autoFocus value={label} onChange={(event) => setLabel(event.target.value)} />
+                <Field
+                  label="Environment label"
+                  htmlFor="connect-environment-label"
+                  hint="Leave blank to use the computer's own name, which the connector reports when it enrolls."
+                >
+                  <input
+                    id="connect-environment-label"
+                    autoFocus
+                    value={label}
+                    placeholder="This computer's name"
+                    onChange={(event) => setLabel(event.target.value)}
+                  />
                 </Field>
                 <EnvironmentComputerSelector value={computerTarget} onChange={setComputerTarget} />
               </div>
@@ -1076,6 +1105,9 @@ function ConnectHandoff({
 }) {
   const status = session?.status ?? "pending";
   const dead = status === "expired" || status === "failed";
+  const [directAgents, setDirectAgents] = useState(false);
+  const [agentsFile, setAgentsFile] = useState("");
+  const quotePath = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 
   if (error) {
     return (
@@ -1114,7 +1146,17 @@ function ConnectHandoff({
           </span>
         </div>
       </div>
-      <CopyableSyntax value={mint.command} label="connect command" />
+      <Field label="Agent connection" htmlFor="connect-agent-connection">
+        <select id="connect-agent-connection" value={directAgents ? "direct" : "t3"} onChange={(event) => setDirectAgents(event.target.value === "direct")}>
+          <option value="t3">T3 Code</option>
+          <option value="direct">Codex, Claude and ACP directly</option>
+        </select>
+      </Field>
+      {directAgents ? <Field label="Agent configuration file on that computer" htmlFor="connect-agents-file">
+        <input id="connect-agents-file" value={agentsFile} onChange={(event) => setAgentsFile(event.target.value)} placeholder="/path/to/agents.json" />
+        <p>Use a connector build with direct-agent support. The local JSON file selects agents and project folders; T3 is optional.</p>
+      </Field> : null}
+      {directAgents && !agentsFile.trim() ? <p>Enter the configuration file path to prepare the command.</p> : <CopyableSyntax value={directAgents ? `${mint.command} --agents-file ${quotePath(agentsFile.trim())}` : mint.command} label="connect command" />}
       {dead ? (
         <>
           <p role="alert">
@@ -1231,7 +1273,7 @@ function EnvironmentComputerSelector({
     {
       id: "another-computer",
       label: "Connect another computer",
-      description: "Copy the same enrollment command to the Mac or Linux computer that runs T3.",
+      description: "Copy the same enrollment command to the macOS, Windows, or Linux computer that runs T3.",
       icon: Laptop,
     },
   ];

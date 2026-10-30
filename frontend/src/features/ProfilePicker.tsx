@@ -15,7 +15,8 @@ const CAPABILITY_LABELS: Record<string, string> = {
   media_prompt: "Attach image and audio context",
   session_control: "Stop and interrupt sessions",
   approval_response: "Answer approvals — the gateway's holds, and the agent's own requests",
-  approval_response_persistent: "Grant an agent a permission for the whole session (\"allow always\")",
+  approval_response_persistent: "Grant an agent a permission for the whole session (\"allow for this session\")",
+  approval_response_always: "Grant an agent a permission from now on, not just for one session (\"always allow\")",
   shell_input: "Run shell commands (dangerous ones still need approval)",
 };
 

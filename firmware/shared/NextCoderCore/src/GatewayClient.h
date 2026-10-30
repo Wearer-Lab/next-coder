@@ -239,6 +239,13 @@ class GatewayClient {
   bool responseInFlight() const;      // state is waiting or streaming: the turn has not finished
   bool fetchResponsePage(int page);
   const ThreadResponse& response() const { return response_; }
+  // Text the gateway streamed for the open response, copied under the state lock (a reference to
+  // the live buffer could tear while a poll appends). Writes a NUL-terminated UTF-8 prefix of the
+  // message into `out` and returns its byte length. It is a prefix of the same reply `response()`
+  // pages through, bounded by the display ceiling; `*truncated` says text beyond it was dropped and
+  // `*complete` that the gateway reports every character held and the turn settled. Zero bytes
+  // with no message id means nothing is held (older gateway, or nothing to show yet).
+  size_t copyResponseStream(char* out, size_t capacity, bool* complete = nullptr, bool* truncated = nullptr);
 
   // Media upload. Returns the `media.id` a capture intent needs, or an empty string on failure with
   // the HTTP status in `httpStatusOut` (413 is set locally, without a request, when the decoded
@@ -369,6 +376,10 @@ class GatewayClient {
   size_t macroCount_ = 0;
 
   ThreadResponse response_;
+  // Retained incremental text and its cursor for the open response. Kept apart from `response_`
+  // because a ThreadResponse is replaced wholesale on open/close and this is ~1.2 KB: a temporary
+  // of that size does not belong on a task stack. openResponse()/closeResponse() clear it instead.
+  ResponseStream responseStream_;
   bool responseOpen_ = false;
   uint32_t responseGeneration_ = 0;
   String responseAfter_;

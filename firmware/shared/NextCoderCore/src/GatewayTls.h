@@ -7,6 +7,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <time.h>
+#include <atomic>
+#if defined(TLS_SESSION_DIAGNOSTICS) && TLS_SESSION_DIAGNOSTICS
+#include <esp_heap_caps.h>
+#endif
 
 // Board projects expose their generated/bench configuration on PlatformIO's include path. Keeping
 // trust configuration there lets manufacturing inject production roots without forking the shared
@@ -43,7 +47,7 @@
 
 namespace gateway_tls {
 
-// One TLS handshake at a time.
+// One TLS session at a time. Established SSE sessions retain their mbedTLS buffers too.
 //
 // mbedTLS allocates its input and output buffers as one contiguous block of roughly 32 KB when
 // the session is set up. On this hardware that block has to come out of internal RAM, which the
@@ -63,18 +67,80 @@ inline SemaphoreHandle_t& tlsLock() {
   return handle;
 }
 
+constexpr uint32_t kEventQuietMs = 2000;
+inline void traceSessionHeap(const char* phase) {
+#if defined(TLS_SESSION_DIAGNOSTICS) && TLS_SESSION_DIAGNOSTICS
+  Serial.printf("[tls-heap] phase=%s internal_free=%u internal_largest=%u\n", phase,
+    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#else
+  (void)phase;
+#endif
+}
+inline std::atomic<unsigned>& foregroundWaiters() {
+  static std::atomic<unsigned> value{0};
+  return value;
+}
+inline std::atomic<uint32_t>& eventQuietUntil() {
+  static std::atomic<uint32_t> value{0};
+  return value;
+}
+inline void deferEventSession() {
+  eventQuietUntil().store(millis() + kEventQuietMs, std::memory_order_release);
+}
+inline bool eventSessionShouldYield() {
+  const uint32_t quiet = eventQuietUntil().load(std::memory_order_acquire);
+  return foregroundWaiters().load(std::memory_order_acquire) != 0
+    || (quiet != 0 && static_cast<int32_t>(millis() - quiet) < 0);
+}
+
 // Returns true when the lock was taken. A caller that cannot get it in time must skip the request
 // rather than perform a handshake outside the lock, which is the exact failure this prevents.
 inline bool lockTls(unsigned int timeoutMs = 10000) {
   SemaphoreHandle_t handle = tlsLock();
   if (handle == nullptr) return false;
-  return xSemaphoreTakeRecursive(handle, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+  foregroundWaiters().fetch_add(1, std::memory_order_acq_rel);
+  deferEventSession();
+  const bool held = xSemaphoreTakeRecursive(handle, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+  foregroundWaiters().fetch_sub(1, std::memory_order_acq_rel);
+  deferEventSession();
+  if (held) traceSessionHeap("foreground.begin");
+  return held;
 }
 
 inline void unlockTls() {
   SemaphoreHandle_t handle = tlsLock();
-  if (handle != nullptr) xSemaphoreGiveRecursive(handle);
+  if (handle != nullptr) {
+    traceSessionHeap("foreground.end");
+    deferEventSession();
+    xSemaphoreGiveRecursive(handle);
+  }
 }
+
+// SSE acquires without waiting and never announces itself as foreground. Declare this before
+// clients: the event task alone closes its socket, and destroys it before releasing this lease.
+class EventSessionLock {
+ public:
+  EventSessionLock() {
+    if (eventSessionShouldYield()) return;
+    const auto handle = tlsLock();
+    if (!handle || xSemaphoreTakeRecursive(handle, 0) != pdTRUE) return;
+    if (eventSessionShouldYield()) { xSemaphoreGiveRecursive(handle); return; }
+    held_ = true;
+    traceSessionHeap("events.begin");
+  }
+  ~EventSessionLock() {
+    if (held_) {
+      traceSessionHeap("events.end");
+      xSemaphoreGiveRecursive(tlsLock());
+    }
+  }
+  bool held() const { return held_; }
+  EventSessionLock(const EventSessionLock&) = delete;
+  EventSessionLock& operator=(const EventSessionLock&) = delete;
+ private:
+  bool held_ = false;
+};
 
 // Declare before HTTP/socket objects so they are destroyed before releasing the allocation gate.
 class ScopedLock {
@@ -182,6 +248,8 @@ inline bool clockReady() {
 }
 
 inline bool configure(WiFiClientSecure& client, const char* component) {
+  // Arduino defaults to 120 s independently of HTTP deadlines. Bound the stream owner's lease.
+  client.setHandshakeTimeout(6); // seconds; certificate and hostname validation stay unchanged
 #if INSECURE_SKIP_TLS_VERIFY
   // Explicit local-bench escape hatch. Production examples default this off.
   client.setInsecure();

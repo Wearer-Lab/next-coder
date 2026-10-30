@@ -4,7 +4,6 @@ import { createV2StreamProjection, v2Command, v2Shell, v2Thread } from "./t3v2.m
 export const T3_WS_METHODS = Object.freeze({
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
-  serverGetSettings: "server.getSettings",
   orchestrationDispatchCommand: "orchestration.dispatchCommand",
   orchestrationSubscribeThread: "orchestration.subscribeThread",
   terminalOpen: "terminal.open",
@@ -97,14 +96,35 @@ export async function discoverT3({ candidates = ["http://127.0.0.1:3773"], fetch
   throw error;
 }
 
-export async function exchangePairingToken({ baseUrl, pairingToken, orchestrationProtocolVersion = 1, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+// The scope vocabulary is the same on both protocols: `orchestration:write` has never been a T3
+// scope. Evidence, each read from extracted T3 sources (docs/t3-version-audit.md, M7 and section 5):
+//   - 0.0.32 `AuthEnvironmentScope` is read | operate | terminal:operate | review:write | access:* |
+//     relay:* (0.0.32:packages/contracts/src/auth.ts:76-94), and its `token` handler answers an
+//     unrecognised scope with `invalid_scope`, rejecting the whole exchange
+//     (0.0.32:src/auth/http.ts:261-277, parseAllowedOAuthScope in packages/shared/src/oauthScope.ts).
+//   - 0.1.1 and 0.1.5 define `AuthOrchestrationOperateScope = "orchestration:operate"`
+//     (bundle-0.1.5.js:29321) and silently drop unknown scopes (`.filter(is(AuthGrantScope))`,
+//     bundle-0.1.5.js:387157), so a stray `write` would yield a token WITHOUT operate.
+//   - The scope that guards dispatch is `operate` at every version: 0.0.32:src/orchestration/http.ts
+//     (`dispatch` -> requireEnvironmentScope(AuthOrchestrationOperateScope)) and
+//     RPC_REQUIRED_SCOPES (0.0.32 and bundle-0.1.5.js:401644). The gateway's own direct pairing
+//     already requests exactly read + operate (STANDARD_T3_SCOPES in src/app.mjs).
+//   - A pairing credential made by `t3 auth pairing create` carries AuthStandardClientScopes, which
+//     includes all three scopes below (0.0.32:src/cli/auth.ts:98), and the exchange requires the
+//     requested set to be a subset of the credential's (0.0.32:src/auth/EnvironmentAuth.ts:697-700).
+// Verified by reading, not by running a T3: protocol-1 pairing against a live 0.0.x is unproven.
+export const T3_PAIRING_SCOPES = Object.freeze(["orchestration:read", "orchestration:operate", "terminal:operate"]);
+
+// `orchestrationProtocolVersion` is accepted for caller compatibility and no longer changes the
+// request: it selected between `write` and `operate`, and `write` is not a T3 scope.
+export async function exchangePairingToken({ baseUrl, pairingToken, orchestrationProtocolVersion: _protocol = 1, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   if (!pairingToken) throw new Error("A T3 pairing token is required.");
   const body = new URLSearchParams({
     grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
     subject_token: pairingToken,
     subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
     requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-    scope: `orchestration:read orchestration:${orchestrationProtocolVersion === 2 ? "operate" : "write"} terminal:operate`,
+    scope: T3_PAIRING_SCOPES.join(" "),
     client_label: "Next Coder Connector",
     client_device_type: "bot",
   });

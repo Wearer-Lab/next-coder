@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { createClerkAuthenticator } from "./clerkAuth.mjs";
 import { loadConfig } from "./config.mjs";
-import { buildConnectorRotateCommand, buildConnectCommand, normalizeConnectAccessMode } from "./connectSession.mjs";
+import { connectorRotateCommandVariants, connectCommandVariants, normalizeConnectAccessMode } from "./connectSession.mjs";
 import {
   CONNECTOR_CREDENTIAL_SCOPES,
   CONNECTOR_PROTOCOL_VERSION,
@@ -50,6 +50,7 @@ import {
 import {
   buildDeviceFollowUpInstruction,
   buildDeviceThreadOutput,
+  DEVICE_RESPONSE_STREAM_FINGERPRINT_LENGTH,
 } from "./deviceThreadOutput.mjs";
 import {
   buildDeviceClaimUrl,
@@ -141,6 +142,8 @@ import {
   buildProviderCatalogue,
   extractHarnesses,
   extractSessionFailures,
+  MAX_MODEL_OPTION_SELECTIONS,
+  normalizeModelOptionSelections,
   resolveModelSelection,
   usableHarnesses,
   validateModelSelection,
@@ -158,10 +161,13 @@ import { refineThreadStatus } from "./agentVerb.mjs";
 import {
   PROVIDER_APPROVAL_DECISION_CATALOGUE,
   allowedProviderApprovalDecisions,
+  offeredProviderApprovalDecisions,
+  providerApprovalOffers,
   collectProviderApprovals,
   deviceProviderApprovalView,
   normalizeProviderApprovalDecision,
 } from "./providerApprovals.mjs";
+import { projectDeviceModelOptions } from "./deviceModelOptions.mjs";
 import {
   collectUserInputRequests,
   deviceUserInputView,
@@ -210,7 +216,7 @@ async function resolveEnvironmentHarnessesWithTransport(environment, snapshot, t
       { timeoutMs: 8000 },
     );
     if (!Array.isArray(config?.providers)) throw new Error("T3 server.getConfig did not return providers.");
-    catalogue = buildProviderCatalogue(config.providers, { source: "t3-websocket" });
+    catalogue = buildProviderCatalogue(config.providers, { source: config.runtimeKind === "direct" ? "direct-agent" : "t3-websocket" });
     catalogueSource = "live";
   } catch {
     // A registered catalogue is still authoritative when the live socket is unavailable. Without
@@ -219,6 +225,7 @@ async function resolveEnvironmentHarnessesWithTransport(environment, snapshot, t
   return {
     harnesses: extractHarnesses(snapshot, { catalogue }),
     catalogueSource,
+    catalogue,
   };
 }
 
@@ -250,9 +257,13 @@ export function createApp({
   const readT3Snapshot = (environment, options = {}) => (
     readT3SnapshotWithTransport(environment, options, runtimeT3TransportResolver)
   );
-  const resolveEnvironmentHarnesses = (environment, snapshot) => (
-    resolveEnvironmentHarnessesWithTransport(environment, snapshot, runtimeT3TransportResolver)
-  );
+  const resolveEnvironmentHarnesses = async (environment, snapshot) => {
+    const result = await resolveEnvironmentHarnessesWithTransport(environment, snapshot, runtimeT3TransportResolver);
+    if (result.catalogue?.source === "direct-agent" && JSON.stringify(result.catalogue.instances) !== JSON.stringify(environment.providerCatalogue?.instances)) {
+      await store.updateEnvironmentCatalogue({ userId: environment.userId, environmentId: environment.id, catalogue: result.catalogue });
+    }
+    return result;
+  };
   const events = createEventBroker();
   const notifications = createNotificationPublisher({ store, events });
   notificationPublishersByStore.set(store, notifications);
@@ -1184,7 +1195,10 @@ export function createApp({
           session: created.session,
           code: created.code,
           gatewayUrl,
-          command: buildConnectCommand({ gatewayUrl, code: created.code }),
+          // `commands` carries one rendering per shell and `universal` says whether they agree.
+          // The console needs both: a Windows user handed a POSIX-quoted line was exactly the
+          // enrollment failure this replaces.
+          ...commandResponse(connectCommandVariants({ gatewayUrl, code: created.code })),
         });
       }
 
@@ -1208,10 +1222,21 @@ export function createApp({
         try {
           if (session.purpose !== "t3_enrollment") throw new HttpError(403, "This code is not authorized for connector enrollment.");
           if (!session.environmentId) await assertWithinPlan(store, session.userId, "environments", config);
+          // Label precedence, most authoritative first:
+          //   1. a name the owner typed into the console when minting the code,
+          //   2. the existing environment's name on re-enrollment, so rotating or repairing a
+          //      workspace the owner renamed does not silently reset it to a hostname,
+          //   3. the name the host reports for itself (connector `defaultConnectorLabel`),
+          //   4. the generic fallback, only when a connector sends no label at all.
+          // The old code had no rule 2 or 3, so every environment was named by whatever the
+          // console had prefilled — which was the literal string "Mac T3 Code" for every host.
+          const existingEnvironment = session.environmentId
+            ? await store.getEnvironmentForUser(session.userId, session.environmentId)
+            : null;
           const environment = await store.upsertEnvironment({
             ...(session.environmentId ? { id: session.environmentId } : {}),
             userId: session.userId,
-            label: session.label || optionalString(body.label) || "T3 Code",
+            label: session.label || optionalString(existingEnvironment?.label) || optionalString(body.label) || "T3 Code",
             transportMode: "connector",
             scopes: STANDARD_T3_SCOPES,
             status: "paired",
@@ -1375,7 +1400,7 @@ export function createApp({
           session: created.session,
           code: created.code,
           gatewayUrl,
-          command: buildConnectorRotateCommand({ gatewayUrl, code: created.code }),
+          ...commandResponse(connectorRotateCommandVariants({ gatewayUrl, code: created.code })),
         });
       }
       const connectorRotateMatch = url.pathname.match(/^\/v1\/connectors\/([^/]+)\/rotate$/u);
@@ -1800,6 +1825,85 @@ export function createApp({
         return sendJson(res, 200, await checkEnvironmentHealth({ store, userId: user.id, environment }));
       }
 
+      const nativeSessionsMatch = url.pathname.match(/^\/v1\/t3\/environments\/([^/]+)\/sessions$/u);
+      if (req.method === "GET" && nativeSessionsMatch) {
+        const user = await authenticateUser(req, store, config, null, clerkAuth);
+        await enforceUserRead(req, res, rateLimiter, config, user);
+        const environment = await store.getEnvironmentForUser(user.id, nativeSessionsMatch[1]);
+        if (!environment) throw new HttpError(404, "Environment not found.");
+        return sendJson(res, 200, await discoverNativeSessions(store, environment, url.searchParams));
+      }
+      if (req.method === "GET" && url.pathname === "/v1/device/sessions") {
+        const device = await authenticateDevice(req, store, url, config);
+        await enforceDeviceRead(req, res, rateLimiter, config, device);
+        requireClaimedDevice(device);
+        const environment = await boundDeviceEnvironment(store, device);
+        const params = new URLSearchParams(url.searchParams);
+        params.set("projectId", requireString(device.config?.projectId, "Selected project"));
+        const result = await discoverNativeSessions(store, environment, params);
+        return sendJson(res, 200, { ...result, sessions: result.sessions.slice(0, 12), truncated: result.truncated === true || result.sessions.length > 12 });
+      }
+      if (req.method === "GET" && url.pathname === "/v1/device/runtimes") {
+        const device = await authenticateDevice(req, store, url, config);
+        await enforceDeviceRead(req, res, rateLimiter, config, device);
+        requireClaimedDevice(device);
+        const environment = await boundDeviceEnvironment(store, device);
+        const manifest = await requireFreshT3CapabilityForStore(store, environment, "shellSnapshot");
+        if (manifest.runtimeKind !== "direct") return sendJson(res, 200, { runtimes: [], supported: false });
+        const snapshot = await readT3Snapshot(environment);
+        const { harnesses } = await resolveEnvironmentHarnesses(environment, snapshot);
+        const rows = harnesses.filter((h) => h.available).flatMap((h) => h.models.slice(0, 8).map((m) => ({ runtimeId: h.instanceId, model: m.slug, label: `${h.label}: ${m.name}`.slice(0, 64) })));
+        return sendJson(res, 200, { supported: true, runtimes: rows.slice(0, 12), truncated: rows.length > 12 });
+      }
+
+      // The selected thread's model and the switches that model declares (reasoning effort, context
+      // window, ...), bounded for a 240x320 panel. A READ: setting a value is an ordinary
+      // `runtime_switch` intent with `options` on POST /v1/device/intents, so the profile's
+      // `session_control` capability, the policy engine and the idempotent request envelope all
+      // apply unchanged. No setter route exists on purpose.
+      if (req.method === "GET" && url.pathname === "/v1/device/model-options") {
+        const device = await authenticateDevice(req, store, url, config);
+        await enforceDeviceRead(req, res, rateLimiter, config, device);
+        requireClaimedDevice(device);
+        const threadId = optionalString(device.config?.threadId);
+        if (!threadId) throw new HttpError(409, "Device has no thread selected.");
+        const environment = await boundDeviceEnvironment(store, device);
+        assertEnvironmentTokenActive(environment);
+        const snapshot = await fetchDeviceSnapshot(store, environment);
+        const thread = (Array.isArray(snapshot?.threads) ? snapshot.threads : [])
+          .find((candidate) => optionalString(candidate?.id) === threadId);
+        if (!thread) throw new HttpError(404, "Selected thread was not found in the bound environment.");
+        const project = (Array.isArray(snapshot?.projects) ? snapshot.projects : [])
+          .find((candidate) => optionalString(candidate?.id) === optionalString(thread.projectId));
+        // What the thread is running on now; the project's default only for a thread that never
+        // recorded a selection of its own.
+        const selection = normalizeT3ModelSelection(thread.modelSelection)
+          ?? normalizeT3ModelSelection(project?.defaultModelSelection);
+        let harnesses = extractHarnesses(snapshot, { catalogue: environment.providerCatalogue ?? null });
+        if (!environment.providerCatalogue) {
+          // Nothing registered: a live read is the only source of descriptors. Best-effort, because
+          // a controller asking "what can I change" must get an answer ("nothing known") even when
+          // the host is asleep.
+          try {
+            harnesses = (await resolveEnvironmentHarnesses(environment, snapshot)).harnesses;
+          } catch {
+            // keep the snapshot-derived harnesses
+          }
+        }
+        const projection = projectDeviceModelOptions({ harnesses, selection });
+        const capabilities = capabilitiesForProfile(await resolveActorProfile(store, device.userId, device.profile));
+        const harness = harnesses.find((entry) => entry.instanceId === projection.instanceId) ?? null;
+        return sendJson(res, 200, {
+          environmentId: environment.id,
+          threadId,
+          ...projection,
+          // Setting is `runtime_switch`, which only a direct-agent runtime accepts (submitIntent
+          // answers 409 otherwise) and which needs the profile's `session_control`. Saying so here
+          // keeps the controller from drawing a picker whose every press fails.
+          settable: harness?.runtimeKind === "direct" && capabilities.has("session_control"),
+        });
+      }
+
       const environmentSnapshotMatch = url.pathname.match(/^\/v1\/t3\/environments\/([^/]+)\/snapshot$/u);
       if (req.method === "GET" && environmentSnapshotMatch) {
         const user = await authenticateUser(req, store, config, null, clerkAuth);
@@ -1966,16 +2070,25 @@ export function createApp({
         assertEnvironmentTokenActive(environment);
         const threadId = decodeURIComponent(providerApprovalsMatch[2]);
         const approvals = await readProviderApprovals({ store, userId: user.id, environment, threadId });
+        const consoleCapabilities = capabilitiesForProfile(
+          await resolveActorProfile(store, user.id, "power-controller"),
+        );
         return sendJson(res, 200, {
           environmentId: environment.id,
           threadId,
-          approvals,
+          // Each entry carries its own `allowedDecisions` (capability-allowed AND offered by that
+          // request). A direct runtime offers only what the native agent exposed, so a button
+          // drawn from the top-level list alone would fail with AGENT_DECISION_UNSUPPORTED.
+          approvals: approvals.map((approval) => ({
+            ...approval,
+            allowedDecisions: allowedProviderApprovalDecisions(consoleCapabilities, approval, { realm: "user" }),
+          })),
           // The console must offer what T3 actually accepts, not a binary reduction of it, and it
           // must not offer a button the acting profile would be refused for.
           decisions: PROVIDER_APPROVAL_DECISION_CATALOGUE,
-          allowedDecisions: allowedProviderApprovalDecisions(
-            capabilitiesForProfile(await resolveActorProfile(store, user.id, "power-controller")),
-          ),
+          // Capability-only, unchanged: already-deployed clients read this and ignore the
+          // per-entry list. A client that understands the per-entry list prefers it.
+          allowedDecisions: allowedProviderApprovalDecisions(consoleCapabilities),
         });
       }
 
@@ -2072,7 +2185,10 @@ export function createApp({
         const snapshot = await readT3Snapshot({ ...environment, timeoutMs: 5000 });
         const project = snapshot.projects?.find((candidate) => candidate.id === projectId);
         if (!project) throw new HttpError(404, "T3 project not found.");
-        const requestedModelSelection = normalizeT3ModelSelection(body.modelSelection);
+        // Same shape rules as the intent path (`normalizeModelOptionSelections`), but a request that
+        // fails them is refused rather than trimmed: here the owner named the options, so quietly
+        // dropping some would launch a thread that is not the one they asked for.
+        const requestedModelSelection = requireLaunchModelSelection(body.modelSelection);
         const projectDefaultModelSelection = normalizeT3ModelSelection(project.defaultModelSelection);
         const { harnesses, catalogueSource } = await resolveEnvironmentHarnesses(environment, snapshot);
         const invalid = requestedModelSelection
@@ -2084,6 +2200,22 @@ export function createApp({
           projectDefault: projectDefaultModelSelection,
         });
         let modelRecovery = null;
+        // Model-slug recovery is for a slug the provider does not offer. A real model with an
+        // option it does not offer is a different failure: substituting would hand back a thread on
+        // the default setting (or another model entirely) for a request that named one. Refuse with
+        // the intent path's own code, and the provider's offered values when the catalogue has them.
+        if (invalid && requestedModelSelection?.options?.length > 0
+          && validateModelSelection(
+            { instanceId: requestedModelSelection.instanceId, model: requestedModelSelection.model },
+            harnesses,
+          ) === null) {
+          throw new HttpError(422, invalid.reason, {
+            code: "invalid_model_options",
+            modelSelection: requestedModelSelection,
+            ...(invalid.known ? { known: invalid.known } : {}),
+            catalogueSource,
+          });
+        }
         if (invalid) {
           if (!modelSelection) {
             throw new HttpError(422, invalid.reason, {
@@ -2097,6 +2229,9 @@ export function createApp({
             selected: modelSelection,
             reason: invalid.reason,
             catalogueSource,
+            // The unknown slug is checked first, so the options were never validated; the
+            // replacement runs on the provider's defaults. Say so rather than leave it implied.
+            ...(requestedModelSelection.options?.length > 0 ? { optionsApplied: false } : {}),
           };
         }
         if (!modelSelection) {
@@ -2187,12 +2322,12 @@ export function createApp({
           const createResult = await dispatchT3Command(
             environment,
             launch.createThread,
-            connectorRequestOptions(clientRequestId, "thread.create"),
+            connectorRequestOptions(clientRequestId, "thread.create", { userId: user.id, type: "user", id: user.id }),
           );
           const turnResult = await dispatchT3Command(
             environment,
             launch.startTurn,
-            connectorRequestOptions(clientRequestId, "thread.start"),
+            connectorRequestOptions(clientRequestId, "thread.start", { userId: user.id, type: "user", id: user.id }),
           );
           result = { createThread: createResult, startTurn: turnResult };
         } catch (error) {
@@ -3556,12 +3691,16 @@ export function createApp({
         const device = await authenticateDevice(req, store, url, config);
         await enforceDeviceRead(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
-        const environment = await boundDeviceEnvironment(store, device);
+        const requestedEnvironmentId = optionalString(url.searchParams.get("environmentId"));
+        const environment = await devicePreviewEnvironment(store, device, requestedEnvironmentId);
+        const preview = Boolean(requestedEnvironmentId);
+        const projectId = preview ? optionalString(url.searchParams.get("projectId")) : device.config?.projectId;
         const snapshot = await fetchDeviceSnapshot(store, environment);
-        const threads = deviceSelectableThreads(snapshot, device.config?.threadId, device.config?.projectId);
+        const threads = deviceSelectableThreads(snapshot, device.config?.threadId, projectId);
         return sendJson(res, 200, {
+          destinationSelection: "atomic-v1",
           environmentId: environment.id,
-          projectId: device.config?.projectId ?? null,
+          projectId: projectId ?? null,
           threadId: device.config?.threadId ?? null,
           threads: await refineSelectedThreadVerb(store, environment, threads),
         });
@@ -3584,11 +3723,13 @@ export function createApp({
         const body = await readJson(req);
         await assertExpectedDeviceContext(store, device, body, THREAD_CREATE_REQUEST_OPERATION);
         const requestedTitle = normalizeTitle(body.title);
-        const environment = await boundDeviceEnvironment(store, device);
+        const explicitDestination = body.destinationSelection === "atomic-v1";
+        const environment = await devicePreviewEnvironment(store, device,
+          explicitDestination ? requireString(body.environmentId, "environmentId") : null);
         // A thread has to be created *somewhere*. Unlike thread selection, which can fall back to
         // the whole environment, there is no defensible default folder to invent — so the same 409
         // the project routes answer with, rather than a guess.
-        const projectId = optionalString(device.config?.projectId);
+        const projectId = explicitDestination ? requireString(body.projectId, "projectId") : optionalString(device.config?.projectId);
         if (!projectId) throw new HttpError(409, "Device has no project selected.");
 
         // Creating a thread writes to the owner's T3 environment, so it is gated like a dispatch
@@ -3712,7 +3853,7 @@ export function createApp({
           result = await dispatchT3Command(
             environment,
             createThread,
-            connectorRequestOptions(clientRequestId, "thread.create"),
+            connectorRequestOptions(clientRequestId, "thread.create", { userId: device.userId, type: "device", id: device.id }),
           );
         } catch (error) {
           const command = await store.createCommand({
@@ -3754,7 +3895,7 @@ export function createApp({
         const updated = await store.updateDeviceConfig({
           userId: device.userId,
           deviceId: device.id,
-          config: { threadId },
+          config: { environmentId: environment.id, projectId, threadId },
           actorType: "device",
           actorId: device.id,
         });
@@ -3824,9 +3965,10 @@ export function createApp({
         const device = await authenticateDevice(req, store, url, config);
         await enforceDeviceRead(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
-        const environment = await boundDeviceEnvironment(store, device);
+        const environment = await devicePreviewEnvironment(store, device, optionalString(url.searchParams.get("environmentId")));
         const snapshot = await fetchDeviceSnapshot(store, environment);
         return sendJson(res, 200, {
+          destinationSelection: "atomic-v1",
           environmentId: environment.id,
           projectId: device.config?.projectId ?? null,
           projects: deviceSelectableProjects(snapshot, device.config?.projectId),
@@ -3846,6 +3988,28 @@ export function createApp({
         if (!/^\d+$/u.test(pageText)) throw new HttpError(400, "page must be a non-negative integer.");
         const after = optionalString(url.searchParams.get("after"));
         if (after && !Number.isFinite(Date.parse(after))) throw new HttpError(400, "after must be an ISO timestamp.");
+        // Incremental response reads. The device says which message it is showing and how much of
+        // it it already holds; without these it gets the whole response as before.
+        const streamMessageId = optionalString(url.searchParams.get("streamMessageId"));
+        const streamOffsetText = url.searchParams.get("streamOffset");
+        if (streamOffsetText !== null && !/^\d{1,7}$/u.test(streamOffsetText)) {
+          throw new HttpError(400, "streamOffset must be a non-negative integer.");
+        }
+        // The digest of the text the device holds, echoed from the previous response. It is only
+        // ever COMPARED, never interpreted, so it is not rejected with a 400: a value that is the
+        // wrong shape or oversized is simply a prefix the server cannot vouch for, and the answer
+        // to that is a reset. Bounding it to one character past the real length keeps an
+        // arbitrarily long query value out of the comparison without changing that verdict.
+        const streamFingerprintText = url.searchParams.get("streamFingerprint");
+        const streamCursor = streamMessageId
+          ? {
+              messageId: streamMessageId,
+              offset: streamOffsetText ? Number.parseInt(streamOffsetText, 10) : 0,
+              ...(streamFingerprintText !== null
+                ? { fingerprint: streamFingerprintText.slice(0, DEVICE_RESPONSE_STREAM_FINGERPRINT_LENGTH + 1) }
+                : {}),
+            }
+          : null;
         const environment = await boundDeviceEnvironment(store, device);
         // A controller reading its thread IS a watcher, and it has no way to say so — there is no
         // device-facing watch route and a few square centimetres of screen should not have to
@@ -3872,6 +4036,7 @@ export function createApp({
           controls,
           page: Number.parseInt(pageText, 10),
           after,
+          streamCursor,
         }));
       }
 
@@ -3884,19 +4049,29 @@ export function createApp({
         requireClaimedDevice(device);
         const body = await readJson(req);
         const threadId = requireString(body.threadId, "threadId");
-        const environment = await boundDeviceEnvironment(store, device);
+        const explicitDestination = body.destinationSelection === "atomic-v1";
+        const environment = await devicePreviewEnvironment(store, device,
+          explicitDestination ? requireString(body.environmentId, "environmentId") : null);
+        const projectId = explicitDestination ? (optionalString(body.projectId) ?? null) : optionalString(device.config?.projectId);
         const snapshot = await fetchDeviceSnapshot(store, environment);
-        const threads = deviceSelectableThreads(snapshot, device.config?.threadId, device.config?.projectId);
+        const threads = deviceSelectableThreads(snapshot, device.config?.threadId, projectId);
         // Validated against the live snapshot, so a device cannot invent a thread id
         // or reach one belonging to a different environment — or, once a project is
         // selected, to a different folder.
         if (!threads.some((thread) => thread.id === threadId)) {
           throw new HttpError(404, "Thread not found in the bound environment.");
         }
+        if (explicitDestination) {
+          // A live snapshot may wait on the remote connector. Recheck the device and
+          // target owner before committing a choice after that wait.
+          const current = await authenticateDevice(req, store, url, config);
+          requireClaimedDevice(current);
+          await devicePreviewEnvironment(store, current, environment.id);
+        }
         const updated = await store.updateDeviceConfig({
           userId: device.userId,
           deviceId: device.id,
-          config: { threadId },
+          config: explicitDestination ? { environmentId: environment.id, projectId, threadId } : { threadId },
           actorType: "device",
           actorId: device.id,
         });
@@ -4156,7 +4331,7 @@ export function createApp({
           await resolveActorProfile(store, device.userId, device.profile),
         );
         const [provider, userInput] = await Promise.all([
-          readDeviceProviderApprovals({ store, device }),
+          readDeviceProviderApprovals({ store, device, capabilities }),
           readDeviceUserInputRequests({ store, device }),
         ]);
         return sendJson(res, 200, {
@@ -4242,7 +4417,7 @@ export function createApp({
         requireClaimedDevice(device);
         const [, commandId, action] = deviceApprovalMatch;
         const output = action === "approve"
-          ? await approveCommand({ store, userId: device.userId, commandId, config })
+          ? await approveCommand({ store, userId: device.userId, commandId, config, approvingDeviceId: device.id })
           : await rejectCommand({ store, userId: device.userId, commandId });
         return sendJson(res, action === "approve" ? 202 : 200, output);
       }
@@ -4524,6 +4699,10 @@ export function createApp({
         await enforceDeviceWrite(req, res, rateLimiter, config, device);
         requireClaimedDevice(device);
         const body = await readJson(req);
+        if (["runtime_switch", "runtime_import"].includes(body.intent?.type)) {
+          await assertExpectedDeviceContext(store, device, body);
+          if (body.intent.type === "runtime_import" && body.intent.projectId !== device.config?.projectId) throw new HttpError(409, "The selected folder changed. Refresh before importing a session.");
+        }
         const environmentId = requireString(
           optionalString(body.environmentId) ?? optionalString(device.config?.environmentId),
           "environmentId",
@@ -5489,6 +5668,10 @@ async function executeIntent({
     device: { profile: await resolveActorProfile(store, actor.userId, actor.profile) },
     intent,
     environment,
+    // Who is asking, for the one decision that depends on it: `acceptAlways` is the signed-in
+    // owner's alone. Passed from the actor, never from `policyContext`, so a caller cannot
+    // widen it by accident; an actor with no `type` reads as unknown and is denied that decision.
+    actorType: actor.type,
     // A configured global window is the floor; per-user and per-environment windows are read
     // by the engine directly off the records below.
     ...(config.policyAllowedHours ? { allowedHours: config.policyAllowedHours } : {}),
@@ -5498,6 +5681,8 @@ async function executeIntent({
   if (!policy.allowed) {
     if (policy.requiresApproval) {
       const threadId = requireString(body.threadId, "threadId");
+      const deviceContext = actor.type === "device" && ["runtime_switch", "runtime_import"].includes(intent.type)
+        ? (await store.getDeviceForUser(actor.userId, actor.id))?.config : null;
       const command = await store.createCommand({
         userId: actor.userId,
         deviceId: actor.type === "device" ? actor.id : null,
@@ -5507,7 +5692,11 @@ async function executeIntent({
         normalized: null,
         status: "approval_required",
         risk: policy.risk,
-        result: policyResult(policy),
+        result: { ...policyResult(policy), ...(deviceContext ? { deviceContext: {
+          environmentId: deviceContext.environmentId ?? null,
+          projectId: deviceContext.projectId ?? null,
+          threadId: deviceContext.threadId ?? null,
+        } } : {}) },
         metrics: commandMetrics({ startedAt }),
       });
       return { command, policy };
@@ -5600,7 +5789,7 @@ async function executeIntent({
         terminalId: intent.terminalId,
         data: intent.data,
         cwd: intent.cwd,
-      }, body.clientRequestId);
+      }, body.clientRequestId, actor);
       const command = await store.createCommand({
         userId: actor.userId,
         deviceId: actor.type === "device" ? actor.id : null,
@@ -5642,6 +5831,29 @@ async function executeIntent({
           ? "structuredUserInput"
           : "dispatch";
   const dispatchManifest = await requireFreshT3CapabilityForStore(store, environment, requiredCapability);
+  if (["runtime_switch", "runtime_import"].includes(intent.type) && dispatchManifest.runtimeKind !== "direct") {
+    throw new HttpError(409, "This action requires a direct-agent connector.");
+  }
+  // Per-model switches (reasoning effort, context window, ...) are the provider's own descriptors,
+  // so the only thing that can say a value is real is the catalogue. Checked here, before dispatch,
+  // for the same reason model slugs are: the runtime rejects an unknown value later, as a failure
+  // the owner (or a bezel) cannot act on. Deliberately the PERSISTED catalogue, not a live read —
+  // this path serves controllers, and a WebSocket round trip is not something to add to a
+  // dispatch. Only when options were actually supplied, so a plain switch behaves as before; and
+  // a missing catalogue is non-authoritative (validateModelSelection returns null), exactly as it
+  // is for thread launch.
+  if (["runtime_switch", "runtime_import"].includes(intent.type) && Array.isArray(intent.options) && intent.options.length > 0) {
+    const invalid = validateModelSelection(
+      { instanceId: intent.runtimeId, model: intent.model, options: intent.options },
+      extractHarnesses({}, { catalogue: environment.providerCatalogue ?? null }),
+    );
+    if (invalid) {
+      throw new HttpError(422, invalid.reason, {
+        code: "invalid_model_options",
+        ...(invalid.known ? { known: invalid.known } : {}),
+      });
+    }
+  }
   const attachments = prepareCapabilityAwareAttachments(await buildMediaAttachments({
     store,
     userId: actor.userId,
@@ -5660,7 +5872,7 @@ async function executeIntent({
       store,
       environment,
       t3Command,
-      connectorRequestOptions(body.clientRequestId, "dispatch"),
+      connectorRequestOptions(body.clientRequestId, "dispatch", actor),
     );
   } catch (error) {
     if (intent.type === "session_control" && intent.action === "stop" && isAlreadyStoppedT3Error(error)) {
@@ -5699,7 +5911,7 @@ async function executeIntent({
     threadId,
     intent,
     normalized: storableT3Command(t3Command),
-    status: "dispatched",
+    status: ["runtime_switch", "runtime_import"].includes(intent.type) ? "completed" : "dispatched",
     risk: policy.risk,
     result,
     metrics: commandMetrics({ startedAt, dispatchStartedAt, completed: true, mediaCapturedAt }),
@@ -5872,7 +6084,7 @@ async function readProviderApprovals({ store, userId, environment, threadId }) {
  * approvals the same response carries — those are held here and have nothing to do with T3's
  * reachability — so a failure is reported alongside them rather than instead of them.
  */
-async function readDeviceProviderApprovals({ store, device }) {
+async function readDeviceProviderApprovals({ store, device, capabilities }) {
   const threadId = optionalString(device.config?.threadId);
   if (!threadId) return { approvals: [], error: null };
   try {
@@ -5887,7 +6099,13 @@ async function readDeviceProviderApprovals({ store, device }) {
     return {
       approvals: approvals
         .filter((approval) => approval.status === "pending" && !approval.localDecision)
-        .map((approval) => deviceProviderApprovalView(approval)),
+        .map((approval) => ({
+          ...deviceProviderApprovalView(approval),
+          // Per request, so the controller draws only buttons this request accepts (see
+          // `offeredDecisions` in src/providerApprovals.mjs). The top-level list stays
+          // capability-only for firmware already in the field.
+          allowedDecisions: allowedProviderApprovalDecisions(capabilities, approval, { realm: "device" }),
+        })),
       error: null,
     };
   } catch (error) {
@@ -5969,6 +6187,22 @@ async function answerProviderApproval({
     throw new HttpError(409, "T3 abandoned this approval request; it can no longer be answered.", {
       approval,
     });
+  }
+
+  // A request refuses anything outside the set it offers: its own list when it stated one,
+  // otherwise T3's default four. The default matters as much as the list. `acceptAlways` is not in
+  // it, and Claude's adapter turns an unlisted `acceptAlways` into a DENY while T3 itself accepts
+  // the dispatch, so passing it through would silently refuse what the owner meant to allow.
+  // A direct runtime rejects the rest with AGENT_DECISION_UNSUPPORTED, but only after the dispatch,
+  // as an error activity nobody reads; refusing here keeps it a synchronous 4xx and leaves the claim
+  // unwritten so the owner can still give an offered answer. Capability gating is not repeated:
+  // `submitIntent()` owns that.
+  if (!providerApprovalOffers(approval, decision)) {
+    throw new HttpError(
+      422,
+      "This approval request does not offer that decision.",
+      { requestId, decision, offeredDecisions: offeredProviderApprovalDecisions(approval) },
+    );
   }
 
   const claim = await store.claimProviderApprovalDecision({
@@ -7285,7 +7519,7 @@ function redactUserInputAnswers(answers) {
   };
 }
 
-async function approveCommand({ store, userId, commandId, config }) {
+async function approveCommand({ store, userId, commandId, config, approvingDeviceId = null }) {
   const startedAt = Date.now();
   const command = await store.getCommandForUser(userId, commandId);
   if (!command) throw new HttpError(404, "Command not found.");
@@ -7299,13 +7533,38 @@ async function approveCommand({ store, userId, commandId, config }) {
       status: command.status,
     });
   }
+  const environment = await store.getEnvironmentForUser(userId, command.environmentId);
+  if (!environment) throw new HttpError(404, "Environment not found.");
+  assertEnvironmentTokenActive(environment);
+  if (["runtime_switch", "runtime_import"].includes(command.intent?.type)) {
+    let profile = "power-controller";
+    if (command.deviceId) {
+      const device = await store.getDeviceForUser(userId, command.deviceId);
+      if (!device || device.revokedAt || !device.claimed) throw new HttpError(403, "The originating controller is no longer authorized.");
+      const context = command.result?.deviceContext;
+      if (!context || context.environmentId !== command.environmentId || context.threadId !== command.threadId
+        || ["environmentId", "projectId", "threadId"].some((field) => (device.config?.[field] ?? null) !== (context[field] ?? null))
+        || (command.intent.type === "runtime_import" && command.intent.projectId !== context.projectId)) {
+        throw new HttpError(409, "The controller context changed. Submit and confirm the action again.");
+      }
+      profile = await resolveActorProfile(store, userId, device.profile);
+    }
+    const currentPolicy = evaluateIntentPolicy({ device: { profile }, intent: command.intent, environment,
+      ...(config.policyAllowedHours ? { allowedHours: config.policyAllowedHours } : {}) });
+    // This approval satisfies a confirmation escalation, never a new hard denial.
+    if (!currentPolicy.allowed && !currentPolicy.requiresApproval) throw new HttpError(403, "The queued action is no longer authorized by current policy.", { policy: currentPolicy });
+    if (approvingDeviceId) {
+      const device = await store.getDeviceForUser(userId, approvingDeviceId);
+      if (!device || device.revokedAt || !device.claimed) throw new HttpError(403, "The approving controller is no longer authorized.");
+      const approverProfile = await resolveActorProfile(store, userId, device.profile);
+      const approverPolicy = evaluateIntentPolicy({ device: { profile: approverProfile }, intent: command.intent, environment });
+      if (!approverPolicy.allowed && !approverPolicy.requiresApproval) throw new HttpError(403, "This controller cannot approve the queued action.", { policy: approverPolicy });
+    }
+  }
   const approvalClaim = await store.claimCommandApproval?.({ userId, commandId });
   if (!approvalClaim) {
     throw new HttpError(409, "Command approval is already being processed.", { commandId });
   }
-  const environment = await store.getEnvironmentForUser(userId, command.environmentId);
-  if (!environment) throw new HttpError(404, "Environment not found.");
-  assertEnvironmentTokenActive(environment);
   const threadId = requireString(command.threadId, "threadId");
 
   // Terminal input is the one approved intent that does not go through orchestration dispatch.
@@ -7361,6 +7620,7 @@ async function approveCommand({ store, userId, commandId, config }) {
       ? "interrupt"
       : "dispatch";
   const approvedManifest = await requireFreshT3CapabilityForStore(store, environment, approvedCapability);
+  if (["runtime_switch", "runtime_import"].includes(command.intent?.type) && approvedManifest.runtimeKind !== "direct") throw new HttpError(409, "This action requires a direct-agent connector.");
   const approvedAttachments = prepareCapabilityAwareAttachments(await buildMediaAttachments({
     store,
     userId,
@@ -7393,7 +7653,7 @@ async function approveCommand({ store, userId, commandId, config }) {
   const updated = await store.updateCommand({
     userId,
     commandId,
-    status: "dispatched",
+    status: ["runtime_switch", "runtime_import"].includes(command.intent?.type) ? "completed" : "dispatched",
     normalized: storableT3Command(t3Command),
     result,
     metrics: commandMetrics({
@@ -7647,6 +7907,18 @@ function requestBaseUrl(req) {
   return `${proto}://${req.headers.host ?? "localhost"}`;
 }
 
+/**
+ * Project a command-variant set onto the wire.
+ *
+ * `command` stays the first field and keeps its old meaning so an older console build keeps
+ * working; `commands` and `universal` are additive. The server decides this rather than the
+ * browser because only the server knows the gateway origin, and the quoting rules are a property
+ * of the command, not of the machine that happens to display it.
+ */
+function commandResponse(variants) {
+  return { command: variants.command, commands: variants.commands, commandUniversal: variants.universal };
+}
+
 async function deviceGatewayResponse(store, device, suppliedSelection = null) {
   const profiles = (await store.listGatewayProfiles(device.userId)).map(publicGatewayProfile);
   const byId = new Map(profiles.map((profile) => [profile.id, profile]));
@@ -7893,7 +8165,40 @@ function normalizeT3ModelSelection(value) {
   const model = optionalString(value.model);
   if (!instanceId || !model) return null;
   const selection = { instanceId, model };
-  if (Array.isArray(value.options)) selection.options = value.options;
+  // Bounded and shape-checked wherever a selection is read, not only on the intent path: the array
+  // is owner input that reaches a provider, and without a registered catalogue nothing else
+  // limits its length or the size of an id or value.
+  const options = normalizeModelOptionSelections(value.options);
+  if (options) selection.options = options;
+  return selection;
+}
+
+/**
+ * The model selection of an owner's thread-launch request. Lenient normalization would silently
+ * drop unusable option entries, so anything it would drop is refused instead. This is about shape
+ * and bounds only; whether a value is one the provider offers is the catalogue's call, and only a
+ * registered catalogue is authoritative for that.
+ */
+function requireLaunchModelSelection(value) {
+  const selection = normalizeT3ModelSelection(value);
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value.options : undefined;
+  if (raw === undefined || raw === null) return selection;
+  const refuse = (reason) => new HttpError(422, reason, {
+    code: "invalid_model_options",
+    ...(selection ? { modelSelection: selection } : {}),
+  });
+  if (!Array.isArray(raw)) throw refuse("Model options must be an array of {id, value} entries.");
+  if (raw.length > MAX_MODEL_OPTION_SELECTIONS) {
+    throw refuse(`A model selection carries at most ${MAX_MODEL_OPTION_SELECTIONS} options.`);
+  }
+  if (raw.length === 0) return selection;
+  if (!selection) throw refuse("Model options need the instanceId and model they apply to.");
+  const kept = selection.options?.length ?? 0;
+  if (kept !== raw.length) {
+    throw refuse(
+      `${raw.length - kept} of ${raw.length} model options were unusable: each needs an id of at most 120 characters and a boolean or a non-empty value of at most 200.`,
+    );
+  }
   return selection;
 }
 
@@ -7959,6 +8264,16 @@ async function boundDeviceEnvironment(store, device) {
     throw new HttpError(409, "Device has no environment configured.");
   }
   const environment = await store.getEnvironmentForUser(device.userId, environmentId);
+  if (!environment) throw new HttpError(404, "Environment not found.");
+  assertEnvironmentTokenActive(environment);
+  return environment;
+}
+
+// A destination preview is still fenced by the claiming account. Resolve it without
+// mutating the device; the final thread selection commits the complete destination.
+async function devicePreviewEnvironment(store, device, requestedId) {
+  if (!requestedId) return await boundDeviceEnvironment(store, device);
+  const environment = await store.getEnvironmentForUser(device.userId, requestedId);
   if (!environment) throw new HttpError(404, "Environment not found.");
   assertEnvironmentTokenActive(environment);
   return environment;
@@ -8066,7 +8381,9 @@ function deviceEnvironmentHealth(environment, connector, tokenExpired) {
   );
   const freshness = deviceEnvironmentFreshness(environment, transport, connectorState, transportObservedAt);
   const capability = deviceCapabilityState(environment?.health?.capabilities);
+  const runtimeKind = environment?.health?.capabilities?.runtimeKind === "direct" || connector?.capabilities?.includes("runtime.direct") ? "direct" : "t3";
   return {
+    ...(runtimeKind === "direct" ? { runtimeKind } : {}),
     transport,
     freshness,
     connector: connectorState,
@@ -8075,6 +8392,7 @@ function deviceEnvironmentHealth(environment, connector, tokenExpired) {
     capability,
     observedAt,
     action: deviceEnvironmentAction({
+      runtimeKind,
       tokenExpired,
       transport,
       freshness,
@@ -8151,7 +8469,7 @@ function deviceEnvironmentFreshness(environment, transport, connectorState, obse
   return Date.now() - Date.parse(observedAt) <= DEVICE_OBSERVATION_MAX_AGE_MS ? "live" : "stale";
 }
 
-function deviceEnvironmentAction({ tokenExpired, transport, freshness, connector, t3, provider, capabilityRecovery }) {
+function deviceEnvironmentAction({ tokenExpired, transport, freshness, connector, t3, provider, capabilityRecovery, runtimeKind }) {
   if (tokenExpired) return "RE-PAIR T3";
   if (transport === "connector") {
     if (connector === "revoked") return "RE-PAIR CONNECTOR";
@@ -8160,6 +8478,7 @@ function deviceEnvironmentAction({ tokenExpired, transport, freshness, connector
     if (["unknown", "enrolled", "waiting", "offline"].includes(connector)) return "START CONNECTOR";
     if (connector === "reconnecting") return "CHECK CONNECTION";
   }
+  if (runtimeKind === "direct" && ["auth_failed", "stopped", "incompatible", "starting", "error"].includes(t3)) return t3 === "starting" ? "AGENT STARTING" : "CHECK LOCAL AGENT";
   if (t3 === "auth_failed") return "FIX T3 AUTH";
   if (t3 === "stopped") return "START T3 CODE";
   if (t3 === "incompatible") return "UPDATE T3 CODE";
@@ -8333,6 +8652,21 @@ async function requireFreshT3CapabilityForStore(store, environment, feature) {
   return manifest;
 }
 
+async function discoverNativeSessions(store, environment, params) {
+  assertEnvironmentTokenActive(environment);
+  const manifest = await requireFreshT3CapabilityForStore(store, environment, "shellSnapshot");
+  if (manifest.runtimeKind !== "direct") throw new HttpError(409, "Session discovery requires a direct-agent connector.");
+  const runtimeId = requireString(params.get("runtimeId"), "runtimeId");
+  const projectId = requireString(params.get("projectId"), "projectId");
+  const cursor = params.get("cursor");
+  if (!/^[a-zA-Z0-9_.:-]{1,180}$/u.test(runtimeId) || projectId.length > 180 || (cursor && cursor.length > 2048)) throw new HttpError(400, "Invalid session discovery parameters.");
+  try {
+    return await transportForStore(store, environment).callRpc(environment, "runtime.sessions.list", { runtimeId, projectId, ...(cursor ? { cursor } : {}) });
+  } catch {
+    throw new HttpError(409, "Native sessions could not be listed. Check the local agent's login and session-discovery support.");
+  }
+}
+
 function capabilityForT3Command(command) {
   if (command?.type === "thread.create") return "launch";
   if (command?.type === "thread.session.stop") return "sessionStop";
@@ -8384,31 +8718,31 @@ function prepareCapabilityAwareAttachments(attachments, manifest) {
   return { attachments: prepared, audioTranscripts };
 }
 
-async function writeTerminalInputForStore(store, environment, { threadId, terminalId, data, cwd }, clientRequestId = null) {
+async function writeTerminalInputForStore(store, environment, { threadId, terminalId, data, cwd }, clientRequestId = null, actor = null) {
   const transport = transportForStore(store, environment);
   if (cwd) {
     await transport.callRpc(
       environment,
       T3_WS_METHODS.terminalOpen,
       { threadId, terminalId, cwd },
-      connectorRequestOptions(clientRequestId, "terminal.open"),
+      connectorRequestOptions(clientRequestId, "terminal.open", actor),
     );
   }
   return await transport.callRpc(
     environment,
     T3_WS_METHODS.terminalWrite,
     { threadId, terminalId, data },
-    connectorRequestOptions(clientRequestId, "terminal.write"),
+    connectorRequestOptions(clientRequestId, "terminal.write", actor),
   );
 }
 
-function connectorRequestOptions(clientRequestId, stage) {
+function connectorRequestOptions(clientRequestId, stage, actor = null) {
   if (!clientRequestId) return {};
   // Connector request ids are bounded protocol fields. A stable digest preserves the originating
   // client request across Container/router retries without exposing that caller-chosen id in edge
   // storage or overflowing it when the client used the 128-character maximum.
   const stableId = `cmdreq_${createHash("sha256")
-    .update(`${clientRequestId}\u0000${stage}`, "utf8")
+    .update(JSON.stringify([actor?.userId ?? null, actor?.type ?? null, actor?.id ?? null, clientRequestId, stage]), "utf8")
     .digest("hex")
     .slice(0, 40)}`;
   return { requestId: stableId, idempotencyKey: stableId };

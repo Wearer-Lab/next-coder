@@ -6,7 +6,7 @@ import { createApp } from "../src/app.mjs";
 import { createCommandArbiter } from "../src/commandArbiter.mjs";
 import { createMemoryStore } from "../src/store.mjs";
 import { createThreadStreamHub } from "../src/threadStream.mjs";
-import { openT3ThreadStream } from "../src/t3Ws.mjs";
+import { openT3ThreadStream, T3_THREAD_RESUME_LIMITS } from "../src/t3Ws.mjs";
 
 const ENVIRONMENT = { baseUrl: "http://127.0.0.1:3773", accessToken: "test-access-token" };
 const workFixture = JSON.parse(await readFile(
@@ -453,7 +453,8 @@ test("a gap T3 cannot fill arrives as a snapshot, and is published as a reset wi
   await until(() => t3.sockets.length === 2, "the reconnect");
   assert.equal(t3.latest().request.payload.afterSequence, 301);
 
-  // T3's answer when the replay gap exceeds THREAD_RESUME_MAX_GAP (src/ws.ts:1349-1352): a
+  // T3's answer when it will not replay the gap: more than 1000 events on 0.0.x (THREAD_RESUME_MAX_GAP,
+  // 0.0.32 src/ws.ts:1349-1352), or more than 128 events / 1 MiB on 0.1.x (T3_THREAD_RESUME_LIMITS). A
   // snapshot instead of the replay. The gateway must say so rather than appending it silently.
   t3.latest().push(snapshotItem(9_999, { title: "Much later" }));
   t3.latest().push({ kind: "synchronized" });
@@ -763,4 +764,11 @@ test("a reply collected before its command acknowledgement is reconciled after r
   assert.equal(settled.status, "completed");
   assert.equal(settled.result.response, "Early real reply");
   hub.stop();
+});
+
+test("the resume limits the stream comments describe are the ones the socket client exports", () => {
+  // Evidence: 0.0.32 src/ws.ts:301-307; bundle-0.1.5.js:407168 and :370527 (docs/t3-version-audit.md S2).
+  // THREAD_RESUME_MAX_GAP does not exist at 0.1.x; only the shell stream keeps 1000.
+  assert.deepEqual(T3_THREAD_RESUME_LIMITS[1], { maxReplayEvents: 1000, maxReplayBytes: null });
+  assert.deepEqual(T3_THREAD_RESUME_LIMITS[2], { maxReplayEvents: 128, maxReplayBytes: 1_048_576 });
 });

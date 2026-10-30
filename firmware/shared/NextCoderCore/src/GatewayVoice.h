@@ -38,7 +38,12 @@ class GatewayVoice {
  public:
   void begin(DeviceStore& store);
   // Pin the destination and a fresh capture identity before microphone bytes are collected.
-  void beginCapture(const String& environmentId, const String& threadId);
+  bool beginCapture(const String& environmentId, const String& threadId);
+  bool canStartCapture() const;
+  // Local dismissal never cancels cloud work. Unknown delivery/status cannot be dismissed.
+  bool canDismissCapture() const { return captureResolved_; }
+  bool hasJob() const { return jobId_.length() > 0; }
+  bool resumeStatus();
 
   // POST /v1/device/media. Returns the MEDIA id — what an audio_prompt intent needs — and keeps the
   // JOB id for poll(). Blocks only on the caller's network worker, never on the render task.
@@ -71,7 +76,9 @@ class GatewayVoice {
   // One line a person can read: the milestone, or the transcript once there is one, or the error.
   const String& detail() const { return detail_; }
   const String& transcript() const { return transcript_; }
+  const String& reviewReason() const { return reviewReason_; }
   const String& mediaId() const { return mediaId_; }
+  const String& commandId() const { return commandId_; }
   const String& responseAfter() const { return responseAfter_; }
   bool ok() const { return ok_; }
 
@@ -88,7 +95,9 @@ class GatewayVoice {
   String captureRequestId_;
   String jobId_;
   String mediaId_;
+  String commandId_;
   String transcript_;
+  String reviewReason_;
   String responseAfter_;
   String detail_;
   VoiceStage stage_ = VoiceStage::Idle;
@@ -100,5 +109,6 @@ class GatewayVoice {
   uint32_t giveUpAt_ = 0;
   uint8_t failures_ = 0;
   bool done_ = false;
+  bool captureResolved_ = true;
   bool pollFailure(uint32_t now, int code);
 };

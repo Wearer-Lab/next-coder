@@ -10,6 +10,7 @@ export const providerCatalogueValidator = v.object({
   source: v.string(),
   instances: v.array(v.object({
     instanceId: v.string(),
+    runtimeKind: v.optional(v.literal("direct")),
     label: v.string(),
     badge: v.union(v.string(), v.null()),
     version: v.union(v.string(), v.null()),

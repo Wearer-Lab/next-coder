@@ -386,6 +386,105 @@ test("an interrupted rotation keeps the old primary credential and resumes from 
   assert.equal(JSON.stringify(resumed).includes("old-secret"), false);
 });
 
+test("launchd writes only the T3 launch options the operator set, one argument each, and replaces on reinstall", async (t) => {
+  const scratch = await mkdtemp(join(tmpdir(), "connector-launchd-t3-"));
+  t.after(() => realFs.rm(scratch, { recursive: true, force: true }));
+  const stateDir = join(scratch, "state");
+  const run = async (_file, args) => ({ code: args[0] === "print" ? 1 : 0, stdout: "", stderr: "" });
+  const base = { stateDir, platform: "darwin", home: scratch, uid: 501, fs: recordingFs(), run, env: {} };
+
+  const explicit = await installService({ ...base, t3Launch: { version: "0.1.4", port: 4100, startTimeoutMs: 90_000 } });
+  const first = await realFs.readFile(explicit.paths.definitionPath, "utf8");
+  assert.match(first, /<string>--t3-version<\/string>\n      <string>0\.1\.4<\/string>\n      <string>--t3-port<\/string>\n      <string>4100<\/string>\n      <string>--t3-start-timeout-ms<\/string>\n      <string>90000<\/string>\n    <\/array>/);
+
+  const replaced = await installService({ ...base, t3Launch: { version: "0.1.6" } });
+  const second = await realFs.readFile(replaced.paths.definitionPath, "utf8");
+  assert.equal(second.split("--t3-version").length - 1, 1);
+  assert.match(second, /<string>--t3-version<\/string>\n      <string>0\.1\.6<\/string>\n    <\/array>/);
+  assert.equal(second.includes("0.1.4") || second.includes("--t3-port"), false);
+
+  await installService({ ...base, t3Launch: {} });
+  assert.equal((await realFs.readFile(explicit.paths.definitionPath, "utf8")).includes("--t3-"), false);
+});
+
+test("systemd ExecStart quotes explicit T3 options, freezes no default, and restarts on replacement", async (t) => {
+  const scratch = await mkdtemp(join(tmpdir(), "connector-systemd-t3-"));
+  t.after(() => realFs.rm(scratch, { recursive: true, force: true }));
+  const stateDir = join(scratch, "state with spaces");
+  const calls = [];
+  const run = async (file, args) => { calls.push({ file, args }); return { code: 0, stdout: "", stderr: "" }; };
+  const base = { stateDir, platform: "linux", home: scratch, env: { XDG_CONFIG_HOME: join(scratch, "config") }, run };
+
+  const explicit = await installService({ ...base, t3Launch: { version: "0.1.4", port: 4100, startTimeoutMs: 90_000 } });
+  const first = await realFs.readFile(explicit.paths.definitionPath, "utf8");
+  assert.match(first, /^ExecStart=.*"--service-log" "[^"]*" "--t3-version" "0\.1\.4" "--t3-port" "4100" "--t3-start-timeout-ms" "90000"$/m);
+  assert.equal(calls.some(({ args }) => args.join(" ") === "--user restart agent-controller-connector.service"), false);
+
+  const replaced = await installService({ ...base, t3Launch: { version: "0.1.6" } });
+  const second = await realFs.readFile(replaced.paths.definitionPath, "utf8");
+  assert.match(second, /^ExecStart=.*"--t3-version" "0\.1\.6"$/m);
+  assert.equal(second.includes("0.1.4") || second.includes("--t3-port"), false);
+  assert.equal(calls.filter(({ args }) => args.join(" ") === "--user restart agent-controller-connector.service").length, 1);
+
+  await installService({ ...base, t3Launch: {} });
+  assert.equal((await realFs.readFile(explicit.paths.definitionPath, "utf8")).includes("--t3-"), false);
+});
+
+test("Windows task arguments quote explicit T3 options, freezes no default, and replaces on reinstall", async (t) => {
+  const scratch = await mkdtemp(join(tmpdir(), "connector-windows-t3-"));
+  t.after(() => realFs.rm(scratch, { recursive: true, force: true }));
+  const stateDir = join(scratch, 'state & "quoted"');
+  const env = { SystemRoot: "C:\\Windows", USERDOMAIN: "EXAMPLE", USERNAME: "alice" };
+  const control = windowsTaskControl();
+  const base = { stateDir, platform: "win32", home: scratch, env, run: control.run };
+
+  const explicit = await installService({ ...base, t3Launch: { version: "0.1.4", port: 4100, startTimeoutMs: 90_000 } });
+  const first = await realFs.readFile(explicit.paths.definitionPath, "utf8");
+  assert.match(first, /<Arguments>[^<]*&quot;--t3-version&quot; &quot;0\.1\.4&quot; &quot;--t3-port&quot; &quot;4100&quot; &quot;--t3-start-timeout-ms&quot; &quot;90000&quot;<\/Arguments>/);
+
+  const replaced = await installService({ ...base, t3Launch: { version: "0.1.6" } });
+  const second = await realFs.readFile(replaced.paths.definitionPath, "utf8");
+  assert.match(second, /<Arguments>[^<]*&quot;--t3-version&quot; &quot;0\.1\.6&quot;<\/Arguments>/);
+  assert.equal(second.includes("0.1.4") || second.includes("--t3-port"), false);
+  assert.ok(control.calls.some(({ args }) => args[0] === "/Create" && args.includes("/F")));
+
+  await installService({ ...base, t3Launch: {} });
+  assert.equal((await realFs.readFile(explicit.paths.definitionPath, "utf8")).includes("--t3-"), false);
+});
+
+test("NEXT_CODER_T3_VERSION is captured at install as an explicit choice, and the flag overrides it", async (t) => {
+  const scratch = await mkdtemp(join(tmpdir(), "connector-systemd-t3-env-"));
+  t.after(() => realFs.rm(scratch, { recursive: true, force: true }));
+  const stateDir = join(scratch, "state");
+  const run = async () => ({ code: 0, stdout: "", stderr: "" });
+  const env = { XDG_CONFIG_HOME: join(scratch, "config"), NEXT_CODER_T3_VERSION: "0.1.4" };
+  const base = { stateDir, platform: "linux", home: scratch, env, run };
+
+  const fromEnv = await installService({ ...base, t3Launch: {} });
+  assert.match(await realFs.readFile(fromEnv.paths.definitionPath, "utf8"), /^ExecStart=.*"--t3-version" "0\.1\.4"$/m);
+
+  const fromFlag = await installService({ ...base, t3Launch: { version: "0.1.6" } });
+  const definition = await realFs.readFile(fromFlag.paths.definitionPath, "utf8");
+  assert.match(definition, /^ExecStart=.*"--t3-version" "0\.1\.6"$/m);
+  assert.equal(definition.includes("0.1.4"), false);
+});
+
+test("an invalid T3 launch option is refused before an installed service is touched", async (t) => {
+  const scratch = await mkdtemp(join(tmpdir(), "connector-systemd-t3-invalid-"));
+  t.after(() => realFs.rm(scratch, { recursive: true, force: true }));
+  const stateDir = join(scratch, "state");
+  const env = { XDG_CONFIG_HOME: join(scratch, "config") };
+  const run = async () => ({ code: 0, stdout: "", stderr: "" });
+  const { paths } = await installService({ stateDir, platform: "linux", home: scratch, env, run });
+  const before = await realFs.readFile(paths.definitionPath, "utf8");
+  let commands = 0;
+  const countingRun = async () => { commands += 1; return { code: 0, stdout: "", stderr: "" }; };
+  await assert.rejects(installService({ stateDir, platform: "linux", home: scratch, env, run: countingRun, t3Launch: { version: "latest" } }), { code: "T3_VERSION_INVALID" });
+  await assert.rejects(installService({ stateDir, platform: "linux", home: scratch, env, run: countingRun, t3Launch: { port: 70_000 } }), { code: "T3_OPTION_INVALID" });
+  assert.equal(commands, 0);
+  assert.equal(await realFs.readFile(paths.definitionPath, "utf8"), before);
+});
+
 function recordingFs() {
   const operations = [];
   return new Proxy({ operations }, {

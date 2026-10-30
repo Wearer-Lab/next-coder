@@ -19,14 +19,31 @@ export const DEVICE_CAPABILITIES = Object.freeze([
   "media_prompt",
   "session_control",
   "approval_response",
-  // Answering a provider approval with `acceptForSession` — T3's "allow-always" (see
-  // src/providerApprovals.mjs for the adapter citations). Split out from `approval_response`
-  // because it is not the same decision: allow-once answers one question, while allow-always
+  // Answering a provider approval with `acceptForSession` — T3's session-scoped standing grant
+  // (see src/providerApprovals.mjs for the adapter citations; before T3 0.1.1 this was the only
+  // standing grant and was called "allow-always"). Split out from `approval_response`
+  // because it is not the same decision: allow-once answers one question, while allow-for-session
   // writes a standing permission rule into the provider session that outlives the moment it was
   // granted in. A durable grant made by tapping a button on a 240x320 panel — where the request
   // detail is clipped to a line and a half — is not the same act as making it in the console with
   // the full diff on screen, so the built-in hardware profile does not carry it.
   "approval_response_persistent",
+  // Answering with `acceptAlways` — T3 0.1.1+'s grant meant to outlive the session (the contract
+  // and its per-provider meaning are in src/providerApprovals.mjs). A THIRD capability rather than
+  // a second use of `approval_response_persistent`, for the same reason that one was split from
+  // `approval_response`: it is a different act with a different blast radius. "For this session"
+  // ends when the session does; "from now on" is the one decision an owner cannot casually take
+  // back from the console afterwards, so a profile that may say the first must not thereby be able
+  // to say the second. Held by `power-controller` and nothing else built in.
+  //
+  // Holding it is NECESSARY, NOT SUFFICIENT. `power-controller` is also the profile "advanced
+  // devices" may carry, and the rationale above applies with more force on hardware: the
+  // 240x320 panel clips the request to a line and a half, so the person is granting something
+  // they did not read. The policy engine therefore also requires the actor to be the signed-in
+  // owner (`evaluateIntentPolicy({ actorType: "user" })`) and refuses a controller outright,
+  // whatever its profile says — the capability gates WHICH owner-side profiles, the realm rule
+  // gates WHERE it can be given from.
+  "approval_response_always",
   // Answering a QUESTION the agent asked — "which database?", "pick a branch name". A third,
   // separate thing from either approval: the answer is a value, not a verdict, and the legal
   // values are supplied by the agent itself (src/userInput.mjs).
@@ -61,7 +78,7 @@ const DEVICE_PROFILES = [
   {
     id: "next-coder",
     label: "Next Coder",
-    description: "Full remote agent control for prompts, media, status, approvals, agent questions, session control, thread creation, and policy-screened shell input. Provider approvals may be allowed once, declined or cancelled; \"allow for this session\" is reserved for the console.",
+    description: "Full remote agent control for prompts, media, status, approvals, agent questions, session control, thread creation, and policy-screened shell input. Provider approvals may be allowed once, declined or cancelled; \"allow for this session\" and \"always allow\" are reserved for the console.",
     capabilities: [
       "status",
       "agent_prompt",
@@ -82,7 +99,7 @@ const DEVICE_PROFILES = [
   {
     id: "power-controller",
     label: "Power controller",
-    description: "High-trust control profile used by signed-in web clients and advanced devices; dangerous shell input still requires approval. The only built-in profile that may grant a provider permission for a whole session.",
+    description: "High-trust control profile used by signed-in web clients and advanced devices; dangerous shell input still requires approval. The only built-in profile that may grant a provider a standing permission (for a session, or beyond it). A controller still cannot give the open-ended kind: that is refused by the policy engine, not just by this list.",
     capabilities: [
       "status",
       "agent_prompt",
@@ -90,6 +107,7 @@ const DEVICE_PROFILES = [
       "session_control",
       "approval_response",
       "approval_response_persistent",
+      "approval_response_always",
       "user_input_response",
       "shell_input",
       "thread_create",

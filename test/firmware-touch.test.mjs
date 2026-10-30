@@ -72,6 +72,52 @@ int main() {
  assert(point(2300,1)==TouchGesture::Press);
  assert(point(3500,1)==TouchGesture::LongPress);
  assert(point(3510,0)==TouchGesture::Release);
+ // A deliberate drag inside the old long-press radius cannot later become a long press.
+ assert(point(3600,1,20,20)==TouchGesture::Press);
+ assert(point(3650,1,30,20)==TouchGesture::Drag);
+ assert(point(4900,1,30,20)==TouchGesture::None);
+ assert(point(4910,0)==TouchGesture::Release);
+ // The contact origin remains immutable even when a short wobble ends in an adjacent target.
+ nowMs=5000;Wire.count=1;Wire.x=99;Wire.y=20;
+ TouchEvent press=touchPoll(); assert(press.gesture==TouchGesture::Press);
+ assert(press.startX==99 && press.startY==20 && press.contactId!=0);
+ const uint32_t contact=press.contactId;
+ point(5010,1,103,20);
+ nowMs=5020;Wire.count=0;TouchEvent tap=touchPoll();
+ assert(tap.gesture==TouchGesture::Tap && tap.x==103 && tap.startX==99 && tap.contactId==contact);
+ TouchTargetLatch latch;
+ latch.begin(press,1,7,0,0,100,50);
+ assert(latch.active); // pressed feedback has a bounded captured rectangle immediately
+ assert(!latch.accepts(tap,1,7)); // full excursion rejects even if the Drag edge was not replayed
+ latch.move(tap);assert(!latch.active);
+ assert(!latch.accepts(tap,2,7)); // neighbor can never inherit the contact
+ tap.x=99;assert(!latch.accepts(tap,1,7)); // leaving and coming back stays cancelled
+ latch.begin(press,1,7,0,0,100,50);
+ tap.x=98;tap.minX=98;tap.maxX=99;assert(latch.accepts(tap,1,7));
+ assert(!latch.accepts(tap,1,8)); // navigation changed
+ assert(!latch.accepts(tap,3,7)); // semantic row/action changed
+ ++tap.contactId;assert(!latch.accepts(tap,1,7));
+ TouchEventBuffer queue;TouchEventBuffer::Item item;
+ assert(queue.push(press,7,9,100)); assert(queue.push(tap,7,9,105));
+ assert(queue.pop(item) && item.event.gesture==TouchGesture::Press);
+ assert(TouchEventBuffer::current(item,7,9,850));
+ assert(!TouchEventBuffer::current(item,7,9,851));
+ assert(!TouchEventBuffer::current(item,8,9,110));
+ assert(!TouchEventBuffer::current(item,7,10,110));
+ assert(queue.pop(item) && item.event.gesture==TouchGesture::Tap && !queue.pop(item));
+ for(int i=0;i<4;++i) assert(queue.push(press,7,9,100));
+ assert(!queue.push(tap,7,9,100) && !queue.pop(item)); // overload cancels the whole sequence
+ assert(queue.push(press,7,9,0xfffffff0u)); assert(queue.pop(item));
+ assert(TouchEventBuffer::current(item,7,9,10)); // monotonic clock rollover
+ TouchPerformanceWindow perf;
+ perf.frame(100);perf.frame(133);perf.frame(175);assert(perf.frames==3 && perf.maxFrameGap==42);
+ for(int i=0;i<19;++i)perf.dispatched(20);
+ perf.dispatched(700);assert(perf.inputs==20 && perf.maxInputAge==700 && perf.p95UpperMs()==33);
+ perf.resetWindow();assert(perf.inputs==0 && perf.frames==0 && perf.p95UpperMs()==0);
+ perf.frame(205);assert(perf.maxFrameGap==30); // reset preserves continuity across reporting windows
+ perf.resetWindow();perf.dispatched(900);assert(perf.p95UpperMs()==900);
+
+
 }
 `);
   const exe = join(dir, "check");

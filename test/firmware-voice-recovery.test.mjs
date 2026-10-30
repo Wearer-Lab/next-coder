@@ -120,6 +120,8 @@ test("actual voice tracking keeps a nonterminal Ready job alive until Sent and p
   const header = await readFile("firmware/shared/NextCoderCore/src/GatewayVoice.h", "utf8");
   const pollStart = source.indexOf("bool GatewayVoice::poll()");
   const polledProjection = source.slice(source.indexOf("  JsonDocument doc;", pollStart), source.indexOf("\n}", pollStart));
+  const captureMethods = source.slice(source.indexOf("bool GatewayVoice::canStartCapture()"), source.indexOf("void GatewayVoice::publish("));
+  const recoveryMethods = source.slice(source.indexOf("void GatewayVoice::reset()"), source.indexOf("void GatewayVoice::setLocalStage("));
   const publication = source.slice(source.indexOf("void GatewayVoice::publish("), source.indexOf("\nvoid GatewayVoice::reset("));
   const methods = source.slice(source.indexOf("bool GatewayVoice::tracking()"), source.indexOf("String GatewayVoice::upload("));
   const enumeration = header.slice(header.indexOf("enum class VoiceStage"), header.indexOf("const char* voiceStageName"));
@@ -143,17 +145,24 @@ struct JsonDocument { JsonObject operator[](const char*) {return {};} };
 bool deserializeJson(JsonDocument&,const String&){return false;}
 uint32_t millis(){return 500;}
 constexpr uint32_t kPollIntervalMs=2000;
+constexpr uint32_t kGiveUpAfterMs=600000;
+void esp_fill_random(uint8_t* bytes,size_t size){memset(bytes,0xab,size);}
 
 
 ${enumeration}
 struct GatewayVoice {
- String jobId_="job", responseAfter_,transcript_,detail_;
+ String jobId_="job", mediaId_, commandId_, responseAfter_,transcript_,detail_,reviewReason_,captureEnvironmentId_,captureThreadId_,captureRequestId_;
  uint8_t failures_=0;
  bool ok_=true;
  uint32_t revision_=0;
  VoiceStage stage_=VoiceStage::Transcribing;
- bool done_=false;
- uint32_t nextPollAt_=0;
+ bool done_=false, captureResolved_=true;
+ uint32_t nextPollAt_=0, giveUpAt_=0;
+ bool canStartCapture() const;
+ bool beginCapture(const String&,const String&);
+ void reset();
+ bool resumeStatus();
+ bool hasJob() const {return !jobId_.empty();}
  bool tracking() const;
  bool pollDue(uint32_t) const;
  void publish(VoiceStage,const String&);
@@ -163,9 +172,13 @@ struct GatewayVoice {
 bool milestoneToStage(const String& milestone,VoiceStage& out){
  if(milestone=="ready"){out=VoiceStage::Ready;return true;}
  if(milestone=="sent"){out=VoiceStage::Sent;return true;}
+ if(milestone=="failed"){out=VoiceStage::Failed;return true;}
+ if(milestone=="review"){out=VoiceStage::Review;return true;}
  return false;
 }
 ${publication}
+${captureMethods}
+${recoveryMethods}
 ${methods}
 bool GatewayVoice::acceptProjection(){
  String response; const uint32_t now=millis();
@@ -191,6 +204,27 @@ int main(){
  voice.stage_=VoiceStage::Failed; assert(!voice.tracking());
  voice.stage_=VoiceStage::Idle; assert(!voice.tracking());
  voice.stage_=VoiceStage::Transcribing; voice.jobId_=""; assert(!voice.tracking());
+ voice.reset(); assert(voice.canStartCapture());
+ assert(voice.beginCapture("environment-a","thread-a"));
+ assert(voice.stage_==VoiceStage::Recorded && !voice.canStartCapture());
+ const auto receipt=voice.captureRequestId_;
+ assert(!voice.beginCapture("environment-b","thread-b"));
+ assert(voice.captureRequestId_==receipt && voice.captureThreadId_=="thread-a");
+ voice.jobId_="original-job"; voice.responseAfter_="original-cursor";
+ voice.captureResolved_=false; voice.stage_=VoiceStage::Failed; voice.done_=true;
+ assert(!voice.canStartCapture()); assert(voice.resumeStatus());
+ assert(voice.tracking() && voice.pollDue(millis()));
+ assert(voice.jobId_=="original-job" && voice.responseAfter_=="original-cursor" && voice.captureRequestId_==receipt);
+ values["milestone"].text="review"; values["done"].boolean=true;
+ values["reviewReason"].text="gateway_approval"; values["commandId"].text="original-command";
+ assert(voice.acceptProjection()); assert(voice.detail_=="Approve request in console" && !voice.captureResolved_ && voice.commandId_=="original-command");
+ values["reviewReason"].text="transcript_review";
+ assert(voice.acceptProjection()); assert(voice.detail_=="Review transcript in console");
+ values["reviewReason"].text="future-unknown";
+ assert(voice.acceptProjection()); assert(voice.detail_=="Needs attention in console" && voice.reviewReason_.empty());
+ values["milestone"].text="failed";
+ assert(voice.acceptProjection()); assert(voice.captureResolved_);
+
 }
 `);
   const executable=join(directory,"check");

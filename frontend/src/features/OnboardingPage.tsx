@@ -629,7 +629,7 @@ export function OnboardingPage({ controller: c, onNavigate }: OnboardingPageProp
                   <ChoiceCard
                     selected={networkMode === "lan"}
                     title="Connect another computer"
-                    description="Copy the enrollment command to the Mac or Linux computer that runs T3 Code."
+                    description="Copy the enrollment command to the macOS, Windows, or Linux computer that runs T3 Code."
                     icon={Laptop}
                     onClick={() => setNetworkMode("lan")}
                   />

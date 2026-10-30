@@ -108,6 +108,7 @@ export function normalizeCatalogueEntry(raw) {
     badge: string(raw.badgeLabel) ?? null,
     version: string(raw.version) ?? null,
     source: "catalogue",
+    ...(raw.runtimeKind === "direct" ? { runtimeKind: "direct" } : {}),
     status,
     enabled,
     installed,
@@ -116,8 +117,8 @@ export function normalizeCatalogueEntry(raw) {
       type: string(raw.auth?.type) ?? null,
       label: string(raw.auth?.label) ?? null,
     },
-    available: enabled && installed && status === "ready" && authStatus === "authenticated",
-    unavailableReason: unavailableReason({ enabled, installed, status, authStatus, message: raw.message }),
+    available: enabled && installed && status === "ready" && (authStatus === "authenticated" || (raw.runtimeKind === "direct" && authStatus === "unknown")),
+    unavailableReason: raw.runtimeKind === "direct" && enabled && installed && status === "ready" && authStatus === "unknown" ? null : unavailableReason({ enabled, installed, status, authStatus, message: raw.message }),
     models: array(raw.models).map(normalizeModel).filter(Boolean),
   };
 }
@@ -133,6 +134,7 @@ export function buildProviderCatalogue(entries, { source = "setup-script", updat
     .filter(Boolean)
     .map((entry) => ({
       instanceId: entry.instanceId,
+      ...(entry.runtimeKind === "direct" ? { runtimeKind: "direct" } : {}),
       label: entry.label,
       badge: entry.badge,
       version: entry.version,
@@ -187,14 +189,16 @@ export function extractThreadOutcomes(snapshot) {
 
     outcomes.set(threadId, {
       threadId,
+      ...(thread.runtimeKind === "direct" ? { runtimeKind: "direct", evidenceTurnId: session.lastTurnId ?? null,
+        lastAssistantTurnId: thread.lastOutcome?.status === "completed" ? thread.lastOutcome.turnId : null } : {}),
       sessionStatus: string(session.status) ?? "unknown",
       activeTurnId: string(session.activeTurnId) ?? null,
       failure: failure
         ? { message: failure.message, code: failure.code, at: string(session.updatedAt) ?? null }
         : null,
       assistantMessageCount: assistantMessages.length,
-      lastAssistantAt: lastAssistantMessage?.createdAt ?? null,
-      lastAssistantText: lastAssistantMessage?.text ?? null,
+      lastAssistantAt: lastAssistantMessage?.createdAt ?? (thread.runtimeKind === "direct" && thread.lastOutcome?.status === "completed" ? thread.lastOutcome.completedAt : null),
+      lastAssistantText: lastAssistantMessage?.text ?? (thread.runtimeKind === "direct" ? thread.lastOutcome?.preview : null) ?? null,
     });
   }
 
@@ -207,6 +211,7 @@ export function extractThreadOutcomes(snapshot) {
  */
 export function reconcileCommandStatus(command, outcome) {
   if (!outcome || command?.status !== "dispatched") return null;
+  if (outcome.runtimeKind === "direct" && command.result?.turnId && outcome.evidenceTurnId !== command.result.turnId) return null;
 
   const recordedAt = Date.parse(command.updatedAt ?? command.createdAt ?? "");
   const acknowledgedAt = Date.parse(command.metrics?.completedAt ?? "");
@@ -233,6 +238,7 @@ export function reconcileCommandStatus(command, outcome) {
   }
 
   if (outcome.lastAssistantAt) {
+    if (outcome.runtimeKind === "direct" && command.result?.turnId && outcome.lastAssistantTurnId !== command.result.turnId) return null;
     const repliedAt = Date.parse(outcome.lastAssistantAt);
     // A reply that predates the dispatch belongs to an earlier turn on the same thread.
     if (Number.isFinite(dispatchedAt) && Number.isFinite(repliedAt) && repliedAt < dispatchedAt) return null;
@@ -296,12 +302,86 @@ export function validateModelSelection(selection, harnesses) {
     return { reason: harness.unavailableReason ?? `Provider instance "${instanceId}" is unavailable.` };
   }
   if (harness.models.length === 0) return null;
-  if (harness.models.some((entry) => entry.slug === model)) return null;
+  const entry = harness.models.find((candidate) => candidate.slug === model);
+  if (entry) return validateModelOptionSelections(selection?.options, entry);
 
   return {
     reason: `Unknown model "${model}" for provider instance "${instanceId}".`,
     known: harness.models.map((entry) => entry.slug),
   };
+}
+
+/**
+ * Reasoning effort, service tier and the rest of the per-model switches.
+ *
+ * T3 does not have a "thinking budget" field. It declares whatever switches a model supports as
+ * `capabilities.optionDescriptors` and takes the chosen values back as
+ * `modelSelection.options: [{id, value}]`. The descriptor ids are the provider's own, which is why
+ * nothing here may hardcode one: Codex calls its reasoning control `reasoningEffort` and offers
+ * `ultra`, while Claude calls it `effort` and offers `ultrathink`. A gateway that hardcoded either
+ * name would silently drop the other provider's control.
+ *
+ * Validated before dispatch for the same reason model slugs are: T3 accepts a dispatch and lets
+ * the provider reject the value later, which surfaces as a turn stuck mid-flight rather than as an
+ * error anyone can act on.
+ */
+export function validateModelOptionSelections(options, model) {
+  if (options === undefined || options === null) return null;
+  if (!Array.isArray(options)) return { reason: "Model options must be an array of {id, value} entries." };
+  if (options.length > MAX_MODEL_OPTION_SELECTIONS) {
+    return { reason: `A model selection carries at most ${MAX_MODEL_OPTION_SELECTIONS} options.` };
+  }
+
+  const descriptors = new Map(array(model?.options).map((descriptor) => [descriptor.id, descriptor]));
+  const seen = new Set();
+  for (const entry of options) {
+    const id = string(entry?.id);
+    if (!id) return { reason: "Every model option needs an id." };
+    if (seen.has(id)) return { reason: `Model option "${id}" was set twice.` };
+    seen.add(id);
+
+    const descriptor = descriptors.get(id);
+    // An unknown id is refused rather than forwarded. A catalogue that declares no descriptors at
+    // all cannot prove anything, so that case is handled by the caller's authoritative check.
+    if (!descriptor) {
+      return { reason: `Unknown option "${id}" for model "${model?.slug}".`, known: [...descriptors.keys()] };
+    }
+    if (descriptor.type === "boolean") {
+      if (typeof entry.value !== "boolean") return { reason: `Option "${id}" is a switch and takes true or false.` };
+      continue;
+    }
+    const value = string(entry.value);
+    if (!value) return { reason: `Option "${id}" needs a value.` };
+    // An empty choice list means the provider declared a select it did not enumerate; refusing
+    // every value there would block a legitimate selection, so the bounded string is accepted.
+    if (descriptor.choices.length > 0 && !descriptor.choices.some((choice) => choice.id === value)) {
+      return {
+        reason: `Unknown value "${value}" for option "${id}".`,
+        known: descriptor.choices.map((choice) => choice.id),
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Normalize an owner-supplied option array onto the wire shape, dropping anything unusable.
+ *
+ * Shape only — whether a value is *allowed* is validateModelOptionSelections's job against the
+ * catalogue. Kept separate so a request can be rejected with a reason instead of silently
+ * sanitized into something the owner did not ask for.
+ */
+export function normalizeModelOptionSelections(value) {
+  if (!Array.isArray(value)) return null;
+  const normalized = [];
+  for (const entry of value.slice(0, MAX_MODEL_OPTION_SELECTIONS)) {
+    const id = string(entry?.id);
+    if (!id || id.length > 120) continue;
+    if (typeof entry.value === "boolean") { normalized.push({ id, value: entry.value }); continue; }
+    const text = string(entry?.value);
+    if (text && text.length <= 200) normalized.push({ id, value: text });
+  }
+  return normalized.length > 0 ? normalized : null;
 }
 
 export function usableHarnesses(harnesses) {
@@ -335,6 +415,10 @@ export function resolveModelSelection({ harnesses, requested = null, projectDefa
   });
 }
 
+// Bounded because the array is owner input that reaches a provider. T3's own descriptor sets are
+// two or three entries per model; sixteen leaves room without letting a request carry a payload.
+export const MAX_MODEL_OPTION_SELECTIONS = 16;
+
 export function defaultModelOptions(model) {
   const options = [];
   for (const descriptor of array(model?.options)) {
@@ -366,10 +450,15 @@ function normalizeOptionDescriptor(raw) {
     label: string(raw.label) ?? id,
     type: string(raw.type) ?? "select",
     currentValue: raw.currentValue ?? null,
+    description: string(raw.description) ?? null,
     choices: array(raw.options ?? raw.choices).map((choice) => ({
       id: string(choice?.id) ?? "",
       label: string(choice?.label) ?? string(choice?.id) ?? "",
       isDefault: choice?.isDefault === true,
+      // Kept because the provider's own wording is the only thing that explains a value like
+      // Claude's `ultracode` ("xhigh effort plus multi-agent workflow orchestration"); inventing
+      // that text in the console would be guessing at another product's behaviour.
+      description: string(choice?.description) ?? null,
     })).filter((choice) => choice.id),
   };
 }
