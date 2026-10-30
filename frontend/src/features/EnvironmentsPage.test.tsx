@@ -178,7 +178,10 @@ test("keeps manual credential paste as the fallback and still requires HTTPS for
   expect(c.api).toHaveBeenCalledWith("/v1/t3/environments", {
     method: "POST",
     body: {
-      label: "Mac T3 Code",
+      // The label field now starts empty so the host can name itself. On the direct path no
+      // connector ever reports a name, so the URL's host is used — which still distinguishes two
+      // environments, where the old hardcoded "Mac T3 Code" named every computer a Mac.
+      label: "t3.example.com",
       baseUrl: "https://t3.example.com",
       pairingToken: "pair_once",
     },

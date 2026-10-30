@@ -88,83 +88,8 @@ public: using std::string::string; using std::string::operator=; String(const st
 ` });
 });
 
-test("a known-good Wi-Fi outage keeps reconnecting instead of parking in the setup portal", async (t) => {
-  const source = await readFile("firmware/shared/NextCoderCore/src/Provisioning.cpp", "utf8");
-  const poll = source.slice(source.indexOf("ProvisioningState Provisioning::poll()"), source.indexOf("\nvoid Provisioning::startPortal("));
-  await native(t, `
-#include <cassert>
-#include <cstdint>
-#include <string>
-using String=std::string;
-uint32_t clockNow=0; uint32_t millis(){return clockNow;}
-constexpr int WL_CONNECTED=3; constexpr uint32_t kJoinTimeoutMs=20000,kPortalIdleTimeoutMs=900000; constexpr uint8_t kMaxJoinFailures=3;
-struct {template<class...T>void printf(const char*,T...){} void println(const char*){}} Serial;
-struct Ip { String toString(){return "192.0.2.1";} };
-struct { int result=0; int status(){return result;} unsigned softAPgetStationNum(){return 0;} int getMode(){return 1;} Ip localIP(){return {};} Ip softAPIP(){return {};} } WiFi;
-enum class ProvisioningState {Unprovisioned,Provisioning,Connecting,Online,Failed};
-struct Provisioning {
- struct {ProvisioningState state=ProvisioningState::Connecting;String detail;uint8_t joinFailures=0;}status_;
- struct Store { bool hasWifiCredentials(){return true;} String wifiSsid(){return "ssid";} } storage; Store* store_=&storage;
- struct {void processNextRequest(){}}dns_; struct{void handleClient(){}}server_;
- uint32_t connectStartedAt_=0,portalLastClientAt_=0; bool knownGoodNetwork_=false,justConnected_=false;String apName_="setup",portalError_;
- unsigned portals=0,rejoins=0;
- void pollPortalJoin(){}
- void enterProvisioning(){++portals;status_.state=ProvisioningState::Provisioning;}
- void enterConnecting(){++rejoins;connectStartedAt_=millis();status_.state=ProvisioningState::Connecting;}
- ProvisioningState poll();
-};
-${poll}
-int main(){
- Provisioning first;
- for(int i=0;i<3;++i){clockNow+=20001;first.poll();}
- assert(first.portals==1); // incorrect credentials remain recoverable
- Provisioning live;WiFi.result=WL_CONNECTED;live.poll();assert(live.knownGoodNetwork_);
- WiFi.result=0;live.poll();
- for(int i=0;i<300;++i){clockNow+=20001;live.poll();}
- assert(live.portals==0 && live.rejoins==301 && live.status_.joinFailures==255);
- WiFi.result=WL_CONNECTED;live.poll();assert(live.status_.state==ProvisioningState::Online && live.justConnected_ && live.status_.joinFailures==0);
-}
-`);
-});
-
-test("portal Wi-Fi association stays polled, retains failed credentials, and recovers a saved network", async (t) => {
-  const source = await readFile("firmware/shared/NextCoderCore/src/Provisioning.cpp", "utf8");
-  const poll = source.slice(source.indexOf("void Provisioning::pollPortalJoin()"), source.indexOf("\nvoid Provisioning::handlePortalNotFound()"));
-  const close = source.slice(source.indexOf("void Provisioning::closeConfigPortal()"), source.indexOf("\nbool Provisioning::consumeJustConnected()"));
-  await native(t, `
-#include <cassert>
-#include <cstdint>
-#include <string>
-using String=std::string;
-uint32_t clockNow=0; uint32_t millis(){return clockNow;}
-constexpr int WL_CONNECTED=3,WIFI_AP_STA=3,WIFI_STA=1;constexpr uint32_t kJoinTimeoutMs=20000;
-struct{void println(const char*){}}Serial;
-struct Ip{String toString(){return "192.0.2.1";}};
-struct{String ssid="saved";String SSID(){return ssid;}int result=0,joins=0;int status(){return result;}void mode(int){}void begin(const char*,const char*){++joins;}void disconnect(bool){}Ip localIP(){return {};}}WiFi;
-enum class ProvisioningState{Provisioning,Online};
-struct Provisioning{
- struct{ProvisioningState state=ProvisioningState::Provisioning;String detail;unsigned joinFailures=0;}status_;
- struct Store{unsigned writes=0;bool hasWifiCredentials(){return true;}String wifiSsid(){return "saved";}String wifiPassword(){return "saved-password";}struct Snapshot{String wifiSsid="saved",wifiPassword="saved-password";};Snapshot transportSnapshot(){return {};}bool setGatewayUrl(const String&){return true;}bool setWifiCredentials(const String&,const String&){++writes;return true;}}storage;Store*store_=&storage;
- bool portalJoinPending_=false,portalRecoveryPending_=false,configPortal_=false,knownGoodNetwork_=false,justConnected_=false;
- String pendingGateway_,pendingSsid_,pendingPassword_,portalError_,discovered_;uint32_t portalJoinStartedAt_=0,nextPortalRecoveryAt_=0;unsigned stops=0,rejoins=0;
- void enterConnecting(){++rejoins;configPortal_=false;}void stopPortal(){++stops;}void pollPortalJoin();void closeConfigPortal();
-};
-${poll}
-${close}
-int main(){
- Provisioning bad;bad.portalJoinPending_=true;bad.pendingSsid_="wrong";bad.pendingPassword_="private";
- bad.pollPortalJoin();assert(bad.portalJoinPending_ && bad.storage.writes==0 && clockNow==0);
- clockNow=20000;bad.pollPortalJoin();assert(!bad.portalJoinPending_ && bad.storage.writes==0 && bad.pendingPassword_.empty());
- Provisioning good;good.portalJoinPending_=true;good.pendingSsid_="new";good.pendingPassword_="private";WiFi.ssid="new";WiFi.result=WL_CONNECTED;
- good.pollPortalJoin();assert(good.storage.writes==1 && good.justConnected_ && good.stops==1 && good.pendingPassword_.empty());
- Provisioning recovery;WiFi.ssid="saved";WiFi.result=0;recovery.pollPortalJoin();assert(recovery.portalRecoveryPending_ && WiFi.joins==1 && recovery.stops==0);
- WiFi.result=WL_CONNECTED;recovery.pollPortalJoin();assert(recovery.justConnected_ && recovery.stops==1 && recovery.storage.writes==0);
- Provisioning manual;manual.configPortal_=true;manual.pollPortalJoin();assert(!manual.portalRecoveryPending_ && manual.stops==0);
- manual.portalJoinPending_=true;manual.pendingPassword_="private";manual.pendingSsid_="uncommitted";WiFi.result=WL_CONNECTED;
- manual.closeConfigPortal();assert(manual.rejoins==1 && manual.storage.writes==0 && !manual.portalJoinPending_ && manual.pendingPassword_.empty());
-}
-`);
-});
+// Wi-Fi association, cancellation, portal recovery and multi-profile outage coverage live in
+// firmware-wifi.test.mjs, which compiles the current shared provisioning state machine.
 
 test("transport snapshots cannot mix an origin or credential being replaced on another task", async (t) => {
   const source = await readFile("firmware/shared/NextCoderCore/src/DeviceStore.cpp", "utf8");

@@ -112,6 +112,8 @@ export async function saveRuntimeState(stateDir, state) {
     connectorId: state.connectorId,
     environmentId: state.environmentId,
     ...(validTimestamp(state.lastConnectedAt) ? { lastConnectedAt: state.lastConnectedAt } : {}),
+    ...(validTimestamp(state.lastHeartbeatAt) ? { lastHeartbeatAt: state.lastHeartbeatAt } : {}),
+    ...(["ready", "error", "stopped"].includes(state.runtimeHealth) ? { runtimeHealth: state.runtimeHealth } : {}),
     ...(validTimestamp(state.lastConnectionAttemptAt) ? { lastConnectionAttemptAt: state.lastConnectionAttemptAt } : {}),
     ...(state.lastConnectionError == null || runtimeError ? { lastConnectionError: runtimeError } : {}),
     ...(typeof state.lastEventCursor === "string" || Number.isSafeInteger(state.lastEventCursor) ? { lastEventCursor: state.lastEventCursor } : {}),
@@ -177,11 +179,11 @@ export async function inspectStatePermissions(stateDir) {
 
 export function validateState(state) {
   if (!state || state.version !== STATE_VERSION) throw stateError("Unsupported connector state version.");
-  for (const key of ["server", "connectorId", "environmentId", "secret", "t3BaseUrl"]) {
+  for (const key of ["server", "connectorId", "environmentId", "secret", ...(state.agentConfig ? [] : ["t3BaseUrl"])]) {
     if (typeof state[key] !== "string" || state[key].length === 0) throw stateError(`Connector state is missing ${key}.`);
   }
   validateHttpUrl(state.server, "server", { allowHttpLoopback: true });
-  validateHttpUrl(state.t3BaseUrl, "T3 URL", { allowHttpLoopback: true });
+  if (state.t3BaseUrl) validateHttpUrl(state.t3BaseUrl, "T3 URL", { allowHttpLoopback: true });
   if (state.credentialRotation != null) {
     const rotation = state.credentialRotation;
     if (!rotation || typeof rotation !== "object"
@@ -197,7 +199,7 @@ export function validateState(state) {
 
 function validatePersistedState(state) {
   if (!state || state.version !== STATE_VERSION) throw stateError("Unsupported connector state version.");
-  for (const key of ["server", "connectorId", "environmentId", "t3BaseUrl"]) {
+  for (const key of ["server", "connectorId", "environmentId", ...(state.agentConfig ? [] : ["t3BaseUrl"])]) {
     if (typeof state[key] !== "string" || state[key].length === 0) throw stateError(`Connector state is missing ${key}.`);
   }
   const storage = state.credentialStorage;
@@ -209,7 +211,7 @@ function validatePersistedState(state) {
     }
   }
   validateHttpUrl(state.server, "server", { allowHttpLoopback: true });
-  validateHttpUrl(state.t3BaseUrl, "T3 URL", { allowHttpLoopback: true });
+  if (state.t3BaseUrl) validateHttpUrl(state.t3BaseUrl, "T3 URL", { allowHttpLoopback: true });
   if (state.credentialRotation != null) {
     const rotation = state.credentialRotation;
     const pendingStored = storage && !Object.hasOwn(rotation, "pendingSecret");
@@ -328,6 +330,8 @@ async function mergeRuntimeState(stateDir, state) {
   if (!runtime || runtime.version !== 1 || runtime.connectorId !== state.connectorId || runtime.environmentId !== state.environmentId) return state;
   const merged = { ...state };
   if (validTimestamp(runtime.lastConnectedAt)) merged.lastConnectedAt = runtime.lastConnectedAt;
+  if (validTimestamp(runtime.lastHeartbeatAt)) merged.lastHeartbeatAt = runtime.lastHeartbeatAt;
+  if (["ready", "error", "stopped"].includes(runtime.runtimeHealth)) merged.runtimeHealth = runtime.runtimeHealth;
   if (validTimestamp(runtime.lastConnectionAttemptAt)) merged.lastConnectionAttemptAt = runtime.lastConnectionAttemptAt;
   const runtimeError = sanitizeRuntimeError(runtime.lastConnectionError);
   if (runtimeError !== undefined) merged.lastConnectionError = runtimeError;
@@ -341,7 +345,7 @@ async function mergeRuntimeState(stateDir, state) {
 
 function stripRuntimeFields(state) {
   const durable = { ...state };
-  for (const key of ["lastConnectedAt", "lastConnectionAttemptAt", "lastConnectionError", "lastEventCursor", "completedRequests"]) delete durable[key];
+  for (const key of ["lastConnectedAt", "lastHeartbeatAt", "runtimeHealth", "lastConnectionAttemptAt", "lastConnectionError", "lastEventCursor", "completedRequests"]) delete durable[key];
   if (durable.credentialRotation?.acknowledgedAt) {
     durable.credentialRotation = { ...durable.credentialRotation };
     delete durable.credentialRotation.acknowledgedAt;

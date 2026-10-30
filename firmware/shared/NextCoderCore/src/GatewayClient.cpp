@@ -13,6 +13,7 @@
 
 #include "GatewayTls.h"
 #include "GatewayHttp.h"
+#include "GatewayWarm.h"
 #include "GatewayEventFrame.h"
 #include "GatewayClaimCode.h"
 
@@ -65,6 +66,11 @@ constexpr uint32_t kControlsIntervalMs = 30000;
 // the console. On a screen that can show a queue, that is worth two requests a minute.
 constexpr uint32_t kApprovalsIntervalMs = 30000;
 constexpr uint32_t kFirmwareIntervalMs = 6UL * 60UL * 60UL * 1000UL;
+// How long after the last touch scheduled polls stay quiet, and the most a run of continuous touching
+// may postpone them. 1.5 s covers "tap, look, tap again" without making a screen visibly stale; the
+// cap means a person scrolling for a long time delays a poll by seconds, never indefinitely.
+constexpr uint32_t kInteractionQuietMs = 1500;
+constexpr uint32_t kTouchDeferralCapMs = 5000;
 }  // namespace
 
 const char* gatewayLinkName(GatewayLink link) {
@@ -134,12 +140,16 @@ int GatewayClient::request(const char* method, const char* path, const String& b
   // touch read and a background heartbeat can wait on each other until the 10 s TLS timeout.
   const uint32_t heldDepth = releaseStateForBlockingCall();
   const int code = [&]() -> int {
-    // Only one TLS handshake may be alive at a time. mbedTLS needs a ~32 KB contiguous block for
-    // the session buffers, and internal RAM on this hardware is already fragmented by the display
-    // buffers and the Wi-Fi driver. Two concurrent handshakes mean the second one fails with
+    // Only one TLS session may be alive at a time. mbedTLS needs ~34 KB of internal RAM for the
+    // session buffers, and internal RAM on this hardware is already fragmented by the display
+    // buffers and the Wi-Fi driver. Two concurrent sessions mean the second one fails with
     // MBEDTLS_ERR_SSL_ALLOC_FAILED and the request never leaves the device. The lock is recursive
     // because this client can be re-entered while a request is in flight.
-    const bool tlsHeld = gateway_tls::lockTls();
+    //
+    // This is the only taker that keeps the warm foreground session (GatewayWarm.h): it is that
+    // session's owner. Every other taker of the gate closes it first.
+    const uint32_t gateWaitStart = millis();
+    const bool tlsHeld = gateway_tls::lockTlsKeepWarm();
     if (!tlsHeld) {
       Serial.printf("[gateway] %s TLS gate timeout\n", path);
       response = "gateway busy";
@@ -151,61 +161,10 @@ int GatewayClient::request(const char* method, const char* path, const String& b
       ~TlsGuard() { if (held) gateway_tls::unlockTls(); }
     } tlsGuard{tlsHeld};
 
-    // Declaration order is load-bearing, not style.
-    //
-    // C++ destroys locals in reverse declaration order, and HTTPClient keeps a reference to the
-    // client it was handed. With HTTPClient declared first it is destroyed LAST — after the client it
-    // points at — so ~HTTPClient() calls stop() on freed memory. That crashed as
-    // InstrFetchProhibited at PC 0xfffffffd (a call through a dead vtable), and corrupted the lwIP
-    // TCP heap on the way out, which surfaced later as pbuf_free/tcp_seg_free panics in the tcpip
-    // thread. The device was rebooting roughly twice a minute.
-    //
-    // Clients first, HTTPClient last: it dies first, while what it points at is still alive.
-    gateway_http::YieldingClient<WiFiClientSecure> secure;
-    gateway_http::YieldingClient<WiFiClient> plain;
-    HTTPClient http;
-
-    http.setTimeout(kTimeoutMs);
-    http.setConnectTimeout(kConnectTimeoutMs);
-
-    if (!gateway_tls::beginHttp(http, plain, secure, url, "gateway")) return -1;
-
-    http.addHeader("content-type", "application/json");
-    http.addHeader("x-device-id", deviceId);
-    http.addHeader("x-device-secret", credential);
-    // HTTPClient discards every response header it was not told to keep, so without this the
-    // retry-after read below always parsed an empty string and every 429 backed off for the 1 s
-    // floor instead of the interval the gateway asked for.
-    const char* kCollected[] = {"retry-after"};
-    http.collectHeaders(kCollected, 1);
-
-    int code = String(method) == "POST" ? http.POST(body) : http.GET();
-    if (code > 0) {
-      // A device-facing body larger than this is a bug or an attack, never a payload — the biggest
-      // real one is a twelve-row thread list. Reading it into a String first and rejecting afterwards
-      // would already have spent the heap this guard exists to protect.
-      const int length = http.getSize();
-      if (length > (int)kMaxResponseBodyBytes) {
-        Serial.printf("[gateway] %s oversized response %d bytes\n", path, length);
-        response = "response too large";
-        code = HTTPC_ERROR_STREAM_WRITE;
-      } else {
-        gateway_http::BoundedBody sink(response, kMaxResponseBodyBytes);
-        const int read = http.writeToStream(&sink);
-        if (read < 0 || sink.failed()) {
-          response = "gateway response incomplete";
-          code = read < 0 ? read : HTTPC_ERROR_STREAM_WRITE;
-        }
-      }
-    }
-
-    // HTTPClient logs "error(-11): read Timeout" with no indication of which call died, which makes a
-    // recurring failure impossible to attribute. Name the path and the code.
-    if (code <= 0) Serial.printf("[gateway] %s failed code=%d\n", path, code);
-
-    if (code == 429) retryAfter = max(1L, http.header("retry-after").toInt());
-    http.end();
-    return code;
+    // The exchange builds or reuses the session, sends, reads, and decides whether to keep it. It
+    // never touches the state lock (released above), so the two cannot wait on each other.
+    return gateway_warm::exchange("gateway", method, path, url, deviceId, credential, body, response,
+                                  retryAfter, kConnectTimeoutMs, kTimeoutMs, millis() - gateWaitStart);
   }();
   reacquireStateAfterBlockingCall(heldDepth);
 
@@ -507,8 +466,10 @@ void GatewayClient::requestNewClaimCode() {
 }
 
 void GatewayClient::goOffline() {
+  if (!tryLockState(0)) return;
   // The portal owns the screen while offline, and polling here would only stack up failures.
   if (link_ != GatewayLink::NoIdentity) link_ = GatewayLink::Idle;
+  unlockState();
 }
 
 void GatewayClient::lockState() {
@@ -572,7 +533,9 @@ void gatewayNetworkTask(void* arg) {
   GatewayClient* client = static_cast<GatewayClient*>(arg);
   for (;;) {
     client->networkTick();
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // The 100 ms pause between ticks, except that a queued gesture job ends it early
+    // (wakeNetworkTask): a tap should not wait out the remainder of an idle sleep.
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
   }
 }
 
@@ -582,10 +545,42 @@ void gatewayEventTask(void* arg) {
 
 }  // namespace
 
+void GatewayClient::noteInteraction() {
+  interactionUntil_.store(millis() + kInteractionQuietMs);
+  interactionArmed_.store(true);
+}
+
+void GatewayClient::wakeNetworkTask() {
+  if (void* task = networkTask_.load()) xTaskNotifyGive(static_cast<TaskHandle_t>(task));
+}
+
+// Whether this tick should skip the scheduled poll because a person is touching the device.
+//
+// Only the POLL is deferred, and only briefly: gesture jobs ran above, a poll already in flight
+// cannot be taken back, and the cap means continuous use delays background reads by seconds, not
+// forever. Decided before justConnectedPending_ is consumed, so a deferral never loses it.
+bool GatewayClient::deferForTouch() {
+  if (!interactionArmed_.load()) { touchDeferralStartedAt_ = 0; return false; }
+  const uint32_t now = millis();
+  if (static_cast<int32_t>(interactionUntil_.load() - now) <= 0) {
+    // Disarmed rather than left to expire on its own: a stale deadline would read as "in the
+    // future" again once the 32-bit clock had wrapped half a range.
+    interactionArmed_.store(false);
+    touchDeferralStartedAt_ = 0;
+    return false;
+  }
+  if (touchDeferralStartedAt_ == 0) touchDeferralStartedAt_ = now;
+  return now - touchDeferralStartedAt_ < kTouchDeferralCapMs;
+}
+
 void GatewayClient::networkTick() {
+  // First, and even while paused: an idle warm session is what keeps the SSE stream from starting,
+  // so its release must not depend on anything else this tick does. Never waits for the gate.
+  gateway_tls::reapWarmIfIdle(gateway_warm::kIdleMs);
   if (networkPaused_) return;
   if (const auto handler = interactionHandler_.load()) handler();
   if (networkPaused_) return;
+  if (deferForTouch()) return;
   if (!tryLockState(5000)) return;
   const bool justConnected = justConnectedPending_.exchange(false);
   runCycle(justConnected);
@@ -603,12 +598,14 @@ void GatewayClient::startNetworkTask() {
   // OTA adds a 4 KB streaming buffer on top of HTTP/TLS and ArduinoJson frames. The former 8 KB
   // stack hit its canary on real hardware as soon as a mandatory manifest began downloading.
   gateway_tls::tlsLock();  // initialize once before either networking task can race its first use
-  if (xTaskCreatePinnedToCore(gatewayNetworkTask, "gwnet", 16384, this, 1, nullptr, 0) != pdPASS) {
+  TaskHandle_t networkTask = nullptr;
+  if (xTaskCreatePinnedToCore(gatewayNetworkTask, "gwnet", 16384, this, 1, &networkTask, 0) != pdPASS) {
     vSemaphoreDelete((SemaphoreHandle_t)stateMutex_);
     stateMutex_ = nullptr;
     Serial.println("[gateway] network task creation failed; gateway service unavailable");
     return;
   }
+  networkTask_.store(networkTask);
   networkTaskRunning_.store(true);
   if (xTaskCreatePinnedToCore(gatewayEventTask, "gwevents", 6144, this, 1, nullptr, 0) != pdPASS) {
     Serial.println("[gateway] event task unavailable; bounded polling remains active");
@@ -617,6 +614,7 @@ void GatewayClient::startNetworkTask() {
 }
 
 void GatewayClient::eventTaskLoop() {
+  bool initialReconcile = true;
   for (;;) {
     String base, deviceId, deviceSecret;
     bool eligible = false;
@@ -631,86 +629,99 @@ void GatewayClient::eventTaskLoop() {
       }
       unlockState();
     }
-    if (!eligible) {
+    if (!eligible || base.length() == 0) {
       vTaskDelay(pdMS_TO_TICKS(500));
       continue;
     }
 
-    if (base.length() == 0) {
-      vTaskDelay(pdMS_TO_TICKS(2000));
+    // Read authoritative projections before the first subscription. Every later established
+    // stream exit schedules this once, AFTER freeing its TLS session. Re-dirtying on reconnect
+    // would force a foreground read, preempt the stream again, and create an endless churn loop.
+    if (initialReconcile) {
+      lockState();
+      markOperateDue(millis());
+      nextConfigAt_ = millis();
+      unlockState();
+      gateway_tls::deferEventSession();
+      initialReconcile = false;
+      vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
 
-    gateway_http::YieldingClient<WiFiClientSecure> secure;
-    gateway_http::YieldingClient<WiFiClient> plain;
-    HTTPClient http;
-    http.useHTTP10(true);  // close-delimited body: no chunk frames mixed into the SSE lines
-    http.setConnectTimeout(kTimeoutMs);
-    http.setTimeout(kTimeoutMs);
-    const String url = base + "/v1/device/events";
-    if (!gateway_tls::beginHttp(http, plain, secure, url, "events")) {
-      vTaskDelay(pdMS_TO_TICKS(2000));
-      continue;
-    }
-    http.addHeader("x-device-id", deviceId);
-    http.addHeader("x-device-secret", deviceSecret);
+    enum class StreamExit { Deferred, NotEstablished, RateLimited, Disconnected, Preempted };
+    const StreamExit exit = [&]() -> StreamExit {
+      // Hold the global lease for the ENTIRE established session. Foreground intent asks this
+      // task to close cooperatively; no other task ever stops a socket it does not own.
+      gateway_tls::EventSessionLock tls;
+      if (!tls.held()) return StreamExit::Deferred;
+      gateway_http::YieldingClient<WiFiClientSecure> secure;
+      gateway_http::YieldingClient<WiFiClient> plain;
+      HTTPClient http;
+      http.useHTTP10(true); // close-delimited SSE, without chunk framing
+      http.setConnectTimeout(kConnectTimeoutMs);
+      http.setTimeout(kTimeoutMs);
+      const String url = base + "/v1/device/events";
+      if (!gateway_tls::beginHttp(http, plain, secure, url, "events")) return StreamExit::NotEstablished;
+      http.addHeader("x-device-id", deviceId);
+      http.addHeader("x-device-secret", deviceSecret);
+      // A request can arrive during setup. Avoid starting a handshake it has already superseded.
+      if (gateway_tls::eventSessionShouldYield()) return StreamExit::Deferred;
+      const int code = http.GET();
+      if (code != 200) {
+        Serial.printf("[gateway] device event stream failed code=%d\n", code);
+        return code == 429 ? StreamExit::RateLimited : StreamExit::NotEstablished;
+      }
 
-    // The event stream keeps its established session, but its handshake must share the same
-    // allocation gate as request/probe/OTA handshakes on this constrained board.
-    if (!gateway_tls::lockTls()) {
-      vTaskDelay(pdMS_TO_TICKS(2000));
-      continue;
-    }
-    const int code = http.GET();
-    gateway_tls::unlockTls();
-    if (code != 200) {
-      Serial.printf("[gateway] device event stream failed code=%d\n", code);
-      http.end();
-      vTaskDelay(pdMS_TO_TICKS(code == 429 ? 5000 : 2000));
-      continue;
-    }
-
-    // SSE has no durable replay cursor on the device route. Reconnect explicitly refreshes the
-    // authoritative compact models rather than pretending that missed events were delivered.
-    lockState();
-    markOperateDue(millis());
-    nextConfigAt_ = millis();
-    unlockState();
-    WiFiClient* stream = http.getStreamPtr();
-    gateway_http::EventFrame frame;
-    uint32_t lastByteAt = millis();
-    uint32_t nextIdentityCheckAt = millis() + 1000;
-    while (WiFi.status() == WL_CONNECTED && !networkPaused_
-           && (stream->connected() || stream->available())) {
-      const uint32_t now = millis();
-      // The gateway emits a heartbeat every 25 s. A half-open TLS socket can otherwise remain
-      // connected forever after a router/gateway change and silently miss all refresh events.
-      if (now - lastByteAt > 90000) break;
-      if ((int32_t)(now - nextIdentityCheckAt) >= 0) {
-        nextIdentityCheckAt = now + 1000;
-        if (tryLockState()) {
-          const auto settings = store_->transportSnapshot();
-          const bool changed = settings.gatewayUrl != base
-              || settings.deviceSecret != deviceSecret || link_ != GatewayLink::Claimed;
+      WiFiClient* stream = http.getStreamPtr();
+      gateway_http::EventFrame frame;
+      uint32_t lastByteAt = millis();
+      uint32_t nextIdentityCheckAt = millis() + 1000;
+      while (WiFi.status() == WL_CONNECTED && !networkPaused_
+             && (stream->connected() || stream->available())) {
+        if (gateway_tls::eventSessionShouldYield()) return StreamExit::Preempted;
+        const uint32_t now = millis();
+        if (now - lastByteAt > 90000) break;
+        if ((int32_t)(now - nextIdentityCheckAt) >= 0) {
+          nextIdentityCheckAt = now + 1000;
+          if (tryLockState()) {
+            const auto settings = store_->transportSnapshot();
+            const bool changed = settings.gatewayUrl != base
+                || settings.deviceSecret != deviceSecret || link_ != GatewayLink::Claimed;
+            unlockState();
+            if (changed) break;
+          }
+        }
+        if (!stream->available()) {
+          vTaskDelay(pdMS_TO_TICKS(20));
+          continue;
+        }
+        const int value = stream->read();
+        if (value < 0) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
+        lastByteAt = millis();
+        if (frame.feed(static_cast<char>(value))) {
+          // Never wait on model state while retaining the SSE lease: a foreground owner may
+          // need that lease. A contended event is recovered by the post-close snapshot instead.
+          if (!tryLockState(0)) return StreamExit::Disconnected;
+          if (frame.event() == "threads.changed") applyThreadChangedEvent(frame.data());
+          else applyRefreshEvent(frame.event(), frame.data());
           unlockState();
-          if (changed) break;
+          frame.reset();
         }
       }
-      if (!stream->available()) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-        continue;
-      }
-      const int value = stream->read();
-      if (value < 0) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
-      lastByteAt = millis();
-      if (frame.feed(static_cast<char>(value))) {
-        if (frame.event() == "threads.changed") applyThreadChangedEvent(frame.data());
-        else applyRefreshEvent(frame.event(), frame.data());
-        frame.reset();
-      }
+      return gateway_tls::eventSessionShouldYield() ? StreamExit::Preempted : StreamExit::Disconnected;
+    }(); // HTTPClient and both clients are destroyed before EventSessionLock releases the lease.
+
+    if (exit == StreamExit::Disconnected || exit == StreamExit::Preempted) {
+      // There is no durable replay cursor on this device SSE route. A deliberate quiet window
+      // misses events too, so reconcile once per exit and let queued snapshots drain first.
+      lockState();
+      markOperateDue(millis());
+      nextConfigAt_ = millis();
+      unlockState();
+      gateway_tls::deferEventSession();
     }
-    http.end();
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelay(pdMS_TO_TICKS(exit == StreamExit::Deferred || exit == StreamExit::Preempted
+      ? 100 : exit == StreamExit::RateLimited ? 5000 : 2000));
   }
 }
 

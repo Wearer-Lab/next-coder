@@ -8,6 +8,65 @@ Anything not marked **done** is not complete.
 Last verified: **2026-10-23** for connector-local voice and the production recovery below. The
 September workstream tables remain the baseline for gates not explicitly superseded here.
 
+## October 30 live T3 0.1.5 and controller qualification
+
+First live observation of T3 0.1.5 anywhere in this project, and the first hardware run of the
+incremental device response path. Production T3 was moved 0.1.1 -> 0.1.5 by repointing the
+`com.next-coder.production.t3` launchd job, which pinned the 0.1.1 binary by absolute path; the
+plist and the 116 MB `userdata` directory were copied first because a release may migrate stored
+state irreversibly.
+
+Measured against the running 0.1.5 on `127.0.0.1:3774`: `orchestrationProtocolVersion` **2**; `/ws`
+returns **426** without `orchestrationProtocol=2`, **401** with it, and **426** for an unknown
+protocol 3, so failing closed is correct; `POST /api/orchestration/dispatch` is **404**;
+`GET /api/orchestration/snapshot` returns **200 `text/html`** — the single-page application, not a
+404, so a caller testing `response.ok` sees success and fails later parsing HTML as JSON, which
+`src/t3Client.mjs` now refuses as `T3_PROTOCOL_MISMATCH`; `fileAttachments.maxUploadBytes` is
+**52428800**, confirming `docs/t3-capability-manifest.md` records stale 0.0.32 limits.
+
+Two repairs were exercised with repository code against that server: `exchangePairingToken`
+succeeded and 0.1.5 echoed `orchestration:read orchestration:operate terminal:operate`, confirming
+the removed `orchestration:write` scope was never valid, and `DirectT3Transport.snapshot()` returned
+`{projects, snapshotSequence, threads}` over the protocol-2 WebSocket. Full detail and the limits
+are in [../docs/t3-version-audit.md](../docs/t3-version-audit.md) section 9.
+
+Hosyond: the shared incremental-response firmware **compiled for the first time** (1,516,736 bytes)
+and was flashed with hash verification. Secure **0.2.20** boots to 0 panics and 0 resets, 89 frame
+samples over a 3-minute soak averaging **29.4 fps** (min 27.8, max 30.3) with a worst frame gap of
+**70 ms** against a 33 ms budget, Wi-Fi at **-32 dBm**, claim and device id preserved, and
+`https://coder.next-notes.com -> reachable`. That path is controller -> production -> connector ->
+live T3 0.1.5 on current firmware.
+
+Corrected during the run: a first flash used a plain `pio run`, which omits the release
+`NEXT_CODER_FIRMWARE_VERSION` override, so the unit reported **0.2.9** — below the 0.2.19 it had
+been running, which fleet rollout compares. Rebuilt and reflashed as 0.2.20. The investigation also
+established that this unit had been booting **0.2.19 from the app1 OTA slot** while app0 held 0.2.7,
+so a slot-level backup does not necessarily capture the running image.
+
+Not proven: no turn was dispatched to 0.1.5, so approval answering (including whether `acceptAlways`
+behaves per provider as the bundles indicate), structured user input, terminal input, the work graph,
+thread streaming and resume remain unobserved there, as does anything through the connector path
+rather than the direct one. No board renders the retained stream text yet, so the device cursor is
+exercised only by tests. `maximumTestedVersion` therefore stays **0.1.1**. The connector's cloud
+WebSocket recorded 15-27 reconnects per day between 2026-10-25 and 2026-10-30, which is unexplained
+and predates this work. Windows and Linux clean-host proof remains outstanding.
+
+## October 23 Hosyond interaction repair
+
+Current implementation and evidence are in [the interaction repair notes](../docs/device-flow/review/IMPLEMENTATION.md).
+Read-only destination preview with an explicit atomic commit, touch-target capture, bounded input
+retention, voice receipt recovery, complete narrow-screen reply paging and deliberate decisions
+have current-source regression coverage. The repository gate passed **1,481 tests** with the three
+existing live-S3 skips. Secure Hosyond **0.2.19** was flashed and image-verified with provisioning/OTA metadata preserved.
+Production observed its heartbeat and a live ready connector/T3/provider. Passive rendering stayed
+near 30 FPS without panic. The owner then confirmed preview Back kept the destination unchanged,
+Verify T3 displayed its marker, and a fresh Talk recording displayed `flow test successful`.
+Production independently records saved-action completion at **07:24:59 EDT** and voice completion
+at **07:26:01 EDT**; local connector transcription took **4,219 ms**, attempt 1. Cursor-bound reply
+GET returned HTTP 200 and complete output. The serial trace expired before these gestures, so
+physical touch latency, repeated-interaction stress, outage recovery and long-soak qualification
+remain unverified. Other boards retain their existing UI and capability limits.
+
 ## October 23 connector-local voice
 
 - Production `TRANSCRIPTION_PROVIDER=connector` routes each leased recording to its owner's
@@ -395,3 +454,34 @@ The ordered, owner-assigned version of this list, with the evidence each step ne
    failure, security, retention, and WAN/sleep gates.
 6. Use the implemented rollout controls to stage the browser, voice, connector, and controller beta;
    record hosted cohort, per-target, promotion, cancellation, and rollback evidence.
+
+## Direct agents — implementation evidence (2026-10-23)
+
+Direct Codex app-server, Claude Agent SDK and configurable ACP v1 adapters are implemented in the
+local connector. T3 remains optional when enrolling with `--agents-file`. Native credentials and
+processes stay on the user's machine, behind the existing outbound cloud connection. Saved-session
+discovery/import, separate native references per agent, bounded conversation handoffs, durable
+command receipts and restart recovery share the existing ownership and policy boundaries.
+
+The console exposes direct-agent enrollment, saved-session discovery and conversation switching.
+Device APIs and shared `GatewayBrowse` expose compact agent/session lists and policy-protected
+switch/import actions; Hosyond has the dedicated picker and idle-session confirmation. Other boards
+retain existing prompt/result/stop/approval behavior, but do not yet have dedicated agent pickers.
+Setup and limits: [../docs/direct-agents.md](../docs/direct-agents.md).
+
+Software evidence: 20 focused adapter/runtime/enrollment/gateway/store tests pass, including mock
+Codex/ACP subprocesses, Claude SDK questions/resume, device realm isolation, journal failure and
+uncertain-handoff recovery. Codex framing is checked against a schema generated read-only from
+installed CLI 0.162.1. The connector package installation smoke test passes. A workload of 2,000
+12-character updates produced four delta frames and 52,083 bytes total, compared with 25,660,000
+bytes for a full snapshot per update. This is an isolated transport measurement, not WAN or device
+performance proof.
+
+Final verification: `npm test` passes, including 386 frontend tests, 912 passing server tests
+(three skipped), 135 connector tests and the Cloudflare edge/control-plane suites. The current
+`hosyond-es3c28p-controller` release build passes; documentation links and `git diff --check` pass.
+Earlier transient Wi-Fi/QR failures cleared as the concurrent provisioning work changed.
+
+Release qualification remains open: no native authenticated agent turn, cloud deployment, package
+publication, physical device run or sleep/wake exercise was performed. Build and isolated software
+evidence are not claims of hardware or release readiness.

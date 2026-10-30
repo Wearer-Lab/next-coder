@@ -749,3 +749,12 @@ test("voice dispatch survives a job-settlement failure and runner restart withou
     operation: "intent.submit", clientRequestId: `voice:${uploaded.job.jobId}` });
   assert.equal(receipt.commandId, final.commandId);
 });
+
+
+test("compact voice review reasons distinguish gateway approval from transcript review", () => {
+  const base = { id: "job_fixture", mediaId: "media_fixture", stage: "dispatched" };
+  assert.equal(deviceJobStatus({ ...base, dispatchStatus: "approval_required" }).reviewReason, "gateway_approval");
+  assert.equal(deviceJobStatus({ ...base, stage: "review_required" }).reviewReason, "transcript_review");
+  assert.equal(deviceJobStatus({ ...base, dispatchStatus: "sent" }).reviewReason, null);
+  assert.equal(deviceJobStatus({ ...base, stage: "failed" }).reviewReason, null);
+});

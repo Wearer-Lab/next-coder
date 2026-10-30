@@ -1194,6 +1194,45 @@ Content-Type: application/json
 
 `modelSelection` is optional when the T3 project has a default. Provider instance IDs are not restricted to built-ins, so user-defined T3 provider instances are supported. The gateway dispatches `thread.create` followed by `thread.turn.start` because T3's HTTP orchestration endpoint requires the thread to exist before accepting the first turn.
 
+### Per-model provider options
+
+A `modelSelection` (on thread launch, and on `runtime_switch` or `runtime_import` intents) may carry an
+optional `options` array of `{id, value}` entries. These are the per-model switches the provider itself
+declares as `capabilities.optionDescriptors` in the catalogue, for example Codex's `reasoningEffort` and
+`serviceTier`, or Claude's `effort` and `contextWindow`:
+
+```json
+{
+  "instanceId": "codex",
+  "model": "gpt-5.4",
+  "options": [{ "id": "reasoningEffort", "value": "max" }]
+}
+```
+
+**The ids and values belong to the provider, and this gateway never fixes them.** Nothing in the server
+names an option id, and a select value is accepted only if the registered catalogue declares it. A new
+provider switch therefore needs no gateway change, and no code may hardcode `reasoningEffort` or
+`effort` to select a model's behaviour. A boolean descriptor takes `true` or `false`; a select takes
+one of its declared choice ids. A select that declares no choices accepts any non-empty string.
+
+Validation depends on the path and on whether a catalogue is registered for the environment:
+
+- **Without a registered catalogue** the gateway cannot know what a model declares, so option values are
+  not checked and pass through to T3. This is the same non-authoritative stance taken for model slugs.
+- **`POST /v1/intents` and device intents** (`runtime_switch`, `runtime_import`): malformed entries are
+  dropped (no id, an id over 120 characters, a string value over 200 characters), and only the first 16
+  entries are considered. With a catalogue, an unknown id, a repeated id, a value the model does not declare, or a wrong
+  value type is refused before dispatch with `422` and `code: "invalid_model_options"`. The response
+  carries `known` with the ids or choice ids the model does offer.
+- **`POST /v1/t3/environments/:environmentId/threads`** (thread launch): options are not normalized, and
+  an invalid selection does not fail the launch while a fallback exists. The gateway launches on the
+  project's default model, or the latest usable model, and reports the refusal as `modelRecovery`
+  (`requested`, `selected`, `reason`, `catalogueSource`). That object carries the reason but not `known`.
+  A `422` is returned only when no usable model exists at all.
+
+Omitting `options` leaves the selection's options out of the T3 command entirely, so a switch that sets
+nothing does not clear what the thread already had.
+
 ### Manage a T3 thread
 
 Platform users can manage threads in an environment they own. These routes forward T3's native
@@ -1251,9 +1290,26 @@ again:
   "session": { "id": "cxn_...", "status": "pending", "expiresAt": "..." },
   "code": "ABCDE-FGHIJ",
   "gatewayUrl": "https://gateway.example",
-  "command": "npx @wearer-haitch/connector connect --server 'https://gateway.example' --code 'ABCDE-FGHIJ'"
+  "command": "npx @wearer-haitch/connector connect --server https://gateway.example --code ABCDE-FGHIJ",
+  "commands": {
+    "posix": "npx @wearer-haitch/connector connect --server https://gateway.example --code ABCDE-FGHIJ",
+    "powershell": "npx @wearer-haitch/connector connect --server https://gateway.example --code ABCDE-FGHIJ",
+    "cmd": "npx @wearer-haitch/connector connect --server https://gateway.example --code ABCDE-FGHIJ"
+  },
+  "commandUniversal": true
 }
 ```
+
+`command` is the POSIX rendering and keeps its meaning, so an older console keeps working. `commands`
+carries one rendering per shell (`posix`, `powershell`, `cmd`), and `commandUniversal` is `true` when
+all three are identical. An argument is emitted bare whenever it contains only letters, digits and
+`._:/@+=~-`, which covers a normal gateway origin and every enrollment code; a line built only from
+bare arguments is correct in every shell, so the three renderings agree. Otherwise each argument is
+quoted for its own shell (POSIX single quotes, PowerShell single quotes with doubled quotes, or cmd
+double quotes), and a console should offer `commands` per shell. The bare form exists because POSIX
+single quotes are not quote characters in `cmd.exe`: a quoted `--server 'https://…'` reached the
+connector as a malformed URL on Windows, so the enrollment failed. Quoting applies only to an argument
+outside that bare set, such as a self-hosted origin carrying a query string.
 
 Poll while the user is on the other machine:
 
@@ -1298,7 +1354,8 @@ authorization: Bearer PLATFORM_TOKEN
 ```
 
 It returns a 15-minute single-use code and canonical `npx ... rotate --server ... --code ... --yes`
-command. The connector then authenticates with its current standing credential and stages a new one
+command, with the same `commands` and `commandUniversal` fields and quoting rules as the connect
+session above. The connector then authenticates with its current standing credential and stages a new one
 without changing connector or environment identity:
 
 The code is purpose-bound to `connector_rotation`. A T3 enrollment/re-pair code cannot authorize
@@ -2340,8 +2397,66 @@ this is the endpoint summary.
 | GET | `/v1/device/threads` | Threads in the bound environment, narrowed to the active project |
 | POST | `/v1/device/threads` | Create a thread in the active project and select it |
 | POST | `/v1/device/config/thread` | Set the active thread |
+| GET | `/v1/device/thread-output` | The selected thread's latest response as bounded display pages, plus an optional incremental stream cursor |
 
-All seven are device realm (`x-device-id` + `x-device-secret`) and require a claimed device.
+All eight are device realm (`x-device-id` + `x-device-secret`) and require a claimed device.
+
+`GET /v1/device/thread-output` takes `page` and `after` as before, and two optional cursor parameters
+for incremental reads: `streamMessageId` (the message the device is currently showing) and
+`streamOffset` (how many characters of that message it already holds; when present it must be 1 to 7
+decimal digits, otherwise `400`, and it is ignored without a `streamMessageId`). The existing `response.lines`, `page` and
+`pageCount` fields are unchanged, so a device that sends no cursor keeps working. The response gains
+`response.stream`:
+
+```json
+"stream": { "messageId": "msg_...", "offset": 0, "total": 71, "appended": "…", "complete": false, "reset": false }
+```
+
+- `appended` is at most 512 characters from `offset`. A device catches up over successive polls.
+- `reset: true` means the device must replace what it shows with `appended` rather than append to it.
+  It is set when the agent's selected message differs from `streamMessageId`, when the held offset is
+  past the current text length, or, with no assistant message, when the device held characters.
+  This matters because T3 sends absolute text for a native v2 message update and only its streaming
+  suffix is a delta: appending blindly would show a sentence the agent never wrote.
+- `complete` is `true` only when the device holds every character (`offset + appended` reaches `total`)
+  and the selected message is no longer `streaming`. The turn state is not read.
+- `total` counts the stable visible text described below, not the whole reply, so while a reply streams
+  it can be shorter than what `lines` shows.
+
+The offset counts characters of the **stable** visible text: follow-up markers are removed and Markdown
+is normalized (link syntax, code-span and fence backticks, tags, heading and list markers, collapsed
+whitespace, trimmed ends), but only up to the earliest construct normalization could still rewrite. That
+tail is withheld until it resolves: an unclosed `<`, an unclosed `[` (with a preceding `!`), a trailing
+`!`, a trailing backtick run, an unclosed inline code span, and a final line that is only a list or quote
+marker (`-`, `*`, `+`, `>`). The exposed text is meant to only grow, which is what the append protocol needs
+(see Known limits). The cost is latency: the last few characters of a streaming reply appear one poll later,
+once their markup resolves.
+
+Withholding applies only while the message is streaming. A settled message exposes its complete normalized
+text, so a withheld tail is released once the reply settles, and `complete` covers the whole reply.
+
+`response.lines` and `page` are always computed from the complete normalized text, so during streaming
+`lines` and `stream` can legitimately differ. A client should read one or the other, not mix them.
+
+**Known limits.** Two cases still break the append property. The gateway does not detect either:
+
+- In ordinary prose, a `<` and a later `>` form a tag under the normalizer, so the text between them is
+  removed from both `stream` and `lines`. `if x < 5 and y > 3` shows as `if x 3`.
+- A construct can open behind an earlier unclosed opener, or close behind a withheld point, so text already
+  exposed is rewritten. `[a [b](x)` exposes `[a` and then `a [b`; `a <b c <d>` exposes `a <b c` and then `a`.
+  The device then holds text that no longer matches the reply, and `reset` stays `false`.
+
+Until these are fixed, `complete` on `stream` means only that the device holds the settled `stream` text. It
+does not guarantee the text matches the reply. `lines` is recomputed from the full text on every poll and is
+the reliable display source.
+
+`reset` detects replacement by length only. The gateway does not compare the content it already sent, so it
+relies on the raw text of a message only growing. A message whose earlier text T3 rewrites at an equal or
+greater length is not detected.
+
+Firmware in this repository does not send the cursor yet, so the stream is a gateway contract without a
+device consumer. The full wire format is in
+[hardware-protocol.md](hardware-protocol.md#selected-thread-response-pages).
 
 ```http
 GET /v1/device/environments
@@ -2971,3 +3086,24 @@ Success returns original audio bytes (at most 2 MiB), its content type, `x-media
 `Cache-Control: no-store`. A caller must verify the digest and must not follow redirects. No media
 capability or device credential substitutes for connector authentication. See
 [local voice](local-voice.md) for runtime setup and delivery semantics.
+## Direct-agent sessions
+
+Legacy `/v1/t3/environments/...` paths also carry direct runtime projections for compatibility.
+`manifest.runtimeKind === "direct"` identifies `next-coder.runtime-probe.v1` capability evidence;
+do not infer a T3 version. Unsupported attachments, terminals, plans and checkpoints stay disabled.
+
+- `GET /v1/t3/environments/:id/sessions?runtimeId=...&projectId=...&cursor=...`: owner-realm,
+  read-rate-limited, project-scoped saved-session discovery. Returns bounded `sessions` with
+  `id`, `title`, `updatedAt`, `attachment` (`resume`/`view`), plus `nextCursor` and optional
+  `truncated`. Paths and credentials are omitted. An unavailable discovery capability returns 409.
+- Existing `POST /v1/intents` accepts `runtime_switch` with `runtimeId` and `model`, or
+  `runtime_import` with those fields plus `projectId`, `nativeSessionId`, `confirmResume: true`.
+  Both require `clientRequestId` for durable retries and a `threadId` (an opaque placeholder is
+  sufficient for import). Import returns the actual application id in `command.result.threadId`.
+  Switch uses `session_control` policy; import uses `thread_create`. Their local mutation receipt
+  completes the command; it does not claim an agent turn ran. Active turns reject switches. Both accept
+  the optional `options` array described under [Per-model provider options](#per-model-provider-options).
+
+See [configuration, context transfer and recovery](direct-agents.md). No new cloud Store method or
+table is introduced: the existing memory/file/Convex command envelope and catalogue are reused;
+native session state stays in the connector's private local journal.

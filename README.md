@@ -367,6 +367,15 @@ current compile evidence, and the limits of build-only proof.
 
 See [docs/hardware-protocol.md](docs/hardware-protocol.md) for provisioning, claim, display, media, and intent details.
 
+Hosyond's Device → Wi-Fi controls scan nearby networks, accept passwords on the touchscreen and
+save up to five successfully connected networks. Saved alternatives are tried automatically after
+Wi-Fi loss, with an on-screen reconnect/switch notice. See the
+[network flow and limits](docs/hardware-protocol.md#saved-wi-fi-and-hosyond-network-controls).
+
+The [interactive device flow atlas](docs/device-flow/README.md) maps the current Hosyond screens,
+buttons, voice journey, confirmations and recovery branches, and compares the other boards. It is
+a local explanatory simulation; it does not operate real devices.
+
 ## Manufacturing
 
 Create factory devices and per-device `controller_config.h` files:
@@ -683,3 +692,11 @@ repository; those boards' `docs/` folders hold only a README explaining where to
 `firmware/vision-master-t190/docs/` folder still tracks five Heltec reference files (datasheet,
 schematic, panel specification, and two pin/hardware images), which remain under their vendor's own
 terms rather than this repository's licence.
+
+Hosyond interaction changes and qualification: [0.2.19 implementation notes](docs/device-flow/review/IMPLEMENTATION.md).
+## Direct agent connections
+
+The connector also supports native Codex, Claude and generic ACP agents with T3 optional.
+See [direct-agent setup, existing sessions and conversation handoffs](docs/direct-agents.md).
+This source feature requires a connector build containing `--agents-file`; publication and live
+provider/device qualification are separate release steps.

@@ -8,7 +8,7 @@ namespace uip {
 
 namespace {
 
-Adafruit_ILI9341& g() { return displayPanel(); }
+Adafruit_GFX& g() { return displayRenderGfx(); }
 
 }  // namespace
 
@@ -82,7 +82,7 @@ String fitWords(const String& value, size_t cols) {
 }
 
 void text(int16_t x, int16_t y, uint8_t size, uint8_t grey, const String& value) {
-  if (value.length() == 0) return;
+  if (value.length() == 0 || !displayRenderIntersects(x,y,static_cast<int32_t>(value.length())*6*size,8*size)) return;
   g().setTextWrap(false);
   g().setTextSize(size);
   g().setTextColor(panelGrey(grey));
@@ -109,7 +109,7 @@ void textRight(int16_t right, int16_t y, uint8_t size, uint8_t grey, const Strin
 }
 
 void textAccent(int16_t x, int16_t y, uint8_t size, const String& value) {
-  if (value.length() == 0) return;
+  if (value.length() == 0 || !displayRenderIntersects(x,y,static_cast<int32_t>(value.length())*6*size,8*size)) return;
   g().setTextWrap(false);
   g().setTextSize(size);
   g().setTextColor(panelRgb(kAccentRgb));

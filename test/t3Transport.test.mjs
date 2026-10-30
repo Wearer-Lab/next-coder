@@ -21,8 +21,17 @@ test("direct transport preserves the existing HTTP contract", async () => {
   const transport = new DirectT3Transport();
   assert.deepEqual(await transport.snapshot(environment, { fetchImpl }), { projects: [], threads: [] });
   assert.deepEqual(await transport.dispatch(environment, { type: "thread.session.stop" }, { fetchImpl }), { status: "accepted" });
-  assert.equal(requests[0].init.headers.authorization, "Bearer local-only");
-  assert.equal(requests[1].init.method, "POST");
+  // The protocol is read from the (unauthenticated) descriptor first, then cached: the descriptor
+  // here answers without `orchestrationProtocolVersion`, which means protocol 1.
+  const snapshotRequest = requests.find((request) => request.url.endsWith("/api/orchestration/snapshot"));
+  const dispatchRequest = requests.find((request) => request.url.endsWith("/api/orchestration/dispatch"));
+  assert.equal(snapshotRequest.init.headers.authorization, "Bearer local-only");
+  assert.equal(dispatchRequest.init.method, "POST");
+  assert.equal(
+    requests.filter((request) => request.url.endsWith("/.well-known/t3/environment")).length,
+    1,
+    "the advertised protocol is cached for the second call",
+  );
 });
 
 test("transport resolver keeps direct mode as migration default", () => {

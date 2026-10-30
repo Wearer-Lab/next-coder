@@ -32,7 +32,11 @@ test("captured T3 0.0.32 probes produce the versioned certified manifest without
   assert.equal(manifest.installedVersion, "0.0.32");
   assert.equal(capabilitySupported(manifest, "threadPagination"), true);
   assert.equal(capabilitySupported(manifest, "threadSubscription"), true);
+  // Four are answerable on any request; the fifth exists but only a request that lists it may be
+  // answered with it (it is a silent deny on Claude otherwise), so it is not in the first list.
   assert.deepEqual(manifest.approvalDecisions, ["accept", "acceptForSession", "decline", "cancel"]);
+  assert.deepEqual(manifest.requestScopedApprovalDecisions, ["acceptAlways"]);
+  assert.equal(manifest.approvalDecisions.includes("acceptAlways"), false);
   assert.equal(manifest.attachments.image.state, "supported");
   assert.equal(manifest.attachments.audio.state, "unsupported");
   assert.equal(manifest.attachments.file.state, "unsupported");
@@ -147,3 +151,37 @@ function build(value) {
     freshUntil: "2026-08-27T12:05:00.000Z",
   });
 }
+
+test("a direct runtime reserves no request-scoped decision and the manifest never lists acceptAlways by default", async () => {
+  const transport = {
+    async capabilityProbe() {
+      return {
+        schema: "next-coder.runtime-probe.v1",
+        installedVersion: "1.0.0",
+        probes: { snapshot: "passed", serverConfig: "passed" },
+        features: { providerApprovals: true },
+      };
+    },
+    async snapshot() { return { projects: [], threads: [] }; },
+    async dispatch() {},
+  };
+  const manifest = await new T3Adapter(transport).capabilities(environment);
+  assert.equal(manifest.runtimeKind, "direct");
+  assert.deepEqual(manifest.approvalDecisions, ["accept", "decline", "cancel"]);
+  assert.deepEqual(manifest.requestScopedApprovalDecisions, []);
+});
+
+test("an environment that cannot dispatch advertises no approval decisions at all", () => {
+  const readOnly = buildT3CapabilityManifest({
+    environment: { ...environment, scopes: ["orchestration:read"] },
+    metadata: fixture.metadata,
+    snapshot: fixture.snapshot,
+    serverConfig: fixture.serverConfig,
+    probes: { metadata: "passed", snapshot: "passed", serverConfig: "passed", threadDetail: "not_exercised" },
+    methodAvailability: methods,
+    probedAt: "2026-08-27T12:00:00.000Z",
+    freshUntil: "2026-08-27T12:05:00.000Z",
+  });
+  assert.deepEqual(readOnly.approvalDecisions, []);
+  assert.deepEqual(readOnly.requestScopedApprovalDecisions, []);
+});

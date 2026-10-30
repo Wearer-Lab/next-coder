@@ -7,6 +7,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <time.h>
+#include <atomic>
+#if defined(TLS_SESSION_DIAGNOSTICS) && TLS_SESSION_DIAGNOSTICS
+#include <esp_heap_caps.h>
+#endif
 
 // Board projects expose their generated/bench configuration on PlatformIO's include path. Keeping
 // trust configuration there lets manufacturing inject production roots without forking the shared
@@ -43,7 +47,7 @@
 
 namespace gateway_tls {
 
-// One TLS handshake at a time.
+// One TLS session at a time. Established SSE sessions retain their mbedTLS buffers too.
 //
 // mbedTLS allocates its input and output buffers as one contiguous block of roughly 32 KB when
 // the session is set up. On this hardware that block has to come out of internal RAM, which the
@@ -63,18 +67,139 @@ inline SemaphoreHandle_t& tlsLock() {
   return handle;
 }
 
+constexpr uint32_t kEventQuietMs = 2000;
+inline void traceSessionHeap(const char* phase) {
+#if defined(TLS_SESSION_DIAGNOSTICS) && TLS_SESSION_DIAGNOSTICS
+  Serial.printf("[tls-heap] phase=%s internal_free=%u internal_largest=%u\n", phase,
+    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#else
+  (void)phase;
+#endif
+}
+// ---------------------------------------------------------------------------------------------
+// The warm foreground session
+// ---------------------------------------------------------------------------------------------
+//
+// Every foreground request used to build, handshake and destroy its own TLS session: measured on
+// silicon at 1.7 to 2.2 s apiece against about 30 ms of server time. GatewayWarm.h keeps ONE such
+// session open between requests. It is still "one ~32 KB session at a time", so it lives entirely
+// inside this gate and gives way to every other user of it:
+//
+//   * it exists only while the gate is free of anyone else's session. Any other taker of the gate
+//     (lockTls(): OTA, media upload, the gateway probe) closes it first, through the drop hook, while
+//     holding the gate - the same moment it would otherwise have started its own handshake;
+//   * the SSE stream does not start while one is open (eventSessionShouldYield), and an idle one is
+//     closed after GATEWAY_WARM_IDLE_MS (reapWarmIfIdle), which is what hands the lease back;
+//   * only the foreground request path uses lockTlsKeepWarm(), because only it is the session's
+//     owner. It still announces itself as foreground, so a live SSE stream still yields to it.
+//
+// The warm session is therefore owned by the gate: created, used and destroyed only with the gate
+// held. These flags are the lock-free view of it for the tasks that must decide without taking it.
+inline std::atomic<bool>& warmSessionOpen() {
+  static std::atomic<bool> value{false};
+  return value;
+}
+inline std::atomic<uint32_t>& warmLastUsedAt() {
+  static std::atomic<uint32_t> value{0};
+  return value;
+}
+// Registered by GatewayWarm.h. Called ONLY with the gate held.
+inline std::atomic<void (*)()>& warmDropHook() {
+  static std::atomic<void (*)()> value{nullptr};
+  return value;
+}
+inline void dropWarmSessionLocked() {
+  if (!warmSessionOpen().load(std::memory_order_acquire)) return;
+  if (const auto drop = warmDropHook().load(std::memory_order_acquire)) drop();
+}
+
+inline std::atomic<unsigned>& foregroundWaiters() {
+  static std::atomic<unsigned> value{0};
+  return value;
+}
+inline std::atomic<uint32_t>& eventQuietUntil() {
+  static std::atomic<uint32_t> value{0};
+  return value;
+}
+inline void deferEventSession() {
+  eventQuietUntil().store(millis() + kEventQuietMs, std::memory_order_release);
+}
+inline bool eventSessionShouldYield() {
+  const uint32_t quiet = eventQuietUntil().load(std::memory_order_acquire);
+  return foregroundWaiters().load(std::memory_order_acquire) != 0
+    || warmSessionOpen().load(std::memory_order_acquire)
+    || (quiet != 0 && static_cast<int32_t>(millis() - quiet) < 0);
+}
+
 // Returns true when the lock was taken. A caller that cannot get it in time must skip the request
 // rather than perform a handshake outside the lock, which is the exact failure this prevents.
-inline bool lockTls(unsigned int timeoutMs = 10000) {
+//
+// `keepWarm` is true only for the owner of the warm foreground session. Everyone else is about to
+// build a session of their own, so the warm one is closed first - here, with the gate held, so there
+// is never a moment with two sessions' buffers alive.
+inline bool lockTlsImpl(unsigned int timeoutMs, bool keepWarm) {
   SemaphoreHandle_t handle = tlsLock();
   if (handle == nullptr) return false;
-  return xSemaphoreTakeRecursive(handle, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+  foregroundWaiters().fetch_add(1, std::memory_order_acq_rel);
+  deferEventSession();
+  const bool held = xSemaphoreTakeRecursive(handle, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+  foregroundWaiters().fetch_sub(1, std::memory_order_acq_rel);
+  deferEventSession();
+  if (held) {
+    if (!keepWarm) dropWarmSessionLocked();
+    traceSessionHeap("foreground.begin");
+  }
+  return held;
+}
+inline bool lockTls(unsigned int timeoutMs = 10000) { return lockTlsImpl(timeoutMs, false); }
+inline bool lockTlsKeepWarm(unsigned int timeoutMs = 10000) { return lockTlsImpl(timeoutMs, true); }
+
+// Closes the warm session once it has been idle for `idleMs`, without ever waiting for the gate or
+// announcing itself as foreground (a busy gate means the session is in use, which is the answer).
+// Called from the network task's tick; this is what returns the SSE stream's lease.
+inline void reapWarmIfIdle(uint32_t idleMs) {
+  if (!warmSessionOpen().load(std::memory_order_acquire)) return;
+  if (static_cast<uint32_t>(millis() - warmLastUsedAt().load(std::memory_order_acquire)) < idleMs) return;
+  SemaphoreHandle_t handle = tlsLock();
+  if (handle == nullptr || xSemaphoreTakeRecursive(handle, 0) != pdTRUE) return;
+  dropWarmSessionLocked();
+  xSemaphoreGiveRecursive(handle);
 }
 
 inline void unlockTls() {
   SemaphoreHandle_t handle = tlsLock();
-  if (handle != nullptr) xSemaphoreGiveRecursive(handle);
+  if (handle != nullptr) {
+    traceSessionHeap("foreground.end");
+    deferEventSession();
+    xSemaphoreGiveRecursive(handle);
+  }
 }
+
+// SSE acquires without waiting and never announces itself as foreground. Declare this before
+// clients: the event task alone closes its socket, and destroys it before releasing this lease.
+class EventSessionLock {
+ public:
+  EventSessionLock() {
+    if (eventSessionShouldYield()) return;
+    const auto handle = tlsLock();
+    if (!handle || xSemaphoreTakeRecursive(handle, 0) != pdTRUE) return;
+    if (eventSessionShouldYield()) { xSemaphoreGiveRecursive(handle); return; }
+    held_ = true;
+    traceSessionHeap("events.begin");
+  }
+  ~EventSessionLock() {
+    if (held_) {
+      traceSessionHeap("events.end");
+      xSemaphoreGiveRecursive(tlsLock());
+    }
+  }
+  bool held() const { return held_; }
+  EventSessionLock(const EventSessionLock&) = delete;
+  EventSessionLock& operator=(const EventSessionLock&) = delete;
+ private:
+  bool held_ = false;
+};
 
 // Declare before HTTP/socket objects so they are destroyed before releasing the allocation gate.
 class ScopedLock {
@@ -182,6 +307,8 @@ inline bool clockReady() {
 }
 
 inline bool configure(WiFiClientSecure& client, const char* component) {
+  // Arduino defaults to 120 s independently of HTTP deadlines. Bound the stream owner's lease.
+  client.setHandshakeTimeout(6); // seconds; certificate and hostname validation stay unchanged
 #if INSECURE_SKIP_TLS_VERIFY
   // Explicit local-bench escape hatch. Production examples default this off.
   client.setInsecure();
@@ -220,6 +347,22 @@ inline bool beginHttp(HTTPClient& http, WiFiClient& plainClient, WiFiClientSecur
                 component);
   return http.begin(plainClient, url);
 #else
+  return false;
+#endif
+}
+
+// Same transport selection as beginHttp(), minus the one-time TLS configuration, for a client that
+// is ALREADY connected. Re-running configure() (setCACert, clock check) on a live socket is neither
+// needed nor safe; the origin was validated when the session was built and the caller has checked
+// it is unchanged. Returns false if the URL is no longer allowed.
+inline bool beginHttpReuse(HTTPClient& http, WiFiClient& plainClient, WiFiClientSecure& secureClient,
+                           const String& url) {
+  if (!gatewayUrlAllowed(url)) return false;
+  if (url.startsWith("https://")) return http.begin(secureClient, url);
+#if INSECURE_SKIP_TLS_VERIFY
+  return http.begin(plainClient, url);
+#else
+  (void)plainClient;
   return false;
 #endif
 }

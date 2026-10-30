@@ -7,10 +7,30 @@
 
 #include "GatewayTls.h"
 #include "GatewayHttp.h"
+#include "GatewayWarm.h"
 #include "GatewayDeviceRequest.h"
 #include "OperateModel.h"
 
 namespace {
+
+String encodePathSegment(const String& value) {
+  static const char* digits = "0123456789ABCDEF";
+  String encoded;
+  encoded.reserve(value.length());
+  for (size_t i = 0; i < value.length(); i += 1) {
+    const uint8_t c = static_cast<uint8_t>(value[i]);
+    const bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+      || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
+    if (safe) {
+      encoded += static_cast<char>(c);
+    } else {
+      encoded += '%';
+      encoded += digits[(c >> 4) & 0x0F];
+      encoded += digits[c & 0x0F];
+    }
+  }
+  return encoded;
+}
 
 bool ok(int code) { return code >= 200 && code < 300; }
 
@@ -46,6 +66,100 @@ void GatewayBrowse::begin(DeviceStore& store) {
   }
 }
 
+bool GatewayBrowse::refreshAgents() {
+  agentCount_ = 0; agentDetail_ = "";
+  String response;
+  const int code = request("GET", "/v1/device/runtimes", "", response);
+  JsonDocument doc;
+  if (!ok(code) || deserializeJson(doc, response)) { agentDetail_ = "Agents unavailable; retry"; touch(); return false; }
+  directAgentsSupported_ = doc["supported"] | false;
+  for (JsonObject row : doc["runtimes"].as<JsonArray>()) {
+    if (agentCount_ >= 12) break;
+    BrowseAgent& item = agents_[agentCount_++]; item = BrowseAgent();
+    item.runtimeId = String(row["runtimeId"] | ""); item.model = String(row["model"] | "");
+    item.row.id = item.runtimeId + ":" + item.model; item.row.title = String(row["label"] | "Agent");
+    item.row.status = "NEXT TURN";
+  }
+  agentDetail_ = !directAgentsSupported_ ? "T3 manages this environment" : (doc["truncated"] | false) ? "More agents in dashboard" : "Choose an agent and model";
+  touch(); return true;
+}
+
+bool GatewayBrowse::refreshNativeSessions(const String& runtimeId, const String& model) {
+  agentCount_ = 0;
+  String response;
+  const String path = "/v1/device/sessions?runtimeId=" + encodePathSegment(runtimeId);
+  const int code = request("GET", path.c_str(), "", response);
+  JsonDocument doc;
+  if (!ok(code) || deserializeJson(doc, response)) { agentDetail_ = "Session discovery unavailable"; touch(); return false; }
+  for (JsonObject row : doc["sessions"].as<JsonArray>()) {
+    if (agentCount_ >= 12) break;
+    BrowseAgent& item = agents_[agentCount_++]; item = BrowseAgent();
+    item.runtimeId = runtimeId; item.model = model; item.nativeSessionId = String(row["id"] | "");
+    item.resumable = String(row["attachment"] | "") == "resume";
+    item.row.id = item.nativeSessionId; item.row.title = String(row["title"] | "Saved session");
+    item.row.status = item.resumable ? "SAVED; STOP OTHER APP FIRST" : "VIEW ONLY";
+  }
+  agentDetail_ = (doc["truncated"] | false) || !doc["nextCursor"].isNull() ? "More sessions in dashboard" : agentCount_ ? "Stop other app before resume" : "No saved sessions";
+  touch(); return true;
+}
+
+bool GatewayBrowse::postAgentIntent(const String& intentJson, const String& threadId, String& resultThreadId) {
+  if (!store_) return false;
+  JsonDocument doc, intent;
+  if (deserializeJson(intent, intentJson)) return false;
+  doc["intent"] = intent.as<JsonObject>();
+  doc["expectedEnvironmentId"] = boundEnvironmentId_;
+  doc["expectedProjectId"] = boundProjectId_;
+  if (threadId.length()) doc["expectedThreadId"] = threadId;
+  else doc["expectedThreadId"] = nullptr;
+  String failure;
+  const String requestId = gateway_request::beginDurableDeviceRequest(store_, boundEnvironmentId_ + "\n" + threadId + "\n" + intentJson,
+    [this](const String& id) { return gateway_request::resolveDurableDeviceReceipt(id,
+      [this](const char* path, String& result) { return request("GET", path, "", result); }); }, failure);
+  if (!requestId.length()) { agentDetail_ = failure; return false; }
+  doc["clientRequestId"] = requestId;
+  doc["threadId"] = threadId.length() ? threadId : "native-import";
+  String body, response; serializeJson(doc, body);
+  const int code = request("POST", "/v1/device/intents", body, response);
+  gateway_request::settleDurableDeviceRequest(store_, requestId, code, response);
+  JsonDocument result;
+  if (!ok(code) || deserializeJson(result, response) || String(result["command"]["status"] | "") != "completed") {
+    agentDetail_ = String(result["command"]["status"] | "") == "approval_required" ? "Gateway approval in dashboard"
+      : code == 403 ? "Not allowed by device profile" : "Not confirmed; check status"; return false;
+  }
+  resultThreadId = String(result["command"]["result"]["threadId"] | "");
+  return resultThreadId.length() > 0;
+}
+
+bool GatewayBrowse::useAgent(size_t index, const String& threadId) {
+  const BrowseAgent* row = agent(index); if (!row || !threadId.length()) return false;
+  JsonDocument intent;
+  intent["type"] = "runtime_switch"; intent["runtimeId"] = row->runtimeId; intent["model"] = row->model;
+  String json, result; serializeJson(intent, json);
+  const bool applied = postAgentIntent(json, threadId, result);
+  if (applied) agentDetail_ = "Agent selected for next turn";
+  touch(); return applied;
+}
+
+bool GatewayBrowse::resumeNativeSession(size_t index, const String& threadId) {
+  const BrowseAgent* row = agent(index); if (!row || !row->resumable) return false;
+  JsonDocument intent;
+  intent["type"] = "runtime_import"; intent["runtimeId"] = row->runtimeId; intent["model"] = row->model;
+  intent["nativeSessionId"] = row->nativeSessionId; intent["projectId"] = boundProjectId_; intent["confirmResume"] = true;
+  String json, result; serializeJson(intent, json);
+  if (!postAgentIntent(json, threadId, result)) { touch(); return false; }
+  // Import and destination selection have separate receipts. A failed selection leaves the
+  // imported conversation discoverable and keeps the prior destination authoritative.
+  beginPreview(boundEnvironmentId_, boundProjectId_);
+  if (!refreshPreviewThreads()) return false;
+  for (size_t i = 0; i < previewThreadCount_; ++i) if (previewThreads_[i].id == result) {
+    const bool applied = commitPreviewThread(i);
+    if (applied) { created_ = BrowseThread(); created_.id = result; created_.title = previewThreads_[i].title; created_.selected = true; agentDetail_ = "Saved session selected"; }
+    touch(); return applied;
+  }
+  agentDetail_ = "Imported; select in dashboard"; touch(); return false;
+}
+
 int GatewayBrowse::request(const char* method, const char* path, const String& body,
                            String& response) {
   if (!store_) return -1;
@@ -56,36 +170,16 @@ int GatewayBrowse::request(const char* method, const char* path, const String& b
 
   const String url = base + path;
 
-  // All board routes share one bounded TLS allocation gate and yielding chunk reader.
-  // The gate outlives HTTP/socket destruction on every return path.
-  if (!gateway_tls::lockTls()) return -1;
+  // All board routes share one bounded TLS allocation gate and the one warm foreground session
+  // (GatewayWarm.h), so a browse read right after a gateway poll reuses its connection instead of
+  // closing it and paying a handshake of its own. The gate outlives HTTP/socket use on every path.
+  const uint32_t gateWaitStart = millis();
+  if (!gateway_tls::lockTlsKeepWarm()) return -1;
   struct TlsGuard { ~TlsGuard() { gateway_tls::unlockTls(); } } tlsGuard;
-  gateway_http::YieldingClient<WiFiClientSecure> secure;
-  gateway_http::YieldingClient<WiFiClient> plain;
-  HTTPClient http;
-  http.setTimeout(kTimeoutMs);
-  http.setConnectTimeout(kTimeoutMs);
-  if (!gateway_tls::beginHttp(http, plain, secure, url, "browse")) return -1;
-  http.addHeader("content-type", "application/json");
-  http.addHeader("x-device-id", settings.deviceId);
-  http.addHeader("x-device-secret", settings.deviceSecret);
-  int code = String(method) == "POST" ? http.POST(body) : http.GET();
-  if (code > 0) {
-    const int length = http.getSize();
-    if (length > (int)kMaxResponseBodyBytes) {
-      response = "response too large";
-      code = HTTPC_ERROR_STREAM_WRITE;
-    } else {
-      gateway_http::BoundedBody sink(response, kMaxResponseBodyBytes);
-      const int read = http.writeToStream(&sink);
-      if (read < 0 || sink.failed()) {
-        response = "gateway response incomplete";
-        code = read < 0 ? read : HTTPC_ERROR_STREAM_WRITE;
-      }
-    }
-  }
-  http.end();
-  return code;
+  long retryAfter = 1;   // browse does not back off on 429; the caller shows the remedy
+  return gateway_warm::exchange("browse", method, path, url, settings.deviceId, settings.deviceSecret,
+                                body, response, retryAfter, kTimeoutMs, kTimeoutMs,
+                                millis() - gateWaitStart);
 }
 
 const BrowseEnvironment* GatewayBrowse::environment(size_t index) const {
@@ -247,7 +341,7 @@ bool GatewayBrowse::selectEnvironment(size_t index) {
 // which is the answer a person can act on.
 String GatewayBrowse::environmentLabel() const {
   for (size_t i = 0; i < environmentCount_; i += 1) {
-    if (environments_[i].id == boundEnvironmentId_ && environments_[i].label.length() > 0) {
+    if (environments_[i].id == (previewActive_ ? previewEnvironmentId_ : boundEnvironmentId_) && environments_[i].label.length() > 0) {
       return environments_[i].label;
     }
   }
@@ -259,13 +353,18 @@ String GatewayBrowse::environmentLabel() const {
 // ---------------------------------------------------------------------------------------------
 
 bool GatewayBrowse::refreshProjects() {
-  projectCount_ = 0;
-  selectedProjectIndex_ = -1;
-  projectsTruncated_ = false;
+  if (!previewActive_) {
+    projectCount_ = 0;
+    selectedProjectIndex_ = -1;
+    projectsTruncated_ = false;
+  }
   projectsDetail_ = "";
 
   String response;
-  const int code = request("GET", "/v1/device/projects", "", response);
+  const String path = previewActive_
+    ? String("/v1/device/projects?environmentId=") + encodePathSegment(previewEnvironmentId_)
+    : String("/v1/device/projects");
+  const int code = request("GET", path.c_str(), "", response);
   if (!ok(code)) {
     projectsDetail_ = remedyFor(code);
     touch();
@@ -282,8 +381,20 @@ bool GatewayBrowse::refreshProjects() {
   // The projects route answers with the environment it resolved against, which is the authoritative
   // answer to "which host am I looking at" even when the environment list has never been fetched.
   const String env = String(doc["environmentId"] | "");
-  if (env.length() > 0) boundEnvironmentId_ = env;
-  boundProjectId_ = String(doc["projectId"] | "");
+  if (previewActive_ && (String(doc["destinationSelection"] | "") != "atomic-v1"
+      || env != previewEnvironmentId_ || !doc["projects"].is<JsonArray>())) {
+    previewContractReady_ = false;
+    projectsDetail_ = "Update gateway; destination unavailable";
+    touch();
+    return false;
+  }
+  projectCount_ = 0;
+  selectedProjectIndex_ = -1;
+  projectsTruncated_ = false;
+  if (!previewActive_) {
+    if (env.length() > 0) boundEnvironmentId_ = env;
+    boundProjectId_ = String(doc["projectId"] | "");
+  }
 
   JsonArray rows = doc["projects"].as<JsonArray>();
   for (JsonObject input : rows) {
@@ -348,7 +459,7 @@ bool GatewayBrowse::selectProject(size_t index) {
 
 String GatewayBrowse::projectLabel() const {
   for (size_t i = 0; i < projectCount_; i += 1) {
-    if (projects_[i].id == boundProjectId_ && projects_[i].title.length() > 0) {
+    if (projects_[i].id == (previewActive_ ? previewProjectId_ : boundProjectId_) && projects_[i].title.length() > 0) {
       return projects_[i].title;
     }
   }
@@ -407,16 +518,28 @@ bool GatewayBrowse::createThread(const String& title) {
   created_ = BrowseThread();
   createDetail_ = "";
   createStatus_ = 0;
+  if (previewActive_ && !previewContractReady_) {
+    createDetail_ = "Refresh destination before creating";
+    touch();
+    return false;
+  }
 
   JsonDocument bodyDoc;
-  if (boundEnvironmentId_.length()) bodyDoc["expectedEnvironmentId"] = boundEnvironmentId_;
-  else bodyDoc["expectedEnvironmentId"] = nullptr;
-  if (boundProjectId_.length()) bodyDoc["expectedProjectId"] = boundProjectId_;
-  else bodyDoc["expectedProjectId"] = nullptr;
+  if (!previewActive_) {
+    if (boundEnvironmentId_.length()) bodyDoc["expectedEnvironmentId"] = boundEnvironmentId_;
+    else bodyDoc["expectedEnvironmentId"] = nullptr;
+    if (boundProjectId_.length()) bodyDoc["expectedProjectId"] = boundProjectId_;
+    else bodyDoc["expectedProjectId"] = nullptr;
+  }
+  if (previewActive_) {
+    bodyDoc["destinationSelection"] = "atomic-v1";
+    bodyDoc["environmentId"] = previewEnvironmentId_;
+    bodyDoc["projectId"] = previewProjectId_;
+  }
   if (title.length() > 0) bodyDoc["title"] = title;
   String requestFailure;
   const String requestId = gateway_request::beginDurableDeviceRequest(
-    store_, String("thread-create\n") + boundEnvironmentId_ + "\n" + boundProjectId_ + "\n" + title,
+    store_, String("thread-create\n") + (previewActive_ ? previewEnvironmentId_ : boundEnvironmentId_) + "\n" + (previewActive_ ? previewProjectId_ : boundProjectId_) + "\n" + title,
     [this](const String& id) { return gateway_request::resolveDurableDeviceReceipt(id,
       [this](const char* path, String& result) { return request("GET", path, "", result); }); }, requestFailure
   );
@@ -454,6 +577,16 @@ bool GatewayBrowse::createThread(const String& title) {
     touch();
     return false;
   }
+  const String targetEnvironment = previewActive_ ? previewEnvironmentId_ : boundEnvironmentId_;
+  const String targetProject = previewActive_ ? previewProjectId_ : boundProjectId_;
+  if (String(doc["config"]["threadId"] | "") != created_.id
+      || String(doc["config"]["environmentId"] | "") != targetEnvironment
+      || String(doc["config"]["projectId"] | "") != targetProject) {
+    created_ = BrowseThread();
+    createDetail_ = "Created; refresh destination in console";
+    touch();
+    return false;
+  }
   gateway_request::settleDurableDeviceRequest(store_, requestId, code, response);
   created_.title = String(thread["title"] | "New thread");
   created_.status = String(thread["status"] | "idle");
@@ -468,6 +601,117 @@ bool GatewayBrowse::createThread(const String& title) {
   if (project.length() > 0) boundProjectId_ = project;
 
   Serial.printf("[browse] created thread %s\n", created_.id.c_str());
+  touch();
+  return true;
+}
+
+
+void GatewayBrowse::beginPreview(const String& environmentId, const String& projectId) {
+  previewActive_ = true;
+  previewContractReady_ = false;
+  // The caller supplies the currently confirmed binding, rather than an old boot-time cache.
+  boundEnvironmentId_ = environmentId;
+  boundProjectId_ = projectId;
+  previewEnvironmentId_ = environmentId;
+  previewProjectId_ = projectId;
+  previewThreadCount_ = 0;
+  previewDetail_ = "";
+}
+
+bool GatewayBrowse::previewEnvironment(size_t index) {
+  const BrowseEnvironment* row = environment(index);
+  if (!row) return false;
+  previewActive_ = true;
+  previewContractReady_ = false;
+  previewEnvironmentId_ = row->id;
+  previewProjectId_ = "";
+  previewThreadCount_ = 0;
+  projectCount_ = 0;
+  touch();
+  return true;
+}
+
+bool GatewayBrowse::previewProject(size_t index) {
+  const BrowseProject* row = project(index);
+  if (!row) return false;
+  previewContractReady_ = false;
+  previewProjectId_ = row->id;
+  previewThreadCount_ = 0;
+  touch();
+  return true;
+}
+
+bool GatewayBrowse::refreshPreviewThreads() {
+  // A list that was already held (seedPreviewThreads) stays committable across a revalidation that
+  // merely FAILED to reach the gateway: the contract it was proved under has not changed, the rows
+  // are still on screen, and the commit is validated server-side anyway. Closing the gate on a
+  // dropped packet would turn "check this behind the list" into "the list stops working". A reply
+  // that arrives and breaks the contract (old gateway, wrong destination) closes it below.
+  const bool wasReady = previewContractReady_;
+  previewContractReady_ = false;
+  String response;
+  const String path = String("/v1/device/threads?environmentId=")
+    + encodePathSegment(previewEnvironmentId_) + "&projectId=" + encodePathSegment(previewProjectId_);
+  const int code = request("GET", path.c_str(), "", response);
+  if (!ok(code)) { previewContractReady_ = wasReady; previewDetail_ = remedyFor(code); touch(); return false; }
+  JsonDocument doc;
+  if (deserializeJson(doc, response)) { previewContractReady_ = wasReady; previewDetail_ = "Bad thread JSON"; touch(); return false; }
+  if (String(doc["destinationSelection"] | "") != "atomic-v1"
+      || String(doc["environmentId"] | "") != previewEnvironmentId_
+      || String(doc["projectId"] | "") != previewProjectId_
+      || !doc["threads"].is<JsonArray>()) {
+    previewDetail_ = "Update gateway; destination unavailable";
+    touch();
+    return false;
+  }
+  previewContractReady_ = true;
+  previewThreadCount_ = 0;
+  previewDetail_ = "";
+  for (JsonObject input : doc["threads"].as<JsonArray>()) {
+    if (previewThreadCount_ >= kMaxThreadOptions) { previewDetail_ = "More in console"; break; }
+    const String id = String(input["id"] | "");
+    if (!id.length()) continue;
+    ThreadOption& row = previewThreads_[previewThreadCount_++];
+    row = ThreadOption();
+    row.id = id;
+    row.title = String(input["title"] | "Untitled thread");
+    row.status = String(input["status"] | "");
+    row.status.toUpperCase();
+    row.selected = input["selected"] | false;
+  }
+  if (!previewThreadCount_) previewDetail_ = "No threads; create one below";
+  touch();
+  return true;
+}
+
+bool GatewayBrowse::commitPreviewThread(size_t index) {
+  if (!previewActive_ || !previewContractReady_) {
+    previewDetail_ = "Refresh destination before selecting";
+    touch();
+    return false;
+  }
+  const ThreadOption* row = previewThread(index);
+  if (!row) return false;
+  JsonDocument doc;
+  doc["destinationSelection"] = "atomic-v1";
+  doc["environmentId"] = previewEnvironmentId_;
+  doc["projectId"] = previewProjectId_;
+  doc["threadId"] = row->id;
+  String body, response;
+  serializeJson(doc, body);
+  const int code = request("POST", "/v1/device/config/thread", body, response);
+  if (!ok(code)) { previewDetail_ = code <= 0 ? "Not confirmed; refresh then retry" : remedyFor(code); touch(); return false; }
+  // Do not adopt an unparseable success as a new local destination.
+  JsonDocument result;
+  if (deserializeJson(result, response)
+      || String(result["config"]["threadId"] | "") != row->id
+      || String(result["config"]["environmentId"] | "") != previewEnvironmentId_
+      || String(result["config"]["projectId"] | "") != previewProjectId_) {
+    previewDetail_ = "Not confirmed; refresh then retry"; touch(); return false;
+  }
+  boundEnvironmentId_ = previewEnvironmentId_;
+  boundProjectId_ = previewProjectId_;
+  previewDetail_ = "";
   touch();
   return true;
 }

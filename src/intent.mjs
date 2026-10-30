@@ -1,5 +1,6 @@
 import { HttpError, requireString } from "./http.mjs";
 import { normalizeMediaIntent, normalizeMediaUploadIds } from "./media.mjs";
+import { normalizeModelOptionSelections } from "./t3Harness.mjs";
 import {
   PROVIDER_APPROVAL_DECISIONS,
   normalizeProviderApprovalDecision,
@@ -11,6 +12,22 @@ export async function normalizeIntent(payload, context = {}) {
   switch (type) {
     case "status":
       return { type };
+    case "runtime_switch":
+    case "runtime_import": {
+      const runtimeId = requireString(payload.runtimeId, "runtimeId");
+      const model = requireString(payload.model, "model");
+      if (!/^[a-zA-Z0-9_.:-]{1,180}$/u.test(runtimeId) || model.length > 200) throw new HttpError(400, "Invalid agent selection.");
+      // Per-model switches the provider itself declared — reasoning effort, service tier, fast
+      // mode. Shape only here; the values are checked against the catalogue's own descriptors in
+      // validateModelSelection, which is the only thing that knows what this model allows.
+      const modelOptions = normalizeModelOptionSelections(payload.options);
+      if (type === "runtime_switch") return { type, runtimeId, model, ...(modelOptions ? { options: modelOptions } : {}) };
+      if (payload.confirmResume !== true) throw new HttpError(400, "Confirm the native session is idle before continuing it here.");
+      const nativeSessionId = requireString(payload.nativeSessionId, "nativeSessionId");
+      if (!/^[a-zA-Z0-9_.:-]{1,180}$/u.test(nativeSessionId)) throw new HttpError(400, "Invalid native session id.");
+      return { type, runtimeId, model, ...(modelOptions ? { options: modelOptions } : {}),
+        nativeSessionId, projectId: requireString(payload.projectId, "projectId"), confirmResume: true };
+    }
     case "agent_prompt":
       return {
         type,

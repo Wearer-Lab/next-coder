@@ -1,0 +1,40 @@
+{
+  "baselineCommit": "359bfdd",
+  "historical": true,
+  "voicePolicyApproval": {
+    "milestone": "review",
+    "done": true,
+    "scope": "Actual deviceJobStatus projection; fixed Review wording checked separately in GatewayVoice.cpp."
+  },
+  "verifiedAt": "2026-10-23T07:54:04.013Z",
+  "method": "Native extracted firmware code with boundary stubs; real gateway projection with synthetic text. No physical reproduction.",
+  "source": {
+    "firmware/Hosyond-ESP32-S3-2.8-Touchscreen/src/ui.cpp": "2cd0342487f8e7463d72c9cb3cdffe03cd1cc3188edadca6f5c939ead605fa9a",
+    "firmware/Hosyond-ESP32-S3-2.8-Touchscreen/src/ui_paint.cpp": "84be367dfbaac6a59f00a29f1795b8acca7d262c6beb84e1fa670800537de86e"
+  },
+  "hiddenMicrophone": {
+    "journeyActive": true,
+    "networkWorkerIdle": true,
+    "pressInMicRect": true,
+    "startRecordingCalls": 1,
+    "scope": "Actual Press branch; display/gateway/hit-test boundaries stubbed. startRecording reset consequence established separately by source."
+  },
+  "replyTextLoss": {
+    "gatewayPageCount": 1,
+    "gatewayTruncated": false,
+    "gatewayLines": [
+      "aaaaaaaaa bbbbbbbbbb ccccccccc",
+      "aaaaaaaaa bbbbbbbbbb ccccccccc",
+      "aaaaaaaaa bbbbbbbbbb ccccccccc"
+    ],
+    "requiredDeviceLines": 7,
+    "displayedDeviceLines": 6,
+    "inaccessibleTrailingLines": 1
+  },
+  "longReply": {
+    "gatewayPageCount": 12,
+    "gatewayTruncated": true,
+    "firmwareStoresTruncatedFlag": false,
+    "scope": "Flag omission verified by ThreadResponse and decode source inspection, not native decode execution."
+  }
+}

@@ -3,6 +3,7 @@
 #include <esp_heap_caps.h>
 
 #include <OrbPainter.h>
+#include <UiProfile.h>
 
 #ifndef DISPLAY_FRAME_PROBE
 #define DISPLAY_FRAME_PROBE 0
@@ -152,8 +153,40 @@ uint8_t* miniGrey = nullptr;
 int16_t miniDim = 0;
 
 InternalCanvas16* labelCanvas = nullptr;
+bool composingBands = false;
 
 constexpr int16_t kLabelH = 22;
+
+// BEGIN ABSOLUTE SCENE PROXY: fixed state, no separate framebuffer or allocation.
+bool sceneActive = false;
+int16_t sceneBandTop = 0, sceneBandBottom = 0;
+class SceneGfx : public Adafruit_GFX {
+ public:
+  SceneGfx() : Adafruit_GFX(240, 320) {}
+  void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+    if (sceneActive && x >= 0 && x < 240 && y >= sceneBandTop && y < sceneBandBottom)
+      labelCanvas->getBuffer()[static_cast<size_t>(y-sceneBandTop)*240+x] = color;
+  }
+  void writePixel(int16_t x, int16_t y, uint16_t color) override { drawPixel(x,y,color); }
+  void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) override {
+    if (!sceneActive || w<=0 || h<=0) return;
+    const int32_t left=x<0?0:x, top=y<sceneBandTop?sceneBandTop:y;
+    const int32_t right=static_cast<int32_t>(x)+w>240?240:static_cast<int32_t>(x)+w;
+    const int32_t bottom=static_cast<int32_t>(y)+h>sceneBandBottom?sceneBandBottom:static_cast<int32_t>(y)+h;
+    if(right<=left || bottom<=top)return;
+    for(int32_t row=top;row<bottom;++row){
+      uint16_t* dst=labelCanvas->getBuffer()+static_cast<size_t>(row-sceneBandTop)*240+left;
+      for(int32_t col=left;col<right;++col)*dst++=color;
+    }
+  }
+  void writeFillRect(int16_t x,int16_t y,int16_t w,int16_t h,uint16_t c) override {fillRect(x,y,w,h,c);}
+  void drawFastHLine(int16_t x,int16_t y,int16_t w,uint16_t c) override {fillRect(x,y,w,1,c);}
+  void drawFastVLine(int16_t x,int16_t y,int16_t h,uint16_t c) override {fillRect(x,y,1,h,c);}
+  void writeFastHLine(int16_t x,int16_t y,int16_t w,uint16_t c) override {fillRect(x,y,w,1,c);}
+  void writeFastVLine(int16_t x,int16_t y,int16_t h,uint16_t c) override {fillRect(x,y,1,h,c);}
+};
+SceneGfx sceneGfx;
+// END ABSOLUTE SCENE PROXY
 
 // One row of pixels in internal, DMA-capable RAM.
 //
@@ -168,6 +201,28 @@ constexpr int16_t kLabelH = 22;
 // all of Adafruit_GFX's drawing primitives.
 uint16_t* dmaRow = nullptr;
 
+// Raster kernels clip to the active band BEFORE computing distance fields; replay therefore
+// evaluates each visible pixel once rather than repeating a full shape twelve times.
+void clipSceneBand(int16_t& top,int16_t& bottom) {
+  if(!sceneActive)return;
+  if(top<sceneBandTop)top=sceneBandTop;
+  if(bottom>sceneBandBottom)bottom=sceneBandBottom;
+}
+void beginRaster(int16_t x,int16_t y,int16_t width,int16_t rows) {
+  if(sceneActive)return;
+  auto& panel=displayPanel();panel.startWrite();panel.setAddrWindow(x,y,width,rows);
+}
+void publishRasterRow(int16_t x,int16_t y,int16_t width) {
+  if(sceneActive) {
+    if(y>=sceneBandTop && y<sceneBandBottom) {
+      const int16_t from=x<0?static_cast<int16_t>(-x):0;
+      const int16_t to=x+width>240?static_cast<int16_t>(240-x):width;
+      if(to>from)memcpy(labelCanvas->getBuffer()+static_cast<size_t>(y-sceneBandTop)*240+x+from,dmaRow+from,static_cast<size_t>(to-from)*2);
+    }
+  } else displayPanel().writePixels(dmaRow,width);
+}
+void endRaster() {if(!sceneActive)displayPanel().endWrite();}
+
 // Copies `len` pixels from a possibly-PSRAM source into the staging row and pushes them.
 void pushRow(Adafruit_ILI9341& g, const uint16_t* src, int16_t len) {
   if (!dmaRow) return;
@@ -176,6 +231,14 @@ void pushRow(Adafruit_ILI9341& g, const uint16_t* src, int16_t len) {
 }
 
 }  // namespace
+
+Adafruit_GFX& displayRenderGfx() { return sceneActive ? static_cast<Adafruit_GFX&>(sceneGfx) : static_cast<Adafruit_GFX&>(displayPanel()); }
+bool displaySceneActive() { return sceneActive; }
+bool displayRenderIntersects(int16_t x,int16_t y,int32_t width,int32_t height) {
+  if(width<=0 || height<=0)return false;
+  return !sceneActive || (x<240 && static_cast<int32_t>(x)+width>0
+    && y<sceneBandBottom && static_cast<int32_t>(y)+height>sceneBandTop);
+}
 
 bool displayBeginCanvases(uint16_t orbSize, uint16_t miniSize) {
   const uint32_t heapBefore = ESP.getFreeHeap();
@@ -221,6 +284,53 @@ bool displayBeginCanvases(uint16_t orbSize, uint16_t miniSize) {
 
 namespace {
 
+// How many disc rows share one address window. 4 is the middle of the trade: it removes three
+// quarters of the per-row command transfers for ~4% extra (zero-coverage) pixels. 1 reproduces the
+// original one-window-per-row output exactly.
+#ifndef ORB_BLIT_ROWS_PER_WINDOW
+#define ORB_BLIT_ROWS_PER_WINDOW 4
+#endif
+
+// panelGrey() as a table: the conversion ran per pixel, ~9 850 times a frame, and a 512-byte lookup
+// is two loads where the arithmetic is a dozen ALU operations. Built from panelGrey() itself, so a
+// panel with different polarity changes one function, not two.
+uint16_t greyLut[256];
+bool greyLutReady = false;
+
+// Write only as much of the disc as the orb's ink can reach. 1 (default) clips; 0 writes the whole
+// inscribed disc every frame, as before.
+#ifndef ORB_BLIT_REACH_CLIP
+#define ORB_BLIT_REACH_CLIP 1
+#endif
+
+// What the last blit of each coverage buffer left on the panel, so the next one knows how far to
+// erase. Keyed by buffer (there are two: the big orb's and the mini orb's) and by where and how big
+// it was drawn; any mismatch means "unknown", and unknown means the whole disc.
+struct ReachMemo {
+  const uint8_t* grey = nullptr;
+  int16_t cx = 0, cy = 0, drawDim = 0;
+  int16_t reachPx = 0;     // the ink radius this buffer's last frame occupied
+};
+ReachMemo reachMemo[2];
+
+// The [blit-split] measurement: cycle counts around the three stages of the blit, summed over a
+// 2 s window. Present only under HOSYOND_UI_PROFILE (UiProfile.h) -- the accounting, not just the
+// printf, because a release frame would otherwise read the cycle counter around every address
+// window and every row, and update a handful of accumulators, for a line nobody is listening to.
+// BLIT_PROBE(...) is the whole mechanism: its argument is a statement that exists in a profiled
+// build and vanishes otherwise, so the blit below reads as the blit with the probes marked, not as
+// two functions.
+#if HOSYOND_UI_PROFILE
+struct BlitProbe {
+  uint32_t frames = 0, windows = 0, pixels = 0, windowStartMs = 0, discRadiusSum = 0;
+  uint32_t convertCyc = 0, windowCyc = 0, pushCyc = 0, totalCyc = 0;
+};
+BlitProbe blitProbe;
+#define BLIT_PROBE(...) __VA_ARGS__
+#else
+#define BLIT_PROBE(...)
+#endif
+
 void blitOrb(ThinkingOrb& orb, int16_t cx, int16_t cy, uint32_t elapsedMs, uint8_t* grey,
              int16_t dim, int16_t drawDim) {
   if (!displayReady() || !grey || !dmaRow) return;
@@ -251,30 +361,186 @@ void blitOrb(ThinkingOrb& orb, int16_t cx, int16_t cy, uint32_t elapsedMs, uint8
   // the widest mode projects to roughly 0.9 of it — so this cuts through pixels that are already
   // zero, and feathering an edge the drawing never touches would only cost time.
   const float r = (float)half;
-  const float r2 = r * r;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  for (int16_t row = 0; row < drawDim; ++row) {
+  // THE DISC IS ONLY AS BIG AS THE INK.
+  //
+  // The inscribed disc is 56 px in radius; the ink never leaves ~47 (kOrbInkR in ui.cpp, measured
+  // from the geometry, not assumed). Everything between is zero coverage, rewritten as zero every
+  // frame over a ground that is already zero. That is 30% of the pixels, and since pushing pixels
+  // is the single biggest term of the blit (4.1 ms against 2.0 ms of wire time, the difference
+  // being fixed overhead on every 64-byte FIFO chunk), 30% fewer pixels is 30% fewer chunks too.
+  //
+  // So the disc is shrunk to this frame's actual reach plus the previous frame's, and a margin:
+  //   * THIS frame's reach is the farthest dot centre plus the biggest dot radius plus the
+  //     anti-aliasing half pixel (lines: a pixel). It is an upper bound, not the exact extent;
+  //     over-covering by a pixel costs nothing, under-covering clips ink.
+  //   * The PREVIOUS frame's reach is included because pixels it inked and this frame does not must
+  //     be erased, or a shrinking orb leaves a ghost ring behind it.
+  //   * A buffer drawn somewhere else, at another size, or for the first time has no memory, and
+  //     gets the whole disc: unknown means rewrite everything, which is what it always did.
+  // The ring that is no longer written is whatever the page already had there, which is the ground.
+  float rad = r;
+#if ORB_BLIT_REACH_CLIP
+  if (!sceneActive) {
+    int32_t farthest2 = 0;
+    int32_t extra16 = 0;
+    for (uint16_t i = 0; i < frame.count; ++i) {
+      const OrbDot& d = frame.dots[i];
+      const int32_t q = static_cast<int32_t>(d.x16) * d.x16 + static_cast<int32_t>(d.y16) * d.y16;
+      if (q > farthest2) farthest2 = q;
+      if (d.r16 > extra16) extra16 = d.r16;
+    }
+    extra16 += 8;                       // a dot's coverage reaches r + 0.5 px
+    for (uint16_t i = 0; i < frame.lineCount; ++i) {
+      const OrbLine& L = frame.lines[i];
+      const int32_t qa = static_cast<int32_t>(L.x16a) * L.x16a + static_cast<int32_t>(L.y16a) * L.y16a;
+      const int32_t qb = static_cast<int32_t>(L.x16b) * L.x16b + static_cast<int32_t>(L.y16b) * L.y16b;
+      if (qa > farthest2) farthest2 = qa;
+      if (qb > farthest2) farthest2 = qb;
+      if (extra16 < 16) extra16 = 16;   // a stroke reaches one pixel either side of its centre line
+    }
+    const int32_t reach16 = static_cast<int32_t>(ceilf(sqrtf(static_cast<float>(farthest2)))) + extra16;
+    const int16_t curReach = static_cast<int16_t>((reach16 + 15) / 16 + 1);
+
+    ReachMemo* memo = nullptr;
+    for (ReachMemo& m : reachMemo) if (m.grey == grey) memo = &m;
+    if (!memo) memo = reachMemo[0].grey ? &reachMemo[1] : &reachMemo[0];
+    const bool known = memo->grey == grey && memo->cx == cx && memo->cy == cy && memo->drawDim == drawDim;
+    // +3: the span walk below truncates its half-width to whole pixels, which can take up to a pixel
+    // and a half off the nominal radius.
+    int16_t cover = known ? (memo->reachPx > curReach ? memo->reachPx : curReach) : half;
+    cover = static_cast<int16_t>(cover + 3);
+    if (cover < half) rad = static_cast<float>(cover);
+    memo->grey = grey; memo->cx = cx; memo->cy = cy; memo->drawDim = drawDim; memo->reachPx = curReach;
+  }
+#endif
+  const float rad2 = rad * rad;
+
+  // The disc's span on one row, as it has always been computed, from the disc's radius `rad`
+  // around the buffer's centre. False for a row with none.
+  const auto spanOf = [&](int16_t row, int16_t& from, int16_t& to) -> bool {
     const float dy = (row - r) + 0.5f;
-    const float inside = r2 - dy * dy;
-    if (inside <= 0.0f) continue;
+    const float inside = rad2 - dy * dy;
+    if (inside <= 0.0f) return false;
     const int16_t reach = (int16_t)sqrtf(inside);
-    int16_t from = (int16_t)(half - reach);
-    int16_t to = (int16_t)(half + reach);
+    from = (int16_t)(half - reach);
+    to = (int16_t)(half + reach);
     if (from < 0) from = 0;
     if (to > drawDim) to = drawDim;
-    const int16_t span = (int16_t)(to - from);
-    if (span <= 0) continue;
+    return to - from > 0;
+  };
 
-    // The drawn disc is centred in the coverage buffer, so the source walks the buffer's own
-    // stride from the offset the smaller disc starts at — not from the buffer's origin.
-    const uint8_t* src = grey + (size_t)(mid - half + row) * dim + (mid - half + from);
-    for (int16_t col = 0; col < span; ++col) dmaRow[col] = panelGrey(src[col]);
-    g.setAddrWindow((int16_t)(cx - half + from), (int16_t)(cy - half + row), span, 1);
-    g.writePixels(dmaRow, span);
+  if (!greyLutReady) {
+    for (int i = 0; i < 256; ++i) greyLut[i] = panelGrey(static_cast<uint8_t>(i));
+    greyLutReady = true;
+  }
+
+  Adafruit_ILI9341& g = displayPanel();
+
+  if (sceneActive) {
+    // Scene replay copies each row into the band canvas; there is no SPI to batch, so it keeps the
+    // original row-at-a-time walk.
+    for (int16_t row = 0; row < drawDim; ++row) {
+      const int16_t absoluteY = static_cast<int16_t>(cy - half + row);
+      if (absoluteY < sceneBandTop || absoluteY >= sceneBandBottom) continue;
+      int16_t from, to;
+      if (!spanOf(row, from, to)) continue;
+      const int16_t span = (int16_t)(to - from);
+      const uint8_t* src = grey + (size_t)(mid - half + row) * dim + (mid - half + from);
+      for (int16_t col = 0; col < span; ++col) dmaRow[col] = greyLut[src[col]];
+      publishRasterRow(static_cast<int16_t>(cx - half + from), absoluteY, span);
+    }
+    return;
+  }
+
+  // ONE ADDRESS WINDOW PER GROUP OF ROWS, NOT PER ROW.
+  //
+  // What the old loop cost, from the SDK source rather than a guess. Every setAddrWindow() is up to
+  // seven separate SPI transfers (CASET command, two 16-bit words, PASET command, two words, RAMWR
+  // command), and on the ESP32-S3 each transfer in esp32-hal-spi.c is: load the FIFO, `cmd.update`
+  // and wait for the register sync, `cmd.usr` and wait for the state machine. The wire time of one
+  // byte at 80 MHz is 0.1 us; the start/sync latency around it is several microseconds. A 112 px
+  // disc paid that 112 times a frame, and every 64-byte FIFO chunk of pixel data pays it again. Of
+  // the measured 7.83 ms "blit&other", the pixel wire time is only ~2.0 ms (9 852 px x 16 bit /
+  // 80 MHz); the rest is that fixed per-transfer latency plus the grey conversion. [blit-split]
+  // below reports the three separately so the split is measured, not inferred.
+  //
+  // Rows are grouped so one RAMWR streams several rows: the window is the hull of the group's
+  // spans, and the controller wraps to the next row at the window's right edge by itself. A disc's
+  // spans differ most near its top and bottom, so the hull writes a few extra pixels there — about
+  // B x 2r in all, ~4% of the disc at B = 4 — and those pixels are the coverage buffer's own
+  // values, which are zero: the geometry never reaches the inscribed circle. They land on the
+  // ground the disc already sits on; the original square-box bug was 21% of the box in the CORNERS,
+  // not a hair of rim. Set ORB_BLIT_ROWS_PER_WINDOW to 1 to get the old one-window-per-row output.
+  BLIT_PROBE(BlitProbe& probe = blitProbe;)
+  BLIT_PROBE(const uint32_t cycStart = ESP.getCycleCount();)
+  BLIT_PROBE(uint32_t convertCyc = 0, windowCyc = 0, pushCyc = 0, pixels = 0, windows = 0;)
+
+  g.startWrite();
+  int16_t row = 0;
+  while (row < drawDim) {
+    int16_t from = 0, to = 0;
+    if (!spanOf(row, from, to)) { ++row; continue; }
+    int16_t hullFrom = from, hullTo = to;
+    int16_t n = 1;
+    while (n < ORB_BLIT_ROWS_PER_WINDOW && row + n < drawDim) {
+      int16_t f2, t2;
+      if (!spanOf(static_cast<int16_t>(row + n), f2, t2)) break;
+      if (f2 < hullFrom) hullFrom = f2;
+      if (t2 > hullTo) hullTo = t2;
+      ++n;
+    }
+    const int16_t w = static_cast<int16_t>(hullTo - hullFrom);
+    if (w > 240) { row = static_cast<int16_t>(row + n); continue; }   // cannot happen: staging row is 240
+
+    BLIT_PROBE(const uint32_t c0 = ESP.getCycleCount();)
+    g.setAddrWindow(static_cast<int16_t>(cx - half + hullFrom), static_cast<int16_t>(cy - half + row), w, n);
+    BLIT_PROBE(windowCyc += ESP.getCycleCount() - c0;)
+    BLIT_PROBE(++windows;)
+
+    for (int16_t i = 0; i < n; ++i) {
+      const uint8_t* src = grey + (size_t)(mid - half + row + i) * dim + (mid - half + hullFrom);
+      BLIT_PROBE(const uint32_t c1 = ESP.getCycleCount();)
+      for (int16_t col = 0; col < w; ++col) dmaRow[col] = greyLut[src[col]];
+      BLIT_PROBE(const uint32_t c2 = ESP.getCycleCount();)
+      g.writePixels(dmaRow, w);
+      BLIT_PROBE(const uint32_t c3 = ESP.getCycleCount();)
+      BLIT_PROBE(convertCyc += c2 - c1;)
+      BLIT_PROBE(pushCyc += c3 - c2;)
+      BLIT_PROBE(pixels += static_cast<uint32_t>(w);)
+    }
+    row = static_cast<int16_t>(row + n);
   }
   g.endWrite();
+
+#if HOSYOND_UI_PROFILE
+  // MEASUREMENT (HOSYOND_UI_PROFILE only): bounded, one line per 2 s window.
+  const uint32_t cycTotal = ESP.getCycleCount() - cycStart;
+  ++probe.frames;
+  probe.windows += windows;
+  probe.pixels += pixels;
+  probe.convertCyc += convertCyc;
+  probe.windowCyc += windowCyc;
+  probe.pushCyc += pushCyc;
+  probe.totalCyc += cycTotal;
+  probe.discRadiusSum += static_cast<uint32_t>(rad);
+  const uint32_t nowMs = millis();
+  if (probe.windowStartMs == 0) probe.windowStartMs = nowMs;
+  if (nowMs - probe.windowStartMs >= 2000 && probe.frames) {
+    const double perMs = static_cast<double>(getCpuFrequencyMhz()) * 1000.0 * probe.frames;
+    const double convert = probe.convertCyc / perMs, window = probe.windowCyc / perMs;
+    const double push = probe.pushCyc / perMs, total = probe.totalCyc / perMs;
+    Serial.printf("[blit-split] rows_per_window=%d reach_clip=%d disc_r=%.1f frames=%u windows/frame=%.1f px/frame=%.0f | blit_ms=%.2f = convert %.2f + window %.2f + push %.2f + other %.2f  (wire time at %lu MHz would be %.2f)\n",
+      static_cast<int>(ORB_BLIT_ROWS_PER_WINDOW), static_cast<int>(ORB_BLIT_REACH_CLIP),
+      static_cast<double>(probe.discRadiusSum) / probe.frames, static_cast<unsigned>(probe.frames),
+      static_cast<double>(probe.windows) / probe.frames, static_cast<double>(probe.pixels) / probe.frames,
+      total, convert, window, push, total - convert - window - push,
+      static_cast<unsigned long>(panelFreq / 1000000UL),
+      static_cast<double>(probe.pixels) / probe.frames * 16.0 / static_cast<double>(panelFreq) * 1000.0);
+    probe = BlitProbe{};
+    probe.windowStartMs = nowMs;
+  }
+#endif  // HOSYOND_UI_PROFILE
 }
 
 }  // namespace
@@ -292,7 +558,62 @@ void displayClearStatus(int16_t cy) {
   if (!displayReady()) return;
   // Full width, because only the caller knows the label changed and the incoming word may be
   // narrower than the outgoing one.
-  displayPanel().fillRect(0, cy - 4, 240, kLabelH, panelGrey(0));
+  displayRenderGfx().fillRect(0, cy - 4, 240, kLabelH, panelGrey(0));
+}
+
+bool displayComposeBands(int16_t y, int16_t height, uint16_t background,
+                         DisplayBandPainter painter, void* context) {
+  if (!displayReady() || !labelCanvas || !labelCanvas->getBuffer() || !dmaRow
+      || !painter || height <= 0 || composingBands) return false;
+  const int32_t first = y < 0 ? 0 : y;
+  const int32_t requestedEnd = static_cast<int32_t>(y) + height;
+  const int32_t end = requestedEnd > 320 ? 320 : requestedEnd;
+  if (first >= end || first >= 320) return false;
+  composingBands = true;
+  struct ComposeGuard { ~ComposeGuard() { composingBands = false; } } guard;
+  for (int32_t top = first; top < end; top += kLabelH) {
+    const int16_t rows = static_cast<int16_t>(end - top < kLabelH ? end - top : kLabelH);
+    labelCanvas->setRotation(0);
+    labelCanvas->setFont(nullptr);
+    labelCanvas->setTextWrap(false);
+    labelCanvas->setTextSize(1);
+    labelCanvas->setCursor(0, 0);
+    labelCanvas->setTextColor(background);
+    labelCanvas->fillScreen(background);
+    painter(*labelCanvas, static_cast<int16_t>(top), context);
+    // Publish only after background, every key face, and every glyph in this band is complete.
+    // The source and staging row both remain internal RAM, preserving the proven DMA path.
+    Adafruit_ILI9341& panel = displayPanel();
+    panel.startWrite();
+    panel.setAddrWindow(0, static_cast<int16_t>(top), 240, rows);
+    const uint16_t* pixels = labelCanvas->getBuffer();
+    for (int16_t row = 0; row < rows; ++row) pushRow(panel, pixels + static_cast<size_t>(row) * 240, 240);
+    panel.endWrite();
+  }
+  labelCanvas->setRotation(0);
+  labelCanvas->setFont(nullptr);
+  labelCanvas->setTextWrap(true);
+  return true;
+}
+
+namespace {
+struct SceneCall { DisplayScenePainter painter;void* context;int16_t end; };
+void replaySceneBand(Adafruit_GFX&,int16_t top,void* raw) {
+  const auto& call=*static_cast<SceneCall*>(raw);
+  sceneBandTop=top;sceneBandBottom=static_cast<int16_t>(top+kLabelH<call.end?top+kLabelH:call.end);
+  sceneActive=true;
+  struct SceneGuard {~SceneGuard(){sceneActive=false;}} guard;
+  sceneGfx.setRotation(0);sceneGfx.setFont(nullptr);sceneGfx.setTextWrap(false);
+  sceneGfx.setTextSize(1);sceneGfx.setCursor(0,0);
+  call.painter(call.context);
+}
+}
+bool displayComposeScene(int16_t y,int16_t height,uint16_t background,
+                         DisplayScenePainter painter,void* context) {
+  if(!painter || height<=0 || composingBands || sceneActive)return false;
+  const int32_t end=static_cast<int32_t>(y)+height;
+  SceneCall call{painter,context,static_cast<int16_t>(end>320?320:end)};
+  return displayComposeBands(y,height,background,replaySceneBand,&call);
 }
 
 void displayDrawStatus(const char* label, int16_t cy, uint32_t elapsedMs) {
@@ -319,6 +640,18 @@ void displayDrawStatus(const char* label, int16_t cy, uint32_t elapsedMs) {
   const int16_t stripX = (int16_t)(x0 - 4 < 0 ? 0 : x0 - 4);
   const int16_t stripW = (int16_t)(textW + 8 > 240 ? 240 : textW + 8);
 
+  if(sceneActive) {
+    if(!displayRenderIntersects(stripX,cy-4,stripW,kLabelH))return;
+    sceneGfx.fillRect(stripX,cy-4,stripW,kLabelH,panelGrey(0));
+    sceneGfx.setTextWrap(false);sceneGfx.setTextSize(2);
+    for(size_t i=0;i<len;++i){
+      const float d=fabsf(static_cast<float>(i)-head);
+      const float lift=d>2.6f?0.0f:1.0f-d/2.6f;
+      sceneGfx.setTextColor(panelGrey(static_cast<uint8_t>(150+lift*85)));
+      sceneGfx.setCursor(x0+static_cast<int16_t>(i*charW),cy);sceneGfx.write(label[i]);
+    }
+    return;
+  }
   labelCanvas->fillScreen(panelGrey(0));
   labelCanvas->setTextSize(2);
   for (size_t i = 0; i < len; ++i) {
@@ -437,6 +770,7 @@ void displaySoftRoundRectBand(int16_t x, int16_t y, int16_t w, int16_t h, float 
   if (y0 < 0) y0 = 0;
   if (x1 > kPanelW) x1 = kPanelW;
   if (y1 > kPanelH) y1 = kPanelH;
+  clipSceneBand(y0,y1);
   if (x1 <= x0 || y1 <= y0) return;
   const int16_t vw = (int16_t)(x1 - x0);
 
@@ -457,9 +791,7 @@ void displaySoftRoundRectBand(int16_t x, int16_t y, int16_t w, int16_t h, float 
   const bool wantStroke = strokeGrey >= 0 && strokeWidth > 0.0f;
   const float stroke = wantStroke ? (float)strokeGrey : base;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  beginRaster(x0,y0,vw,static_cast<int16_t>(y1-y0));
   for (int16_t py = y0; py < y1; ++py) {
     const float fy = (py + 0.5f) - cy;
     for (int16_t col = 0; col < vw; ++col) {
@@ -470,9 +802,9 @@ void displaySoftRoundRectBand(int16_t x, int16_t y, int16_t w, int16_t h, float 
       if (wantStroke) v = over(v, stroke, clamp01((halfStroke - fabsf(d)) / f + 0.5f));
       dmaRow[col] = panelGrey((uint8_t)(v + 0.5f));
     }
-    g.writePixels(dmaRow, vw);
+    publishRasterRow(x0,py,vw);
   }
-  g.endWrite();
+  endRaster();
 }
 
 void displaySoftRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, float radius,
@@ -506,6 +838,7 @@ void displaySoftRoundRectRgb(int16_t x, int16_t y, int16_t w, int16_t h, float r
   if (y0 < 0) y0 = 0;
   if (x1 > kPanelW) x1 = kPanelW;
   if (y1 > kPanelH) y1 = kPanelH;
+  clipSceneBand(y0,y1);
   if (x1 <= x0 || y1 <= y0) return;
   const int16_t vw = (int16_t)(x1 - x0);
 
@@ -523,9 +856,7 @@ void displaySoftRoundRectRgb(int16_t x, int16_t y, int16_t w, int16_t h, float r
   const bool wantFill = fillRgb >= 0;
   const bool wantStroke = strokeRgb >= 0 && strokeWidth > 0.0f;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  beginRaster(x0,y0,vw,static_cast<int16_t>(y1-y0));
   for (int16_t py = y0; py < y1; ++py) {
     const float fy = (py + 0.5f) - cy;
     for (int16_t col = 0; col < vw; ++col) {
@@ -536,9 +867,9 @@ void displaySoftRoundRectRgb(int16_t x, int16_t y, int16_t w, int16_t h, float r
       if (wantStroke) v = blendRgb(v, (uint16_t)strokeRgb, clamp01((halfStroke - fabsf(d)) / f + 0.5f));
       dmaRow[col] = panelRgb(v);
     }
-    g.writePixels(dmaRow, vw);
+    publishRasterRow(x0,py,vw);
   }
-  g.endWrite();
+  endRaster();
 }
 
 void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickness,
@@ -554,6 +885,7 @@ void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickn
   if (y0 < 0) y0 = 0;
   if (x1 > kPanelW) x1 = kPanelW;
   if (y1 > kPanelH) y1 = kPanelH;
+  clipSceneBand(y0,y1);
   if (x1 <= x0 || y1 <= y0) return;
   const int16_t vw = (int16_t)(x1 - x0);
 
@@ -565,9 +897,7 @@ void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickn
   const float base = (float)bgGrey;
   const float ink = (float)inkGrey;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  beginRaster(x0,y0,vw,static_cast<int16_t>(y1-y0));
   for (int16_t py = y0; py < y1; ++py) {
     const float fy = py + 0.5f;
     for (int16_t col = 0; col < vw; ++col) {
@@ -579,9 +909,9 @@ void displaySoftSegment(float x0f, float y0f, float x1f, float y1f, float thickn
       const float d = sqrtf(dx * dx + dy * dy) - half;
       dmaRow[col] = panelGrey((uint8_t)(over(base, ink, clamp01(0.5f - d / f)) + 0.5f));
     }
-    g.writePixels(dmaRow, vw);
+    publishRasterRow(x0,py,vw);
   }
-  g.endWrite();
+  endRaster();
 }
 
 void displaySoftArcDivider(int16_t x, int16_t y, int16_t w, float sag, float thickness,
@@ -599,6 +929,7 @@ void displaySoftArcDivider(int16_t x, int16_t y, int16_t w, float sag, float thi
   if (y0 < 0) y0 = 0;
   if (x1 > kPanelW) x1 = kPanelW;
   if (y1 > kPanelH) y1 = kPanelH;
+  clipSceneBand(y0,y1);
   if (x1 <= x0 || y1 <= y0) return;
   const int16_t vw = (int16_t)(x1 - x0);
 
@@ -610,9 +941,7 @@ void displaySoftArcDivider(int16_t x, int16_t y, int16_t w, float sag, float thi
   // one that dissolves before it gets there is a curve that knows where it stops.
   constexpr float kFade = 0.22f;
 
-  Adafruit_ILI9341& g = displayPanel();
-  g.startWrite();
-  g.setAddrWindow(x0, y0, vw, (int16_t)(y1 - y0));
+  beginRaster(x0,y0,vw,static_cast<int16_t>(y1-y0));
   for (int16_t py = y0; py < y1; ++py) {
     const float fy = py + 0.5f;
     for (int16_t col = 0; col < vw; ++col) {
@@ -625,9 +954,9 @@ void displaySoftArcDivider(int16_t x, int16_t y, int16_t w, float sag, float thi
       const float cov = clamp01(half - fabsf(fy - curve) + 0.5f) * edge;
       dmaRow[col] = panelGrey((uint8_t)(over(base, ink, cov) + 0.5f));
     }
-    g.writePixels(dmaRow, vw);
+    publishRasterRow(x0,py,vw);
   }
-  g.endWrite();
+  endRaster();
 }
 
 void displaySoftPanel(int16_t x, int16_t y, int16_t w, int16_t h, float radius, uint8_t bgGrey,
@@ -650,7 +979,7 @@ void displaySoftPanel(int16_t x, int16_t y, int16_t w, int16_t h, float radius, 
                              y, (int16_t)(y + topCap));
   }
   if (middle > 0) {
-    displayPanel().fillRect(x < 0 ? 0 : x, (int16_t)(y + topCap),
+    displayRenderGfx().fillRect(x < 0 ? 0 : x, (int16_t)(y + topCap),
                             (int16_t)(x < 0 ? w + x : w), middle, panelGrey(fillGrey));
   }
   if (bottomCap > 0) {

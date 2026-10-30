@@ -228,7 +228,17 @@ async function main() {
   const temporaryRoot = await stageFirmwareSources(entries);
   const results = [];
   try {
-    for (const entry of entries) results.push(await runBuild(entry, temporaryRoot, timeoutMs));
+    for (const entry of entries) {
+      try {
+        results.push(await runBuild(entry, temporaryRoot, timeoutMs));
+      } finally {
+        // The sweep publishes no binaries from this disposable checkout. Retaining every
+        // environment and object-cache entry until the end can exhaust an operator's disk.
+        await rm(join(temporaryRoot, entry.directory, ".pio", "build", entry.environment),
+          { recursive: true, force: true });
+        await rm(join(temporaryRoot, ".platformio-build-cache"), { recursive: true, force: true });
+      }
+    }
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

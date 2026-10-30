@@ -17,6 +17,8 @@ test('actual firmware gesture queue bounds work, publishes once, and completes o
 #include <cassert>
 #include <atomic>
 #include <functional>
+// Fixed-width types need an explicit include: libc++ pulls <cstdint> in through <string>, libstdc++ (GCC/Ubuntu CI) does not.
+#include <cstdint>
 #include <string>
 using String = std::string;
 using TaskHandle_t = void*;
@@ -88,12 +90,16 @@ test('actual response fetch discards results across thread changes and same-thre
 #include <string>
 using String = std::string;
 String encodePathSegment(const String& input) { return input; }
+constexpr int kMaxResponseStreamReads = 4;
+void formatResponseStreamOffset(char*, unsigned, uint32_t) {}
 int scenario=0;
 struct GatewayClient {
  struct Context { String environmentId="env", threadId="thread"; } context_;
  bool responseOpen_=true;
  uint32_t responseGeneration_=1;
+ struct { String state="empty"; bool retryPending=false; int retryPage=-1,page=0; } response_;
  String responseAfter_="after";
+ struct { String messageId; uint32_t consumed=0; char fingerprint[2]=""; bool hasCursor() const { return false; } bool sendsFingerprint() const { return false; } } responseStream_;
  int request(const char*,const char*,const String&,String&) {
    if(scenario==1) context_.threadId="other";
    if(scenario==2) context_.environmentId="other";
@@ -107,6 +113,7 @@ struct GatewayClient {
 struct StateLock { explicit StateLock(GatewayClient*) {} };
 ${operation}
 return true;
+}
 }
 int main() {
  for(scenario=0;scenario<6;++scenario) {
@@ -200,15 +207,18 @@ test('actual response failure keeps transient reads retryable without replaying 
 using String = std::string;
 String encodePathSegment(const String& input) { return input; }
 String remedyFor(int) { return "retry"; }
+constexpr int kMaxResponseStreamReads = 4;
+void formatResponseStreamOffset(char*, unsigned, uint32_t) {}
 unsigned millis() { return 100; }
 int responseCode=200, requests=0;
 bool ok(int code) { return code>=200 && code<300; }
 struct GatewayClient {
  struct Context { String environmentId="env", threadId="thread"; } context_;
- struct Response { String state="waiting", lines[3]; bool retryPending=false; int page=0,pageCount=1,lineCount=0,followUpCount=0; } response_;
+ struct Response { String state="waiting", lines[3], errorDetail; bool retryPending=false; int retryPage=-1,page=0,pageCount=1,lineCount=0,followUpCount=0; } response_;
  bool responseOpen_=true;
  uint32_t responseGeneration_=1, nextDisplayAt_=0;
  String responseAfter_="after";
+ struct { String messageId; uint32_t consumed=0; char fingerprint[2]=""; bool hasCursor() const { return false; } bool sendsFingerprint() const { return false; } } responseStream_;
  int request(const char* method,const char*,const String&,String&) { assert(String(method)=="GET"); ++requests; return responseCode; }
  void touch() {}
  bool fetchResponsePage(int);
@@ -218,6 +228,7 @@ struct StateLock { explicit StateLock(GatewayClient*) {} };
 ${operation}
 return true;
 }
+}
 ${inFlight}
 int main() {
  for(int code : {-1,-11,429,500,503,401,403,404,409}) {
@@ -225,7 +236,7 @@ int main() {
   responseCode=code;
   assert(!gateway.fetchResponsePage(2));
   const bool retryable = code<=0 || code==429 || code>=500;
-  assert(gateway.response_.state=="error" && gateway.response_.page==2);
+  assert(gateway.response_.state=="error" && gateway.response_.page==0 && gateway.response_.retryPage==2);
   assert(gateway.response_.retryPending==retryable);
   assert(gateway.responseInFlight()==retryable);
   if(retryable) assert(gateway.nextDisplayAt_==3100);
@@ -451,6 +462,7 @@ struct Gateway {
  const Response& response(){return value;}
 } gateway;
 Gateway* gw=&gateway;
+bool clipHeld=false; bool voiceInJourney(){return false;}
 void buildHome() { actions.clear(); switch(Screen::Home) {
 ${home}
 default:return;
@@ -487,13 +499,13 @@ default:return;
 int main() {
  for(auto kind:{DeviceBlockerKind::Unknown,DeviceBlockerKind::GatewayApproval,DeviceBlockerKind::ProviderApproval,DeviceBlockerKind::UserInput}) {
   gateway.kind=kind; buildHome();
-  assert(actions.size()==2 && actions[0].id==Act::Review && actions[1].id==Act::SavedActions);
+  assert(actions.size()==3 && actions[0].id==Act::Review && actions[1].id==Act::SavedActions && actions[2].id==Act::PickThread);
   activate(actions[1].id); assert(screen==Screen::Actions);
  }
  gateway.kind=DeviceBlockerKind::None; buildHome();
- assert(actions.size()==2 && actions[0].id==Act::Talk && actions[1].id==Act::SavedActions);
+ assert(actions.size()==3 && actions[0].id==Act::Talk && actions[1].id==Act::SavedActions && actions[2].id==Act::PickThread);
  gateway.kind=DeviceBlockerKind::Unknown; gateway.controls=0; buildHome();
- assert(actions.size()==1 && actions[0].id==Act::Review);
+ assert(actions.size()==3 && actions[0].id==Act::Review && actions[1].id==Act::SavedActions && actions[2].id==Act::PickThread);
  GatewayClient client;
  assert(client.runAction("system_status","").route==1);
  assert(client.runAction("system_stop","").route==2);

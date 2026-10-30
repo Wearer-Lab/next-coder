@@ -31,7 +31,7 @@
     "typecheck:cloud-control-plane": "npm --prefix cloudflare-control-plane run typecheck",
     "test:app": "vitest run --config frontend/vitest.config.ts",
     "test:web": "npm run test:app",
-    "test:server": "node --test test/*.test.mjs",
+    "test:server": "node --test test/[a-z]*.test.mjs",
     "test:connector": "npm --prefix packages/connector test",
     "test:cloud": "npm --prefix cloudflare run test:contract && npm --prefix cloudflare run test:workers && npm --prefix cloudflare run test:resilience",
     "test:cloud-control-plane": "npm --prefix cloudflare-control-plane test",

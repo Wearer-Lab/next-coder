@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createApp } from "../src/app.mjs";
 import { createConnectorInternalService } from "../src/connectorInternalService.mjs";
 import { createMemoryStore } from "../src/store.mjs";
 import { ConnectorClient } from "../packages/connector/src/connector.mjs";
-import { extractHarnesses, resolveLatestModelSelection } from "../src/t3Harness.mjs";
+import { extractHarnesses, resolveLatestModelSelection, validateModelSelection } from "../src/t3Harness.mjs";
 
 const AUDIENCE = "agent-controller-connectors";
+
+// Real provider caches captured from a live T3 install, not an invented shape.
+const captured = JSON.parse(await readFile(new URL("./fixtures/t3-provider-caches.json", import.meta.url), "utf8"));
 
 test("service binding atomically consumes a ticket into Cloudflare's flat claims shape", async () => {
   const { store, environment, enrolled } = await fixture();
@@ -201,6 +205,129 @@ test("T3 provider readiness survives connector hello and cloud projection withou
   assert.equal(harnesses.find((entry) => entry.instanceId === "unknown").status, "unknown");
   assert.equal(harnesses.find((entry) => entry.instanceId === "unknown").auth.status, "unknown");
   assert.equal(JSON.stringify(catalogue).includes(privateMarker), false);
+});
+
+// Two projections in series each dropped `capabilities.optionDescriptors` silently: the connector's
+// hello, then this sanitizer, which rebuilt every model as {id, name}. The connector half is covered
+// in packages/connector/test/model-options.test.mjs; this is the gateway half, and the two must both
+// exist or the deployed managed-cloud feature is dead while every local test stays green.
+async function sendHello(body) {
+  const { store, environment, enrolled } = await fixture();
+  const service = createConnectorInternalService({ store, ticketAudience: AUDIENCE });
+  const response = await service.fetch(request("/v1/internal/connector-events", {
+    eventVersion: 1, environmentId: environment.id, connectorId: enrolled.connector.id,
+    connectionId: "descriptor_connection", occurredAt: Date.now(), kind: "connector.hello", body,
+  }));
+  assert.equal(response.status, 202);
+  return store.exportState().environments[0].providerCatalogue;
+}
+
+// The persisted catalogue is the gateway's normalised form: a model's `options` are descriptors and
+// each descriptor's value list is `choices`.
+const choiceIds = (descriptor) => descriptor.choices.map((choice) => choice.id);
+
+test("captured Codex and Claude option descriptors survive the hello, with readiness and no credentials", async () => {
+  const connector = new ConnectorClient({
+    state: { connectorId: "con", environmentId: "env", t3AccessToken: "token" },
+    t3: { environmentInfo: async () => ({ version: "0.0.32" }), providerCatalogue: async () => captured },
+    WebSocketImpl: class {}, logger: { log() {}, error() {} },
+  });
+  const hello = await connector.buildHello("connection");
+  const catalogue = await sendHello(hello.body);
+
+  const codexModel = catalogue.instances.find((i) => i.instanceId === "codex").models.find((m) => m.slug === "gpt-5.6-sol");
+  const reasoning = codexModel.options.find((o) => o.id === "reasoningEffort");
+  assert.deepEqual(choiceIds(reasoning), ["low", "medium", "high", "xhigh", "max", "ultra"]);
+  assert.equal(reasoning.currentValue, "low");
+  assert.equal(codexModel.options.find((o) => o.id === "serviceTier").choices.find((o) => o.id === "priority").description, "1.5x speed, increased usage");
+  const claudeModel = catalogue.instances.find((i) => i.instanceId === "claudeAgent").models.find((m) => m.slug === "claude-fable-5");
+  assert.deepEqual(choiceIds(claudeModel.options.find((o) => o.id === "effort")), ["low", "medium", "high", "xhigh", "max", "ultracode", "ultrathink"]);
+  assert.equal(claudeModel.options.find((o) => o.id === "effort").choices.find((o) => o.id === "high").isDefault, true);
+
+  // Every captured descriptor of every model, value lists included, not just the two spot checks.
+  for (const provider of captured) for (const model of provider.models) {
+    const sent = catalogue.instances.find((i) => i.instanceId === provider.instanceId).models.find((m) => m.slug === model.slug);
+    const raw = model.capabilities?.optionDescriptors ?? [];
+    assert.deepEqual(sent.options.map((o) => o.id), raw.map((o) => o.id), `${provider.instanceId}/${model.slug}`);
+    for (const descriptor of raw.filter((o) => o.type === "select")) {
+      assert.deepEqual(choiceIds(sent.options.find((o) => o.id === descriptor.id)), descriptor.options.map((o) => o.id));
+    }
+  }
+
+  // The readiness/auth/runtimeKind contract is unchanged, and nothing private rides along.
+  const harnesses = extractHarnesses({ projects: [], threads: [] }, { catalogue });
+  for (const provider of captured) {
+    const harness = harnesses.find((h) => h.instanceId === provider.instanceId);
+    const instance = catalogue.instances.find((i) => i.instanceId === provider.instanceId);
+    assert.equal(instance.status, provider.status);
+    assert.equal(instance.enabled, provider.enabled);
+    assert.equal(instance.installed, provider.installed);
+    assert.equal(instance.auth.status, provider.auth.status === "authenticated" ? "authenticated" : "unknown");
+    assert.equal(harness.status, provider.status);
+  }
+  const wire = JSON.stringify(catalogue);
+  for (const provider of captured) {
+    for (const secret of [provider.auth?.label, provider.auth?.type, provider.version, provider.message]) {
+      if (typeof secret === "string" && secret.length > 3) assert.equal(wire.includes(secret), false, `leaked ${secret}`);
+    }
+  }
+  // The selection path the owner uses: ultra is offered by the catalogue, so it validates.
+  assert.equal(validateModelSelection({ instanceId: "codex", model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "ultra" }] }, harnesses), null);
+  assert.ok(validateModelSelection({ instanceId: "codex", model: "gpt-5.6-sol", options: [{ id: "reasoningEffort", value: "not-a-level" }] }, harnesses));
+});
+
+test("a direct runtime keeps runtimeKind without a fabricated authentication flag, and unknown health stays unknown", async () => {
+  const catalogue = await sendHello({ providerCatalogue: [
+    { id: "native", runtimeKind: "direct", status: "ready", enabled: true, installed: true, auth: { status: "unknown" },
+      models: [{ id: "default", label: "Default", capabilities: { optionDescriptors: [{ id: "effort", type: "select", options: [{ id: "low" }] }] } }] },
+    { id: "silent", enabled: true, installed: true, models: [{ id: "m" }] },
+    { id: "odd", status: { nested: true }, auth: { status: "pwned" }, enabled: "yes", models: [] },
+  ] });
+  const [native, silent, odd] = catalogue.instances;
+  assert.equal(native.runtimeKind, "direct");
+  assert.equal(native.auth.status, "unknown");
+  assert.deepEqual(choiceIds(native.models[0].options[0]), ["low"]);
+  assert.equal(silent.status, "unknown"); assert.equal(silent.auth.status, "unknown");
+  assert.deepEqual(silent.models[0].options, [], "no descriptors means no options, not an invented control");
+  assert.equal(odd.status, "unknown"); assert.equal(odd.enabled, false);
+});
+
+test("hello descriptors are rebuilt field by field: bounded, ids never clipped, private fields dropped", async () => {
+  const long = "x".repeat(121);
+  const many = Array.from({ length: 40 }, (_, i) => ({ id: `o${i}`, label: `Option ${i}` }));
+  const marker = "private-descriptor-credential";
+  const catalogue = await sendHello({ providerCatalogue: [{ id: "p", status: "ready", enabled: true, installed: true, auth: { status: "authenticated" }, models: [{
+    id: "m", name: "M", capabilities: { optionDescriptors: [
+      { id: "ok", label: "L".repeat(500), type: "weird", currentValue: "o1", description: "D".repeat(500), token: marker, status: marker, options: many.map((o) => ({ ...o, apiKey: marker })) },
+      { id: long, label: "dropped: id too long", type: "select", options: [{ id: "a" }] },
+      { id: "ok", label: "duplicate id", type: "select", options: [{ id: "a" }] },
+      { id: "badchoice", type: "select", options: [{ id: "c".repeat(201) }, { id: "" }, { id: "good", label: "Good", isDefault: true }, { id: "good" }, { id: "y".repeat(200) }] },
+      { id: "empty", type: "select", options: [] },
+      { id: "flag", label: "Flag", type: "boolean", currentValue: true },
+      { id: "badcurrent", type: "select", currentValue: "not-offered", options: [{ id: "a" }] },
+      { id: "alias", type: "select", choices: [{ id: "one" }, { id: "two" }] },
+      null, "junk",
+      ...Array.from({ length: 30 }, (_, i) => ({ id: `extra${i}`, type: "boolean" })),
+    ] },
+  }] }] });
+  const options = catalogue.instances[0].models[0].options;
+  assert.ok(options.length <= 16);
+  const ok = options.find((o) => o.id === "ok");
+  assert.equal(ok.type, "select", "an unknown type is treated as select");
+  assert.equal(ok.label.length, 120); assert.equal(ok.description.length, 240);
+  assert.equal(ok.choices.length, 32);
+  assert.equal(ok.currentValue, "o1");
+  assert.equal(options.some((o) => o.id.startsWith("x")), false, "an over-long descriptor id is dropped, not clipped");
+  assert.equal(options.filter((o) => o.id === "ok").length, 1);
+  const badchoice = options.find((o) => o.id === "badchoice");
+  assert.deepEqual(choiceIds(badchoice), ["good", "y".repeat(200)], "an over-long choice id is dropped, not clipped");
+  assert.equal(badchoice.choices[0].isDefault, true);
+  assert.equal(options.some((o) => o.id === "empty"), false);
+  assert.equal(options.find((o) => o.id === "flag").type, "boolean");
+  assert.equal(options.find((o) => o.id === "flag").currentValue, true);
+  assert.equal(options.find((o) => o.id === "badcurrent").currentValue, null);
+  assert.deepEqual(options.find((o) => o.id === "alias").choices.map((c) => c.id), ["one", "two"], "`choices` is accepted as an alias for `options`");
+  assert.equal(JSON.stringify(catalogue).includes(marker), false);
 });
 
 test("service event sink enforces connector-to-environment binding", async () => {

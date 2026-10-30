@@ -708,9 +708,12 @@ The device secret is a bearer secret. Production firmware should store it in ESP
 
 The initial firmware uses this loop:
 
-1. Read identity, gateway URL, and Wi-Fi credentials from NVS (namespace `agentctl`). With no
-   Wi-Fi stored, raise the `agent-ctl-XXXX` SoftAP setup portal at `http://192.168.4.1` and wait;
-   with credentials stored, join with a 20 s timeout and three retries before the portal re-raises.
+1. Read identity, gateway URL, and saved Wi-Fi profiles from NVS (namespace `agentctl`). With no
+   Wi-Fi stored, raise the `agent-ctl-XXXX` SoftAP setup portal at `http://192.168.4.1` and wait.
+   The shared multi-network implementation tries up to five saved profiles, with a 20 s
+   association timeout per profile and a bounded 30 s retry backoff. Initial boot opens setup
+   after exhausting the saved profiles and continues retrying; loss of a previously working
+   network automatically tries the saved alternatives.
    Nothing in this path blocks indefinitely — see
    [device-setup-flow.md](device-setup-flow.md#3-wi-fi-provisioning).
 2. Send `POST /v1/device/heartbeat`.
@@ -740,6 +743,63 @@ starts the EXIT-only 10-second reset. The gateway still enforces the device's se
 policy. An already-stopped session should be returned as a successful, idempotent result.
 
 Polling is intentional for the first hardware version. It is easier to recover after sleep, WiFi roaming, captive networks, and Tailscale/VPS deploys than a persistent event stream.
+
+### Saved Wi-Fi and Hosyond network controls
+
+Hosyond's Device → Wi-Fi screen provides asynchronous SCAN, SAVED and ADD controls. Nearby
+networks show signal, security and saved/connected state. Select a network, enter its password on
+the device, then CONNECT. Under SAVED, ADD supports a hidden network name. The keyboard has two
+rows of 56×60 px letters that scroll horizontally; CAPS, 123, SPACE and DEL stay fixed below.
+It supports printable ASCII; scanned network names retain their original bytes. Enterprise/captive-portal
+sign-in is not provided by this keyboard.
+
+Hosyond's ESP32-S3 supports 2.4 GHz Wi-Fi. For an iPhone hotspot, enable Allow Others to Join
+and Maximize Compatibility in Settings → Personal Hotspot, keep that page open until connected,
+then scan again on Hosyond. A Mac seeing an Instant Hotspot does not establish that a non-Apple
+controller can discover it. See [Apple's hotspot guidance](https://support.apple.com/en-my/119837).
+
+PHONE is an alternative to entering credentials on the touchscreen. Its first QR joins a
+fresh WPA2-protected device setup network; the captive page opens locally. OPEN PAGE shows a
+second QR for `http://192.168.4.1` if needed. The phone page can refresh nearby networks, choose
+one, enter a password, or reuse an existing saved password. No firmware flash is needed: the
+controller validates association and commits its settings itself. Remain on setup Wi-Fi despite
+the expected “No Internet” warning when joining another network.
+
+For the same phone's hotspot, enter its exact hotspot name and password in the page, then choose
+Use this phone’s hotspot. After accepting this single request, the controller closes setup Wi-Fi
+and displays a two-minute countdown. Enable the phone's hotspot and Maximize Compatibility, then
+keep hotspot settings open. The page becoming unreachable is expected; check the controller for
+the result. Retries retain the original candidate and receipt. Only validated association saves
+the profile. Cancellation or timeout preserves earlier profiles and resumes their recovery;
+SETUP AGAIN starts a fresh secured setup session if needed.
+
+Phone setup expires after ten minutes and creates a new temporary AP password and independent
+CSRF nonce each time. Requests require the setup AP interface and allowed Host/Origin; the page
+uses no external resources and serves with no-store/CSP restrictions. Stable request receipts
+and predecessor checks prevent a delayed old request from replacing a later attempt. The HTTP
+receipt is sent before a deferred radio change; uncertain delivery resumes status checks, never
+a fresh automatic join. After success, the AP remains available for ten seconds to report Saved,
+then closes. DONE, Back or expiry clear QR credentials and preserve validated Wi-Fi profiles.
+Home-network passwords never appear in QR codes, cloud requests, logs or status snapshots.
+
+A candidate does not replace working credentials until a fresh association to that exact SSID
+and the complete NVS write both succeed. Failed/cancelled attempts preserve saved profiles;
+returning to an old network after failure does not report the candidate as successful. SDK Wi-Fi
+credential persistence is disabled. The versioned profile blob is authoritative, with legacy
+single-network migration. Passwords stay on the controller and are excluded from UI snapshots.
+
+Up to five networks can be saved. FORGET requires confirmation and refuses the active network;
+at capacity, remove an inactive profile before adding another. Reset removes all profiles while
+retaining factory identity. Failed persistence must report failure rather than claim a reset.
+
+After association loss, the controller rotates through saved networks and resumes its existing
+cloud connection/recovery path. Hosyond briefly announces an alternate attempt and the restored
+or newly selected network in its header without replacing the current thread or voice draft.
+Wi-Fi controls remain usable with held audio or an open setup portal. Association recovery does
+not establish that the gateway, connector, T3 or provider is ready; those retain separate status.
+Changing only the gateway in the setup portal is a separate save from changing Wi-Fi, avoiding a
+partial gateway/network commit. Current hardware qualification is recorded in the device-flow
+review documents; compilation alone is not radio or touchscreen evidence.
 The gateway rate limits heartbeat, read, and write paths separately. Firmware should respect `429` and `retry-after` responses by backing off before retrying.
 
 Heartbeat requests should include the latest device diagnostics when available:
@@ -1316,7 +1376,15 @@ x-device-secret: ...
     "pageCount": 3,
     "lines": ["Implemented the response", "reader and verified the", "signed firmware build."],
     "truncated": false,
-    "updatedAt": "2026-08-08T20:00:06.000Z"
+    "updatedAt": "2026-08-08T20:00:06.000Z",
+    "stream": {
+      "messageId": "message_...",
+      "offset": 0,
+      "total": 71,
+      "appended": "Implemented the response reader and verified the signed firmware build.",
+      "complete": true,
+      "reset": false
+    }
   },
   "suggestions": [
     { "actionId": "action_tests", "label": "Run tests", "kind": "remote_action", "requiresConfirmation": true }
@@ -1330,6 +1398,58 @@ characters, and returned one three-line page at a time, with at most 12 pages. `
 newly dispatched action from briefly showing the previous assistant response. Until a newer
 assistant message exists the state is `waiting`; streaming responses are `streaming` and are polled
 on the normal five-second display cadence.
+
+**Incremental reads.** A device that holds part of a streaming reply can ask only for the rest.
+It sends `streamMessageId` (the `response.messageId` it is showing) and `streamOffset` (how many
+characters of that message it already holds, 1 to 7 digits) alongside `page`. `streamOffset` is
+rejected with `400` when it is not a digit string and is ignored without `streamMessageId`. The
+existing `lines`, `page` and `pageCount` are unchanged, so a device that sends no cursor is served
+exactly as before.
+
+`response.stream` carries the increment:
+
+- `appended` is the text after `offset`, at most 512 characters per poll. Catch up over successive
+  polls before treating the reply as whole.
+- `total` is the length of the stable visible text (below), not of the whole reply. While a reply streams
+  it can be shorter than what `lines` shows.
+- `reset: true` means replace, do not append. It is set when the selected message is not the one the
+  device named, when the held offset is past the current text, and, with no assistant message yet,
+  when the device held characters (`messageId` is then `null`). T3 sends absolute text for a native
+  v2 message update and only its streaming suffix is a delta, so a device that appends across a reset
+  would show a sentence the agent never wrote. Replacement is detected by length only: the gateway does
+  not compare the content it already sent, so it relies on a message's raw text only growing. A message
+  whose earlier text T3 rewrites at an equal or greater length is not detected.
+- `complete` is `true` only when every character is held and the selected message is no longer
+  streaming. The turn state is not read.
+
+The offset counts the **stable** visible text: follow-up markers are removed and Markdown is normalized
+(link syntax, code-span and fence backticks, tags, heading and list markers, collapsed whitespace, trimmed
+ends), but only up to the earliest construct normalization could still rewrite. That tail is withheld until
+it resolves: an unclosed `<`, an unclosed `[` (with a preceding `!`), a trailing `!`, a trailing backtick
+run, an unclosed inline code span, and a final line that is only a list or quote marker (`-`, `*`, `+`, `>`).
+The exposed text is meant to only grow, which is what appending needs (see Known limits). The cost is
+latency: the last few characters of a streaming reply appear one poll later, once their markup resolves.
+
+Withholding applies only while the message is streaming. A settled message exposes its complete normalized
+text, so a withheld tail is released once the reply settles, and `complete` covers the whole reply.
+
+`lines` and `page` are always computed from the complete normalized text, so during streaming `lines` and
+`stream` can legitimately differ. A device should read one or the other, not mix them.
+
+**Known limits.** Two cases still break the append property. The gateway does not detect either:
+
+- In ordinary prose, a `<` and a later `>` form a tag under the normalizer, so the text between them is
+  removed from both `stream` and `lines`. `if x < 5 and y > 3` shows as `if x 3`.
+- A construct can open behind an earlier unclosed opener, or close behind a withheld point, so text already
+  exposed is rewritten. `[a [b](x)` exposes `[a` and then `a [b`; `a <b c <d>` exposes `a <b c` and then `a`.
+  The device then holds text that no longer matches the reply, and `reset` stays `false`.
+
+Until these are fixed, `complete` on `stream` means only that the device holds the settled `stream` text. It
+does not guarantee the text matches the reply. `lines` is recomputed from the full text on every poll and is
+the reliable display source for now.
+
+Firmware in this repository does not yet send `streamMessageId` or `streamOffset`. The gateway side is
+implemented; device adoption is not proven on hardware.
 
 `work` is a content-free aggregate of T3's structured `task.*` activity. It is independently capped
 at 64 retained task IDs and includes only status counts, liveness, and truncation — never task IDs,
@@ -1737,8 +1857,77 @@ command after upload. Internal `ready` and `dispatching` stages are still nonter
 as `transcribing` with `done:false`; the auto-send decision has not settled yet. Only settled
 `dispatched` without a send becomes terminal `ready`. Firmware must continue polling a `ready`
 milestone carrying `done:false` for compatibility, until it observes `sent` and the reply cursor.
+The compact job also includes `reviewReason`: `gateway_approval` for a policy hold,
+`transcript_review` for transcription review, or `null` outside those observed cases. These are
+separate decisions. Firmware may open the matching gateway approval by the existing `commandId`;
+transcript editing remains a console operation. An absent or unknown reason requires neutral
+“Needs attention” wording rather than guessing that the transcript needs correction.
+
+`sent` means the command was accepted/dispatched, not that its T3 turn completed. Keep the original
+`responseAfter` cursor until the reply reader owns it, including when Sent arrives while another
+screen is open. A new local draft must not clear an unobserved response cursor or imply that the
+previous turn completed or was cancelled.
+
+Hosyond retains its voice capture destination, held PCM, job ID, and reply cursor in RAM across
+screen navigation and transport retries. It does not currently persist a voice-job recovery journal
+to NVS: power loss or firmware restart loses that local tracking and held audio, while accepted cloud
+jobs continue in durable storage. This differs from the durable mutation receipt journal used by
+ordinary controller commands. Resetting or leaving a screen never cancels accepted cloud work.
+
 Review and terminal ready states hand off to the console when on-device transcript editing or
 manual transcript sending is unavailable. Missing ASR
 configuration is reported as unavailable; it must not become an empty audio dispatch.
 
 See [the firmware workflow audit](firmware-workflow-audit.md) for scope and verification limits.
+
+### Atomic destination preview (Hosyond 0.2.19)
+
+Legacy thread selection still reads only `threadId`; unrelated fields remain ignored.
+New clients opt in with `destinationSelection: "atomic-v1"`. Read-only previews use
+`GET /v1/device/projects?environmentId=...` and
+`GET /v1/device/threads?environmentId=...&projectId=...`. The environment is resolved through the
+claiming account, and thread rows remain scoped to the requested folder. Neither GET changes the
+device configuration. Both responses advertise `destinationSelection: "atomic-v1"`; clients must
+validate that marker and the echoed destination before using the preview.
+
+`POST /v1/device/config/thread` with the marker plus `environmentId`, `projectId`, and `threadId`
+validates the complete destination against that owner's live snapshot, then writes all three
+configuration fields together. A rejected destination leaves the prior configuration intact.
+Hosyond highlights a row locally and commits only after **Use thread**, with no debounce write.
+New-thread creation accepts the same marker and explicit environment/folder, applies the existing
+creation policy and durable request ID, and selects the resulting destination in one write.
+This explicit target is independent of the currently bound destination; legacy requests retain
+current-context preconditions. Clients adopt create/selection results only when the returned
+configuration confirms the intended environment, folder and thread. An older gateway fails closed
+in the preview client rather than reinterpreting a new destination as the old bound one.
+
+Hosyond reply paging also has bounded local subpages after wrapping to the panel width. Beginning
+and end do not wrap. A gateway `truncated` flag displays **More in console**. Failed reads preserve
+the last readable text, clear stale suggestions and retry only the failed read page/cursor; this
+never replays the original agent command.
+## Direct-agent discovery and handoff
+
+For direct-agent environments, `GET /v1/device/runtimes` returns at most twelve compact
+`{runtimeId,model,label}` rows, `supported` and `truncated`. T3 environments return
+`supported:false`. `GET /v1/device/sessions?runtimeId=...` lists saved sessions in the device's
+currently bound project: at most twelve `{id,title,updatedAt,attachment}` rows, `nextCursor`
+and explicit truncation. These are device-realm, claimed-device, read-rate-limited routes.
+They do not expose local paths, credentials, native transcripts or account records.
+
+Use the ordinary durable `POST /v1/device/intents` envelope for:
+
+- `{type:"runtime_switch",runtimeId,model}`: choose the current conversation's next agent/model;
+  requires `session_control`. An active turn must stop or finish before switching.
+- `{type:"runtime_import",runtimeId,model,projectId,nativeSessionId,confirmResume:true}`:
+  requires `thread_create`. Confirm on-screen that the other app stopped the native session.
+
+Include `clientRequestId`, selected `threadId`, and `expectedEnvironmentId`, `expectedProjectId`,
+`expectedThreadId` (null when unbound). A changed context returns 409. Successful synchronous
+mutations return a completed command with `result.threadId`; they do not submit a prompt.
+Import does not change the device destination: follow with the existing atomic
+`POST /v1/device/config/thread` selection. Keep the old binding until that response is verified.
+
+Shared `GatewayBrowse` methods implement bounded discovery and durable mutation; Hosyond exposes
+them from Choose → Agents. Existing text/voice, replies, approvals, questions and stop use their
+existing routes for both T3 and direct runtimes. Other boards need their own discovery-picker UI.
+See [direct-agent setup and qualification boundaries](direct-agents.md).

@@ -206,8 +206,31 @@ class GatewayClient {
   // contain the new thread, and re-fetching to make it valid means guessing how long T3's
   // projection takes to catch up. The caller already holds the authoritative answer.
   void adoptThreadBinding(const String& threadId);
+  // Re-points the context at a destination the gateway has just confirmed and drops the thread
+  // binding. The cached thread list is kept only when the gateway stamped it for exactly this
+  // environment and project, because every consumer of it (the HOME picker, selectThread()) assumes
+  // it describes the bound folder; otherwise it is emptied and refetched.
   void clearContextBinding(const String& environmentId = String(), const String& projectId = String());
   const String& threadsDetail() const { return threadsDetail_; }
+
+  // True when the cached thread list is known to describe exactly this destination: the gateway
+  // stamped it with this environment and project under the atomic-v1 contract on the last
+  // successful refreshThreads(). Never true for a gateway that does not send the stamp. Used to
+  // paint a list immediately from what is already held; the gateway still validates any write.
+  bool threadListMatches(const String& environmentId, const String& projectId) const;
+
+  // ---------------------------------------------------------------------------------------------
+  // Interaction awareness (any thread; lock-free)
+  // ---------------------------------------------------------------------------------------------
+  //
+  // A person touching the glass is the one moment a background poll is worst timed: the gesture's
+  // request would queue behind it on the one network task, for up to the 6 s request timeout.
+  // noteInteraction() tells the scheduler to hold its own polls for a short, capped window; it never
+  // delays a gesture job and never starves a poll for more than a few seconds of continuous use.
+  void noteInteraction();
+  // Wakes the network task so a freshly queued gesture job starts now rather than at the next
+  // 100 ms tick. Harmless before the task exists.
+  void wakeNetworkTask();
 
   // Sending. All three shapes go through POST /v1/device/intents with the device envelope; a saved
   // action goes to its own route because its payload stays server-side.
@@ -239,6 +262,13 @@ class GatewayClient {
   bool responseInFlight() const;      // state is waiting or streaming: the turn has not finished
   bool fetchResponsePage(int page);
   const ThreadResponse& response() const { return response_; }
+  // Text the gateway streamed for the open response, copied under the state lock (a reference to
+  // the live buffer could tear while a poll appends). Writes a NUL-terminated UTF-8 prefix of the
+  // message into `out` and returns its byte length. It is a prefix of the same reply `response()`
+  // pages through, bounded by the display ceiling; `*truncated` says text beyond it was dropped and
+  // `*complete` that the gateway reports every character held and the turn settled. Zero bytes
+  // with no message id means nothing is held (older gateway, or nothing to show yet).
+  size_t copyResponseStream(char* out, size_t capacity, bool* complete = nullptr, bool* truncated = nullptr);
 
   // Media upload. Returns the `media.id` a capture intent needs, or an empty string on failure with
   // the HTTP status in `httpStatusOut` (413 is set locally, without a request, when the decoded
@@ -327,6 +357,11 @@ class GatewayClient {
   std::atomic<bool> networkPaused_{false};
   std::atomic<void (*)()> interactionHandler_{nullptr};
   std::atomic<bool> networkTaskRunning_{false};
+  std::atomic<void*> networkTask_{nullptr};          // TaskHandle_t, opaque like stateMutex_
+  std::atomic<bool> interactionArmed_{false};
+  std::atomic<uint32_t> interactionUntil_{0};
+  uint32_t touchDeferralStartedAt_ = 0;              // network task only
+  bool deferForTouch();
 
   uint32_t releaseStateForBlockingCall();
   void reacquireStateAfterBlockingCall(uint32_t depth);
@@ -355,6 +390,10 @@ class GatewayClient {
   size_t threadCount_ = 0;
   int selectedThreadIndex_ = 0;
   String threadsDetail_;
+  // What threads_ is a list OF, as the gateway last stamped it. Kept beside the rows so no code
+  // path can empty or replace the list and leave a scope that still vouches for it.
+  String threadsEnvironmentId_, threadsProjectId_;
+  bool threadsScopeKnown_ = false;
   struct PendingDeviceThreadMutation {
     String threadId;
     String title;
@@ -369,6 +408,10 @@ class GatewayClient {
   size_t macroCount_ = 0;
 
   ThreadResponse response_;
+  // Retained incremental text and its cursor for the open response. Kept apart from `response_`
+  // because a ThreadResponse is replaced wholesale on open/close and this is ~1.2 KB: a temporary
+  // of that size does not belong on a task stack. openResponse()/closeResponse() clear it instead.
+  ResponseStream responseStream_;
   bool responseOpen_ = false;
   uint32_t responseGeneration_ = 0;
   String responseAfter_;

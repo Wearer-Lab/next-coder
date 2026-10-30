@@ -80,6 +80,9 @@ export function deviceJobStatus(job) {
     mediaId: job.mediaId,
     milestone,
     label: MILESTONE_LABELS[milestone],
+    reviewReason: milestone !== "review" ? null
+      : job.dispatchStatus === "approval_required" ? "gateway_approval"
+        : job.stage === "review_required" ? "transcript_review" : null,
     // One boolean for "stop polling", so firmware does not have to know the milestone list.
     done: milestone === "sent" || milestone === "failed" || milestone === "ready" || milestone === "review",
     ok: milestone !== "failed",

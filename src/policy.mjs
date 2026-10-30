@@ -19,6 +19,12 @@
  * | `command_type`      | `intent`                                 | `SHELL_RISK_RULES` + `BASELINE_RULES`         |
  * | `risk_level`        | `maxAutoRisk` on any constraint          | risk ceiling, escalates instead of blocking   |
  *
+ * **One deliberate exception to "inert when absent":** the `acceptAlways` provider-approval
+ * decision (a standing grant, see src/providerApprovals.mjs) is refused unless the caller says the
+ * actor is the signed-in owner (`actorType: "user"`). It is the one decision that must fail CLOSED
+ * when a caller forgets the argument — an omitted `actorType` would otherwise let a controller
+ * give a grant it cannot read the detail of. Nothing else reads `actorType`.
+ *
  * **Backward compatibility contract:** every dimension other than `device` and `command_type` is
  * inert when its context is absent. `evaluateIntentPolicy({ device, intent })` therefore behaves
  * exactly as it did before this file grew the other six dimensions.
@@ -28,7 +34,11 @@
  */
 
 import { DEVICE_CAPABILITIES, capabilitiesForProfile, resolveDeviceProfile } from "./profiles.mjs";
-import { isPersistentProviderApprovalDecision } from "./providerApprovals.mjs";
+import {
+  capabilityForProviderApprovalDecision,
+  isAlwaysProviderApprovalDecision,
+  isPersistentProviderApprovalDecision,
+} from "./providerApprovals.mjs";
 
 /** Policy dimension identifiers, in evaluation order. */
 export const POLICY_DIMENSIONS = Object.freeze({
@@ -258,11 +268,23 @@ const BASELINE_RULES = Object.freeze([
     matches: (intent) => intent.type === "shell_input",
   },
   {
+    // `acceptAlways`: a grant meant to outlive the session, at least as durable as the one below,
+    // so it is judged at least as hard — same `high` risk, and therefore the same escalation to
+    // an owner confirmation under any `maxAutoRisk` ceiling of medium or below. It is its own rule
+    // (and rule id) rather than a widened predicate on the next one so an audit row says which of
+    // the two grants was held for confirmation. It MUST precede the session rule, which matches
+    // every persistent decision.
+    id: "baseline.approval-accept-always",
+    risk: "high",
+    matches: (intent) => intent.type === "approval_response"
+      && isAlwaysProviderApprovalDecision(intent.decision),
+  },
+  {
     // Granting a provider a permission that outlives the question is a higher-risk act than
     // answering the question. Under any `maxAutoRisk` ceiling of medium or below — the free tier,
     // an untrusted network, a time window that is closing — it escalates to an owner confirmation
     // instead of dispatching, which is the point: a standing grant is the one approval decision
-    // that should be hard to make by accident.
+    // that should be hard to make by accident. (Id kept: it is recorded on stored command rows.)
     id: "baseline.approval-accept-for-session",
     risk: "high",
     matches: (intent) => intent.type === "approval_response"
@@ -335,6 +357,7 @@ export const USER_ROLE_RULES = Object.freeze({
       "session_control",
       "approval_response",
       "approval_response_persistent",
+      "approval_response_always",
       "thread_create",
     ],
     approval: [],
@@ -377,6 +400,9 @@ export const NETWORK_LOCATION_RULES = Object.freeze({
  * @param {string | { trusted?: boolean, classification?: string }} [options.networkLocation]
  * @param {string | { tier?: string, id?: string }} [options.subscriptionTier]
  * @param {object | object[] | number[]} [options.allowedHours] optional top-level time window.
+ * @param {"user" | "device" | null} [options.actorType]     who is acting. Only read for the
+ *   `acceptAlways` decision, which requires `"user"`; see the module header for why that one
+ *   fails closed.
  * @returns {{ allowed: boolean, risk: string, reason?: string, requiresApproval?: boolean,
  *             matchedRule: string, dimension: string }}
  */
@@ -390,6 +416,7 @@ export function evaluateIntentPolicy(options = {}) {
     networkLocation = null,
     subscriptionTier = null,
     allowedHours = null,
+    actorType = null,
   } = options;
 
   const capability = capabilityForIntent(intent);
@@ -414,6 +441,21 @@ export function evaluateIntentPolicy(options = {}) {
         dimension: constraint.dimension,
       };
     }
+  }
+
+  // 1b. A standing "from now on" grant is the owner's to give, from the console, with the whole
+  // request in front of them. A controller's profile may legitimately carry every OTHER
+  // capability, including `approval_response_persistent`, so this cannot be left to the profile
+  // dimension: `power-controller` is both the console's profile and an "advanced device" one.
+  // Fails closed — an absent `actorType` is not "user".
+  if (capability === "approval_response_always" && actorType !== "user") {
+    return {
+      allowed: false,
+      risk: "blocked",
+      reason: "An open-ended \"always allow\" grant can only be given from the signed-in console, not from a controller.",
+      matchedRule: "realm.standing-grant-owner-only",
+      dimension: POLICY_DIMENSIONS.COMMAND_TYPE,
+    };
   }
 
   // 2. Command-type screening: dangerous shell input is confirmation-gated, not blocked.
@@ -885,23 +927,25 @@ export function capabilityForIntent(intent) {
       return "shell_input";
     case "terminal_input":
       return "terminal_input";
-    // Two capabilities, one intent type. `acceptForSession` is T3's allow-always: it leaves a
-    // standing permission rule behind rather than answering one question, so it is gated
-    // separately and the built-in hardware profile does not carry it. See src/profiles.mjs.
+    // Three capabilities, one intent type. `acceptForSession` and `acceptAlways` each leave a
+    // standing permission rule behind rather than answering one question, so each is gated
+    // separately from a one-off yes — and from each other — and the built-in hardware profile
+    // carries neither. The mapping lives beside the vocabulary so the two cannot drift. See
+    // src/profiles.mjs.
     case "approval_response":
-      return isPersistentProviderApprovalDecision(intent.decision)
-        ? "approval_response_persistent"
-        : "approval_response";
+      return capabilityForProviderApprovalDecision(intent.decision);
     // Answering a question the agent asked. One capability, not two — see the note in
     // src/profiles.mjs for why the `approval_response` split does not apply here.
     case "user_input_response":
       return "user_input_response";
     case "session_control":
+    case "runtime_switch":
       return "session_control";
     // Not a dispatchable intent — `normalizeIntent()` rejects it, so a device cannot post it to
     // /v1/device/intents. It exists so POST /v1/device/threads can ask the same eight-dimension
     // question every other write asks, instead of inventing a second, weaker check.
     case "thread_create":
+    case "runtime_import":
       return "thread_create";
     default:
       return "unknown";

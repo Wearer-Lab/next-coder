@@ -1,9 +1,14 @@
 import "./support/closeEvent.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createV2StreamProjection, v2Command, v2Shell, v2Thread } from "../src/t3v2.mjs";
+import { createV2StreamProjection, v2Command, v2OfferedDecisions, v2Shell, v2Thread } from "../src/t3v2.mjs";
 import { createT3Client, exchangePairingToken } from "../src/t3.mjs";
-import { collectProviderApprovals } from "../../../src/providerApprovals.mjs";
+import {
+  PROVIDER_APPROVAL_DECISIONS,
+  allowedProviderApprovalDecisions,
+  collectProviderApprovals,
+} from "../../../src/providerApprovals.mjs";
+import { capabilitiesForProfile } from "../../../src/profiles.mjs";
 import { collectUserInputRequests } from "../../../src/userInput.mjs";
 
 // Deterministic contract fixtures: public v0.1.1 orchestrationV2.ts wire fields, no live user data.
@@ -18,7 +23,7 @@ const snapshot = (value = projection()) => ({ kind: "snapshot", snapshotSequence
 const event = (sequence, type, payload) => ({ kind: "event", sequence,
   event: { id: "event_" + sequence, threadId: thread.id, occurredAt: date, type, payload } });
 
-test("pairing requests the permission vocabulary of the advertised T3 protocol", async () => {
+test("pairing requests the same real T3 scopes on both protocols", async () => {
   for (const orchestrationProtocolVersion of [1, 2]) {
     let scope;
     const result = await exchangePairingToken({ baseUrl: "http://127.0.0.1:3774", pairingToken: "fixture",
@@ -27,7 +32,8 @@ test("pairing requests the permission vocabulary of the advertised T3 protocol",
         return Response.json({ access_token: "fixture_access" });
       } });
     assert.equal(result.access_token, "fixture_access");
-    assert.equal(scope, `orchestration:read orchestration:${orchestrationProtocolVersion === 2 ? "operate" : "write"} terminal:operate`);
+    // `orchestration:write` is not a T3 scope at any version (docs/t3-version-audit.md M7); both protocols ask for operate.
+    assert.equal(scope, "orchestration:read orchestration:operate terminal:operate");
   }
 });
 
@@ -110,4 +116,132 @@ test("v2 client negotiates the socket, cancels snapshot subscriptions and sets p
   assert.deepEqual(commands.map((c) => c.type), ["thread.runtime-mode.set", "message.dispatch"]);
   assert.equal(commands[0].runtimeMode, "approval-required");
   assert.equal(commands[1].commandId, "cmd_1");
+});
+
+// -- T3 0.1.x per-request `options[]` -------------------------------------------------------------
+// Shapes below are the ones the 0.1.5 adapters build (docs/t3-version-audit.md section 5):
+//   Claude, CLI refuses a standing rule   CLAUDE_NO_STANDING_GRANT_OPTIONS  decline, accept
+//   Codex MCP elicitation w/ persistence  describeMcpElicitation            cancel, decline, acceptForSession?, acceptAlways?, accept
+//   everything else                       no `options` at all (T3's UI then draws its own four)
+
+const approvalProjection = (item, request = {}) => ({ ...projection(),
+  runtimeRequests: [{ id: "approval_1", kind: "command", status: "pending", createdAt: date, resolvedAt: null, ...request }],
+  turnItems: [{ type: "approval_request", requestId: "approval_1", requestKind: "command", prompt: "Permit?", ...item }] });
+const requested = (result) => result.activities.find((activity) => activity.kind === "approval.requested");
+
+test("a request's own options[] reaches the gateway's offeredDecisions, in the gateway's vocabulary", () => {
+  const options = [
+    { decision: "cancel", label: "Cancel" }, { decision: "decline", label: "Decline" },
+    { decision: "acceptAlways", label: "Always allow", warning: "Writes a permanent rule." }, { decision: "accept", label: "Approve" },
+  ];
+  const result = v2Thread(approvalProjection({ requestKind: "mcp-elicitation", options }));
+  assert.deepEqual(requested(result).payload.decisions, ["cancel", "decline", "acceptAlways", "accept"]);
+  // Nothing but vocabulary rode along: no label, no warning, no provider prose.
+  assert.deepEqual(Object.keys(requested(result).payload).sort(), ["decisions", "detail", "requestId", "requestKind"]);
+  assert.equal(JSON.stringify(requested(result)).includes("permanent rule"), false);
+
+  const [approval] = collectProviderApprovals(result);
+  assert.deepEqual(approval.offeredDecisions, ["cancel", "decline", "acceptAlways", "accept"]);
+  assert.equal(approval.requestKind, "mcp-elicitation");
+
+  // Narrowing therefore applies to a T3 approval exactly as it does to a native one: the owner
+  // (and only the owner) is offered the standing grant, because THIS request lists it.
+  const power = capabilitiesForProfile("power-controller");
+  assert.deepEqual(allowedProviderApprovalDecisions(power, approval, { realm: "user" }), ["accept", "acceptAlways", "decline", "cancel"]);
+  assert.deepEqual(allowedProviderApprovalDecisions(power, approval, { realm: "device" }), ["accept", "decline", "cancel"]);
+  assert.deepEqual(allowedProviderApprovalDecisions(power, approval), ["accept", "decline", "cancel"]);
+});
+
+test("a Claude request that refuses a standing rule offers only decline and accept, end to end", () => {
+  const [approval] = collectProviderApprovals(v2Thread(approvalProjection({
+    options: [{ decision: "decline", label: "Decline" }, { decision: "accept", label: "Approve" }],
+  })));
+  assert.deepEqual(approval.offeredDecisions, ["decline", "accept"]);
+  const power = capabilitiesForProfile("power-controller");
+  // The console profile could have given acceptForSession; this request does not offer it.
+  assert.deepEqual(allowedProviderApprovalDecisions(power, approval, { realm: "user" }), ["accept", "decline"]);
+});
+
+test("a request with no options[] states nothing, so the gateway applies T3's default four", () => {
+  const result = v2Thread(approvalProjection({}));
+  assert.equal("decisions" in requested(result).payload, false);
+  const [approval] = collectProviderApprovals(result);
+  assert.equal(approval.offeredDecisions, null);
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(capabilitiesForProfile("power-controller"), approval, { realm: "user" }),
+    ["accept", "acceptForSession", "decline", "cancel"],
+    "acceptAlways must not appear on a request that never listed it",
+  );
+  // Not an array is not a statement either.
+  for (const options of [null, "accept", { decision: "accept" }, 7]) {
+    assert.equal(v2OfferedDecisions(options), undefined, JSON.stringify(options));
+  }
+});
+
+test("options are sanitised at the boundary: strings only, bounded, de-duplicated, closed table", () => {
+  const entry = (decision) => ({ decision, label: "x" });
+  assert.deepEqual(v2OfferedDecisions([entry("accept"), entry("accept"), entry("decline"), entry("accept")]), ["accept", "decline"]);
+  // Unknown spellings, non-strings, junk entries and inherited property names are dropped.
+  assert.deepEqual(
+    v2OfferedDecisions([entry("approve"), entry("ACCEPT"), entry(" accept"), entry(7), entry(null), entry({}), entry("constructor"),
+      entry("__proto__"), entry("toString"), null, "accept", 3, [], { label: "no decision" }, entry("cancel")]),
+    ["cancel"],
+  );
+  // The scan is bounded: a recognised value beyond the cap is not read.
+  assert.deepEqual(v2OfferedDecisions([...Array(16).fill(entry("nope")), entry("accept")]), ["decline", "cancel"]);
+  // An over-long value is not looked up at all.
+  assert.deepEqual(v2OfferedDecisions([entry("accept".padEnd(10_000, "x"))]), ["decline", "cancel"]);
+  // Source order is preserved (the gateway re-sorts by catalogue order when it builds buttons).
+  assert.deepEqual(v2OfferedDecisions([entry("cancel"), entry("accept")]), ["cancel", "accept"]);
+});
+
+test("a list with nothing usable offers refusals only, never nothing and never a grant", () => {
+  // Offering nothing would strand an agent blocked on the owner; falling back to the default set
+  // would hand out a grant the provider never listed. Refusals grant nothing whatever the list meant.
+  for (const options of [[], [{ decision: "somethingNew" }], [null, 3, "accept"]]) {
+    assert.deepEqual(v2OfferedDecisions(options), ["decline", "cancel"], JSON.stringify(options));
+  }
+  const [approval] = collectProviderApprovals(v2Thread(approvalProjection({ options: [{ decision: "somethingNew" }] })));
+  assert.deepEqual(approval.offeredDecisions, ["decline", "cancel"]);
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(capabilitiesForProfile("power-controller"), approval, { realm: "user" }),
+    ["decline", "cancel"],
+  );
+});
+
+test("the connector's decision table is pinned to the gateway's vocabulary", () => {
+  // The npm package cannot import the gateway, so it carries a copy; this is what keeps the copy honest.
+  assert.deepEqual(
+    v2OfferedDecisions(PROVIDER_APPROVAL_DECISIONS.map((decision) => ({ decision, label: decision }))),
+    [...PROVIDER_APPROVAL_DECISIONS],
+  );
+  // And a decision answered with acceptAlways is passed to T3 unchanged (it is a valid wire value).
+  assert.equal(v2Command({ commandId: "c", threadId: "t", type: "thread.approval.respond", requestId: "r", decision: "acceptAlways" }).decision, "acceptAlways");
+});
+
+test("options on a streamed turn item update the approval, and a resolved one carries the new decision", () => {
+  const project = createV2StreamProjection();
+  project(snapshot());
+  const pending = { id: "approval_1", kind: "command", status: "pending", createdAt: date, resolvedAt: null };
+  // The request alone has no item to pair with yet, so there is nothing to publish.
+  assert.deepEqual(project(event(5, "runtime-request.updated", pending)), []);
+  const out = project(event(6, "turn-item.updated", { type: "approval_request", requestId: "approval_1", requestKind: "command",
+    prompt: "Permit?", options: [{ decision: "accept", label: "Approve" }, { decision: "acceptAlways", label: "Always" }] }));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].event.type, "thread.activity-appended");
+  assert.deepEqual(out[0].event.payload.activity.payload.decisions, ["accept", "acceptAlways"]);
+
+  const resolved = project(event(7, "runtime-request.updated", { ...pending, status: "resolved", resolvedAt: date, decision: "acceptAlways" }));
+  assert.equal(resolved[0].event.payload.activity.kind, "approval.resolved");
+  assert.equal(resolved[0].event.payload.activity.payload.decision, "acceptAlways");
+});
+
+test("an expired approval is stale whatever options it carried; questions never grow a decisions field", () => {
+  const expired = collectProviderApprovals(v2Thread(approvalProjection(
+    { options: [{ decision: "accept", label: "Approve" }] }, { status: "expired", resolvedAt: date })));
+  assert.equal(expired[0].status, "stale");
+  const question = v2Thread({ ...projection(),
+    runtimeRequests: [{ id: "input_1", kind: "user_input", status: "pending", createdAt: date, resolvedAt: null }],
+    turnItems: [{ type: "user_input_request", requestId: "input_1", questions: [], options: [{ decision: "accept" }] }] });
+  assert.equal("decisions" in question.activities[0].payload, false);
 });

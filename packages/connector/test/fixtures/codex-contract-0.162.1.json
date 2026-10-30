@@ -1,0 +1,93 @@
+{
+  "capturedVersion": "codex-cli 0.162.1",
+  "source": "codex app-server generate-json-schema (read-only generation; no session or provider call)",
+  "ThreadStartParams": {
+    "required": [],
+    "fields": [
+      "approvalPolicy",
+      "approvalsReviewer",
+      "baseInstructions",
+      "config",
+      "cwd",
+      "developerInstructions",
+      "ephemeral",
+      "model",
+      "modelProvider",
+      "personality",
+      "sandbox",
+      "serviceName",
+      "serviceTier",
+      "sessionStartSource",
+      "threadSource"
+    ]
+  },
+  "sandboxModes": [
+    "read-only",
+    "workspace-write",
+    "danger-full-access"
+  ],
+  "approvalPolicies": [
+    "untrusted",
+    "on-request",
+    "never"
+  ],
+  "ThreadResumeParams": {
+    "required": [
+      "threadId"
+    ],
+    "fields": [
+      "approvalPolicy",
+      "approvalsReviewer",
+      "baseInstructions",
+      "config",
+      "cwd",
+      "developerInstructions",
+      "excludeTurns",
+      "model",
+      "modelProvider",
+      "personality",
+      "sandbox",
+      "serviceTier",
+      "threadId"
+    ]
+  },
+  "ThreadTurnsListParams": {
+    "required": [
+      "threadId"
+    ],
+    "fields": [
+      "cursor",
+      "itemsView",
+      "limit",
+      "sortDirection",
+      "threadId"
+    ]
+  },
+  "TurnStartParams": {
+    "required": [
+      "input",
+      "threadId"
+    ],
+    "fields": [
+      "approvalPolicy",
+      "approvalsReviewer",
+      "clientUserMessageId",
+      "cwd",
+      "disabledPluginIds",
+      "effort",
+      "input",
+      "model",
+      "outputSchema",
+      "parentTurnId",
+      "personality",
+      "rootTurnId",
+      "sandboxPolicy",
+      "serviceTier",
+      "serviceTierForTurn",
+      "summary",
+      "threadId",
+      "toolOutput",
+      "turnTrigger"
+    ]
+  }
+}

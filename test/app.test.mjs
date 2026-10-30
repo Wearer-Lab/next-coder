@@ -530,11 +530,11 @@ test("T3 environment snapshot exposes projects and threads for session selection
 
 test("T3 compatibility checks detect version changes and persist breaking-risk alerts", async (t) => {
   const originalFetch = globalThis.fetch;
-  let serverVersion = "0.0.33";
+  let serverVersion = "0.1.6";
   globalThis.fetch = async (url) => {
     const parsed = new URL(String(url));
     if (parsed.hostname === "registry.npmjs.org") {
-      return jsonResponse({ version: "0.0.33" }, 200);
+      return jsonResponse({ version: "0.1.6" }, 200);
     }
     if (parsed.pathname === "/.well-known/t3/environment") {
       return jsonResponse({ serverVersion }, 200);
@@ -571,18 +571,18 @@ test("T3 compatibility checks detect version changes and persist breaking-risk a
     headers: authHeaders,
     body: {},
   });
-  assert.equal(first.release.latestVersion, "0.0.33");
+  assert.equal(first.release.latestVersion, "0.1.6");
   assert.equal(first.release.status, "review_required");
-  assert.equal(first.results[0].installedVersion, "0.0.33");
+  assert.equal(first.results[0].installedVersion, "0.1.6");
   assert.equal(first.results[0].versionChanged, false);
 
-  serverVersion = "0.0.34";
+  serverVersion = "0.1.7";
   const changed = await requestJson(originalFetch, baseUrl, "/v1/settings/t3-compatibility", {
     method: "POST",
     headers: authHeaders,
     body: {},
   });
-  assert.equal(changed.results[0].previousVersion, "0.0.33");
+  assert.equal(changed.results[0].previousVersion, "0.1.6");
   assert.equal(changed.results[0].versionChanged, true);
   assert.equal(changed.results[0].breakingRisk, true);
 
@@ -590,7 +590,7 @@ test("T3 compatibility checks detect version changes and persist breaking-risk a
     method: "GET",
     headers: authHeaders,
   });
-  assert.equal(saved.results[0].installedVersion, "0.0.34");
+  assert.equal(saved.results[0].installedVersion, "0.1.7");
   assert.equal(saved.summary.breakingRisks, 1);
 
   const alerts = await requestJson(originalFetch, baseUrl, "/v1/observability/alerts", {
@@ -4709,4 +4709,95 @@ test("the discovery endpoint identifies the gateway without authentication", asy
   assert.equal(body.service, "next-coder");
   assert.equal(body.claimRequired, true);
   assert.equal(typeof body.name, "string");
+});
+
+test("destination preview is read-only and commits environment folder and thread together", async (t) => {
+  const f = await environmentSelectionFixture(t);
+  await f.bind({ environmentId: f.bound.id, projectId: "proj_alpha", threadId: "thread_a" });
+  const before = await f.deviceConfig();
+  const folders = await requestJson(f.originalFetch, f.baseUrl,
+    `/v1/device/projects?environmentId=${f.spare.id}`, { headers: f.deviceHeaders });
+  assert.equal(folders.environmentId, f.spare.id);
+  assert.equal(folders.projects[0].id, "proj_spare");
+  const threads = await requestJson(f.originalFetch, f.baseUrl,
+    `/v1/device/threads?environmentId=${f.spare.id}&projectId=proj_spare`, { headers: f.deviceHeaders });
+  assert.deepEqual(threads.threads.map(row => row.id), ["thread_spare"]);
+  assert.deepEqual(await f.deviceConfig(), before, "browsing must not repoint the controller");
+  const selected = await requestJson(f.originalFetch, f.baseUrl, "/v1/device/config/thread", {
+    method: "POST", headers: f.deviceHeaders,
+    body: { destinationSelection: "atomic-v1", environmentId: f.spare.id, projectId: "proj_spare", threadId: "thread_spare" },
+  });
+  assert.equal(selected.config.environmentId, f.spare.id);
+  assert.equal(selected.config.projectId, "proj_spare");
+  assert.equal(selected.config.threadId, "thread_spare");
+});
+
+test("destination previews and commits cannot escape account or folder boundaries", async (t) => {
+  const f = await environmentSelectionFixture(t);
+  await f.bind({ environmentId: f.bound.id, projectId: "proj_alpha", threadId: "thread_a" });
+  const before = await f.deviceConfig();
+  for (const path of [`/v1/device/projects?environmentId=${f.foreign.id}`,
+    `/v1/device/threads?environmentId=${f.foreign.id}&projectId=proj_intruder`]) {
+    const response = await f.originalFetch(new URL(path, f.baseUrl), { headers: f.deviceHeaders });
+    assert.equal(response.status, 404);
+  }
+  for (const body of [
+    { environmentId: f.foreign.id, projectId: "proj_intruder", threadId: "thread_intruder" },
+    { environmentId: f.bound.id, projectId: "proj_beta", threadId: "thread_a" },
+    { environmentId: f.spare.id, projectId: "proj_alpha", threadId: "thread_spare" },
+    { environmentId: " ", projectId: "proj_alpha", threadId: "thread_a" },
+  ]) {
+    const response = await f.originalFetch(new URL("/v1/device/config/thread", f.baseUrl), {
+      method: "POST", headers: { ...f.deviceHeaders, "content-type": "application/json" }, body: JSON.stringify({ ...body, destinationSelection: "atomic-v1" }),
+    });
+    assert.ok([400, 404].includes(response.status));
+    assert.deepEqual(await f.deviceConfig(), before, "a rejected destination leaves all levels unchanged");
+  }
+});
+
+test("creating in a preview folder atomically selects its complete destination", async (t) => {
+  const f = await environmentSelectionFixture(t);
+  await f.bind({ environmentId: f.bound.id, projectId: "proj_alpha", threadId: "thread_a" });
+  f.snapshots["spare-t3.example"].projects[0].defaultModelSelection = { instanceId: "codex", model: "gpt-5.6" };
+  const made = await requestJson(f.originalFetch, f.baseUrl, "/v1/device/threads", {
+    method: "POST", headers: f.deviceHeaders,
+    body: { destinationSelection: "atomic-v1", environmentId: f.spare.id, projectId: "proj_spare", clientRequestId: "preview-create-1" },
+  });
+  assert.equal(made.config.environmentId, f.spare.id);
+  assert.equal(made.config.projectId, "proj_spare");
+  assert.equal(made.config.threadId, made.thread.id);
+  assert.equal(f.dispatches.length, 1);
+});
+
+test("atomic destination selection clears a former folder when choosing all folders", async (t) => {
+  const f = await environmentSelectionFixture(t);
+  await f.bind({ environmentId: f.bound.id, projectId: "proj_alpha", threadId: "thread_a" });
+  const result = await requestJson(f.originalFetch, f.baseUrl, "/v1/device/config/thread", {
+    method: "POST", headers: f.deviceHeaders,
+    body: { destinationSelection: "atomic-v1", environmentId: f.spare.id, projectId: null, threadId: "thread_spare" },
+  });
+  assert.equal(result.config.projectId, null);
+  assert.equal((await f.deviceConfig()).projectId, null);
+  assert.equal(result.config.environmentId, f.spare.id);
+});
+
+test("atomic destination selection rechecks revocation after waiting for its snapshot", async (t) => {
+  const f = await environmentSelectionFixture(t);
+  await f.bind({ environmentId: f.bound.id, projectId: "proj_alpha", threadId: "thread_a" });
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (new URL(String(url)).pathname === "/api/orchestration/snapshot") {
+      await f.store.revokeDevice({ userId: "user_dev", deviceId: f.created.device.id });
+    }
+    return await previous(url, init);
+  };
+  const response = await f.originalFetch(new URL("/v1/device/config/thread", f.baseUrl), {
+    method: "POST", headers: { ...f.deviceHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ destinationSelection: "atomic-v1", environmentId: f.spare.id,
+      projectId: "proj_spare", threadId: "thread_spare" }),
+  });
+  assert.equal(response.status, 401);
+  const device = await f.store.getDeviceForUser("user_dev", f.created.device.id);
+  assert.equal(device.config.environmentId, f.bound.id);
+  assert.equal(device.config.threadId, "thread_a");
 });

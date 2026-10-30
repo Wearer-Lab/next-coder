@@ -13,10 +13,17 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <vector>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
 constexpr size_t kMaxGatewayProfiles = 5;
+constexpr size_t kMaxSavedWifiNetworks = 5;
+
+struct WifiNetworkProfile {
+  String ssid;
+  String password;
+};
 
 struct GatewayProfile {
   String id;
@@ -127,8 +134,17 @@ class DeviceStore {
   // --- Wi-Fi. Written by the owner during provisioning. ---
   const String& wifiSsid() const { return wifiSsid_; }
   const String& wifiPassword() const { return wifiPassword_; }
-  bool hasWifiCredentials() const { return wifiSsid_.length() > 0; }
+  bool hasWifiCredentials() const { SettingsGuard settingsGuard(*this); return wifiSsid_.length() > 0; }
   bool setWifiCredentials(const String& ssid, const String& password);
+  // Snapshots own their strings; never retain reference getters across a task yield.
+  std::vector<WifiNetworkProfile> savedWifiNetworksSnapshot() const;
+  std::vector<String> savedWifiNamesSnapshot() const;
+  // Call only after association validated the exact SSID. A failed candidate is never saved.
+  // New SSIDs are refused at capacity; no known network is silently evicted.
+  bool saveWifiNetwork(const String& ssid, const String& password);
+  bool activateSavedWifiNetwork(const String& ssid);
+  // The active last-good profile cannot be forgotten; connect another one or reset setup first.
+  bool forgetWifiNetwork(const String& ssid);
 
   // --- Claim code cache. ---
   //
@@ -202,6 +218,9 @@ class DeviceStore {
   String readString(const char* key);
   bool putString(const char* key, const String& value);
 
+  void loadWifiNetworks();
+  bool commitWifiNetworks(const WifiNetworkProfile* profiles, size_t count);
+
   Preferences prefs_;
   bool opened_ = false;
   String deviceId_;
@@ -221,6 +240,9 @@ class DeviceStore {
   String previousGatewayUrl_;
   String gatewaySwitchState_ = "stable";
   String gatewaySwitchDetail_;
+  WifiNetworkProfile savedWifiNetworks_[kMaxSavedWifiNetworks];
+  size_t savedWifiNetworkCount_ = 0;
+  bool wifiProfilesPersisted_ = false;
   String wifiSsid_;
   String wifiPassword_;
   String claimCode_;

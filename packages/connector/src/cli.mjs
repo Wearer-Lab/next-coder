@@ -5,13 +5,14 @@ import { stdin as defaultStdin, stdout as defaultStdout, stderr as defaultStderr
 import { createInterface } from "node:readline/promises";
 import { beginCredentialRotation, CONNECTOR_VERSION, enrollConnector, revokeCloudConnector } from "./cloud.mjs";
 import { ConnectorClient } from "./connector.mjs";
+import { connectDirect } from "./directConnect.mjs";
 import { defaultStateDir, inspectStatePermissions, loadState, removeState, saveRuntimeState, saveState, STATE_VERSION, validateHttpUrl } from "./config.mjs";
 import { diagnose } from "./diagnostics.mjs";
 import { createBoundedFileLogger } from "./fileLogger.mjs";
 import { safeError } from "./redact.mjs";
 import { installService, readServiceLogs, restartService, serviceActive, serviceInstalled, servicePaths, startService, stopService, uninstallService } from "./service.mjs";
 import { createT3Client, discoverT3, exchangePairingToken } from "./t3.mjs";
-import { consumeT3Handoff, createLocalT3PairingToken, ensureLocalT3, inspectOwnedT3, requestT3Handoff, stopOwnedT3 } from "./t3Process.mjs";
+import { consumeT3Handoff, createLocalT3PairingToken, DEFAULT_T3_VERSION, ensureLocalT3, inspectOwnedT3, requestT3Handoff, stopOwnedT3 } from "./t3Process.mjs";
 import { applyConnectorUpdate, checkConnectorUpdate } from "./update.mjs";
 
 import { prepareVoiceRuntime, setupVoiceRuntime, inspectVoiceRuntime } from "./voiceRuntime.mjs";
@@ -95,8 +96,16 @@ export function parseArgs(argv) {
 async function connectCommand(options, dependencies = {}) {
   const { stateDir, stdout, stderr, env = process.env, fetchImpl = globalThis.fetch, WebSocketImpl = globalThis.WebSocket, Connector = ConnectorClient, credentialStore = null } = dependencies;
   const hostPlatform = dependencies.platform ?? platform();
-  const existing = await loadState(stateDir, { requireSecure: true, credentialStore });
+  let existing = await loadState(stateDir, { requireSecure: true, credentialStore });
+  if (options.t3Url && !options.agentsFile && existing?.agentConfig) {
+    const { agentConfig, ...t3State } = existing;
+    existing = t3State;
+  }
   if (existing && options.code && !options.replace) throw usage("This machine is already enrolled. Use connect without --code, or use --replace to enroll a replacement credential.");
+  if (options.agentsFile || existing?.agentConfig) {
+    if (options.t3Url || options.startT3) throw usage("Direct agent configuration cannot be combined with T3 launch options.");
+    return await connectDirect(options, existing, dependencies);
+  }
   if (options.startT3 && options.noStartT3) throw usage("--start-t3 and --no-start-t3 are mutually exclusive.");
   let runtime = null;
   let transferRuntime = false;
@@ -112,7 +121,7 @@ async function connectCommand(options, dependencies = {}) {
     let pairingToken = options.t3PairingToken;
     if (!t3AccessToken && !pairingToken) {
       pairingToken = await (dependencies.createT3PairingToken ?? createLocalT3PairingToken)({
-        baseUrl, baseDir: t3BaseDir, env, fs: dependencies.fs, findExecutable: dependencies.findExecutable, run: dependencies.runT3Command,
+        baseUrl, baseDir: t3BaseDir, env, fs: dependencies.fs, findExecutable: dependencies.findExecutable, run: dependencies.runT3Command, explicitT3Version: options.t3Version,
         platform: hostPlatform, nodeExecutable: dependencies.nodeExecutable, resolveLauncher: dependencies.resolveNpxLauncher,
       });
     }
@@ -149,7 +158,19 @@ async function connectCommand(options, dependencies = {}) {
     else if (credentialStore) write(stderr, `Warning: native credential storage is unavailable (${credentialStore.fallbackReason}); the standing credential uses the restricted local state file.\n`);
     if (!state.t3AccessToken) write(stderr, "Warning: T3 is reachable but not authenticated; protected requests will fail until a local T3 access token is configured.\n");
     if (options.installService) {
-      await installService(serviceOptions({ ...dependencies, stateDir, env }));
+      // Injected the way `ensureT3` and `createT3PairingToken` already are, so the path from the
+      // command line into the written service definition is testable. It had no coverage at all,
+      // which is how the T3 launch options came to be silently dropped here.
+      const install = dependencies.installService ?? installService;
+      await install(serviceOptions({
+        ...dependencies,
+        stateDir,
+        env,
+        // Only what the operator actually set. `serviceT3Arguments()` writes nothing for an unset
+        // option, so a plain install stays on the pinned default rather than freezing today's
+        // version into the service definition.
+        t3Launch: { version: options.t3Version, port: options.t3Port, startTimeoutMs: options.t3StartTimeoutMs },
+      }));
       transferRuntime = true;
       write(stdout, "Connector service installed and started for this user.\n");
       return 0;
@@ -258,7 +279,10 @@ async function rotateCommand(options, dependencies = {}) {
 }
 
 async function activateCredentialRotation(state, { fetchImpl, WebSocketImpl, timeoutMs }) {
-  const t3 = createT3Client({ baseUrl: state.t3BaseUrl, accessToken: state.t3AccessToken, fetchImpl, WebSocketImpl });
+  // The short-lived credential bridge never opens native agent sessions or becomes another
+  // local-state writer. Requests during the service handoff fail explicitly and retry safely.
+  const unavailable = async () => { throw Object.assign(new Error("Direct agents are reconnecting during credential rotation."), { code: "AGENT_RECONNECTING", retryable: true }); };
+  const t3 = state.agentConfig ? { environmentInfo: unavailable, snapshot: unavailable, capabilityProbe: unavailable } : createT3Client({ baseUrl: state.t3BaseUrl, accessToken: state.t3AccessToken, fetchImpl, WebSocketImpl });
   const bridge = new ConnectorClient({
     state,
     t3,
@@ -316,7 +340,7 @@ async function voiceCommand(options, dependencies) {
 async function diagnosticCommand(options, dependencies = {}) {
   const { stateDir, stdout, fetchImpl = globalThis.fetch, WebSocketImpl = globalThis.WebSocket, exec, credentialStore = null } = dependencies;
   const state = await loadState(stateDir, { credentialStore });
-  const t3 = state ? createT3Client({ baseUrl: state.t3BaseUrl, accessToken: state.t3AccessToken, fetchImpl, WebSocketImpl }) : null;
+  const t3 = state?.agentConfig ? null : state ? createT3Client({ baseUrl: state.t3BaseUrl, accessToken: state.t3AccessToken, fetchImpl, WebSocketImpl }) : null;
   let ownedT3;
   try {
     ownedT3 = await (dependencies.inspectOwnedT3 ?? inspectOwnedT3)({
@@ -491,6 +515,7 @@ async function prepareT3Runtime(options, existing, dependencies) {
     baseDir: options.t3BaseDir ?? existing?.t3BaseDir,
     autoStart: !options.noStartT3,
     timeoutMs: options.t3StartTimeoutMs ?? 60_000,
+    explicitT3Version: options.t3Version,
     fetchImpl: dependencies.fetchImpl,
     fs: dependencies.fs,
     spawnImpl: dependencies.spawnT3,
@@ -508,7 +533,7 @@ async function prepareT3Runtime(options, existing, dependencies) {
 function allowedFlags(command) {
   const common = ["--state-dir"];
   const map = {
-    connect: [...common, "--server", "--code", "--label", "--t3-url", "--t3-token-file", "--t3-pairing-token", "--t3-base-dir", "--t3-port", "--t3-start-timeout-ms", "--start-t3", "--no-start-t3", "--once", "--replace", "--install-service", "--service-log"],
+    connect: [...common, "--agents-file", "--server", "--code", "--label", "--t3-url", "--t3-token-file", "--t3-pairing-token", "--t3-base-dir", "--t3-port", "--t3-start-timeout-ms", "--t3-version", "--start-t3", "--no-start-t3", "--once", "--replace", "--install-service", "--service-log"],
     voice: [...common, "--json"],
     status: [...common, "--json"], doctor: [...common, "--json"], disconnect: [...common, "--yes", "--revoke-cloud", "--force-local"],
     rotate: [...common, "--server", "--code", "--yes"],
@@ -526,13 +551,17 @@ function usage(message) { return Object.assign(new Error(message), { code: "USAG
 function unsupported(message) { return Object.assign(new Error(message), { code: "UNSUPPORTED" }); }
 function write(stream, value) { stream.write(value); }
 function formatItem(value) { return typeof value === "string" ? value : JSON.stringify(value); }
-function serviceOptions({ stateDir, platform: platformOverride, env = process.env, home, uid, fs, runServiceCommand, packageDir } = {}) {
-  return { stateDir, platform: platformOverride, env, home, uid, fs, run: runServiceCommand, packageDir };
+function serviceOptions({ stateDir, platform: platformOverride, env = process.env, home, uid, fs, runServiceCommand, packageDir, t3Launch } = {}) {
+  // `t3Launch` has to be carried explicitly: this function drops unknown keys, so an option the
+  // operator passed on the command line would otherwise vanish on its way to the service
+  // definition and the installed service would silently start a different T3 than the foreground
+  // run just used.
+  return { stateDir, platform: platformOverride, env, home, uid, fs, run: runServiceCommand, packageDir, t3Launch };
 }
 
 function helpText(command) {
   if (command === "voice") return "Usage: next-coder-connect voice setup [--state-dir PATH]\n       next-coder-connect voice status [--json]\n\nConnect prepares and maintains built-in voice automatically. Setup downloads the local model (about 660 MB), Python and inference dependencies in the per-user state directory. Status checks readiness without installing anything.\n";
-  if (command === "connect") return `Usage: next-coder-connect connect --server URL --code CODE [options]\n\nOptions:\n  --t3-url URL            T3 URL (default discovery: http://127.0.0.1:3773)\n  --start-t3              Explicitly allow starting loopback T3 when absent (default behavior)\n  --no-start-t3           Never start T3; fail if the configured server is absent\n  --t3-port PORT          Loopback auto-start port (default 3773)\n  --t3-base-dir PATH      T3 state directory; never treated as a project\n  --t3-start-timeout-ms N Bounded readiness timeout (1000-300000)\n  --t3-token-file PATH    Read the T3 access token from a local file\n  --t3-pairing-token TOKEN Exchange a one-time local T3 pairing token\n  --label LABEL           Connector label\n  --once                  Connect through welcome once, then exit (diagnostics/tests)\n  --replace               Rotate by re-enrolling an existing environment\n  --install-service       Install and start an owned per-user launchd/systemd service\n  --state-dir PATH        Override the local config directory\n`;
+  if (command === "connect") return `Usage: next-coder-connect connect --server URL --code CODE [options]\n\nOptions:\n  --agents-file PATH      Direct Codex/Claude/ACP configuration; T3 is optional\n  --t3-url URL            T3 URL (default discovery: http://127.0.0.1:3773)\n  --start-t3              Explicitly allow starting loopback T3 when absent (default behavior)\n  --no-start-t3           Never start T3; fail if the configured server is absent\n  --t3-port PORT          Loopback auto-start port (default 3773)\n  --t3-base-dir PATH      T3 state directory; never treated as a project\n  --t3-start-timeout-ms N Bounded readiness timeout (1000-300000)\n  --t3-version VERSION    Exact T3 Code release to auto-start (default ${DEFAULT_T3_VERSION})\n  --t3-token-file PATH    Read the T3 access token from a local file\n  --t3-pairing-token TOKEN Exchange a one-time local T3 pairing token\n  --label LABEL           Connector label\n  --once                  Connect through welcome once, then exit (diagnostics/tests)\n  --replace               Rotate by re-enrolling an existing environment\n  --install-service       Install and start an owned per-user launchd/systemd service\n  --state-dir PATH        Override the local config directory\n`;
   if (command === "update") return `Usage: next-coder-connect update --check [--version VERSION]\n       next-coder-connect update --apply --yes [--restart-service] [--version VERSION]\n\nOptions:\n  --check                 Query npm without changing local files\n  --apply                 Update only the connector-owned managed runtime\n  --version VERSION       Resolve and install this exact published version (upgrade or rollback)\n  --yes                   Confirm a managed runtime replacement\n  --restart-service       Explicitly permit restarting a running service\n  --health-timeout-ms N   Bounded service/T3/cloud verification timeout (default 30000)\n  --state-dir PATH        Override the local config directory\n`;
   if (command === "rotate") return `Usage: next-coder-connect rotate --code CODE --yes\n       next-coder-connect rotate --yes\n\nOptions:\n  --code CODE             Start a bounded rotation with a user-minted code\n  --yes                   Confirm credential rotation\n  --server URL            Must match the enrolled cloud server\n  --state-dir PATH        Override the local config directory\n\nThe no-code form resumes an interrupted local rotation journal. Atomic handoff requires an installed connector-owned managed service.\n`;
   if (command === "disconnect") return `Usage: next-coder-connect disconnect --revoke-cloud --yes\n       next-coder-connect disconnect --force-local --yes\n\nOptions:\n  --revoke-cloud          Revoke this connector with its own credential before local cleanup\n  --force-local           Permit local-only cleanup, including fallback after a revoke failure\n  --yes                   Confirm revocation and/or local credential removal\n  --state-dir PATH        Override the local config directory\n\nWithout --force-local, a failed cloud revocation leaves the service and all local credentials intact for a safe retry.\n`;

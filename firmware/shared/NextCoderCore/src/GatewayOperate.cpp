@@ -77,6 +77,11 @@ const ThreadOption* GatewayClient::thread(size_t index) const {
   return index < threadCount_ ? &threads_[index] : nullptr;
 }
 
+bool GatewayClient::threadListMatches(const String& environmentId, const String& projectId) const {
+  return threadsScopeKnown_ && environmentId.length() > 0
+    && threadsEnvironmentId_ == environmentId && threadsProjectId_ == projectId;
+}
+
 const SavedMacro* GatewayClient::macro(size_t index) const {
   return index < macroCount_ ? &macros_[index] : nullptr;
 }
@@ -128,6 +133,7 @@ bool GatewayClient::applyConfigJson(const String& payload) {
   context_.projectId = nextProject;
   if (changedEnvironment) {
     threadCount_ = 0;
+    threadsScopeKnown_ = false;   // the rows it vouched for are gone
     nextThreadsAt_ = millis();
     nextControlsAt_ = millis();
   }
@@ -398,7 +404,26 @@ void GatewayClient::clearContextBinding(const String& environmentId, const Strin
   context_.environmentId = environmentId;
   context_.projectId = projectId;
   context_.threadId = "";
-  threadCount_ = 0;
+  // WHAT EMPTYING THE LIST PROTECTED. threads_ is the HOME picker's rows and the index space
+  // selectThread() validates against, and both assume it describes the folder the device is bound
+  // to. Moving to another environment or folder makes those rows another folder's threads: a swipe
+  // on the picker would offer a thread the next POST /v1/device/config/thread (which carries only a
+  // threadId and is resolved against the BOUND folder) cannot honour, or worse could honour.
+  //
+  // That is a statement about the folder, not about this call, so it is kept as exactly that: the
+  // rows survive when the gateway stamped them for the very destination being bound (picking another
+  // thread in the same folder, which is the common case and used to blank HOME until the next 30 s
+  // poll), and are emptied, with an immediate refetch, whenever the destination differs or the
+  // scope is unknown. Nothing here trusts the caller's idea of "same folder".
+  if (threadListMatches(environmentId, projectId)) {
+    // The binding was just dropped (threadId is empty until adoptThreadBinding), so no row is
+    // selected; leaving the previous thread flagged would show two bound threads for a moment.
+    for (size_t i = 0; i < threadCount_; ++i) threads_[i].selected = false;
+  } else {
+    threadCount_ = 0;
+    threadsScopeKnown_ = false;
+    nextThreadsAt_ = millis();
+  }
   selectedThreadIndex_ = -1;
   closeResponse();
   nextConfigAt_ = millis();
@@ -427,6 +452,15 @@ bool GatewayClient::refreshThreads() {
 
   threadsDetail_ = "";
   JsonArray threads = doc["threads"].as<JsonArray>();
+
+  // Record what this list is a list OF. The plain list route answers for the device's bound
+  // environment and folder and says which, under the same atomic-v1 contract the destination picker
+  // relies on (src/app.mjs, GET /v1/device/threads). A gateway that predates it sends no stamp, and
+  // then nothing may claim the rows are for any particular folder.
+  threadsEnvironmentId_ = String(doc["environmentId"] | "");
+  threadsProjectId_ = String(doc["projectId"] | "");
+  threadsScopeKnown_ = String(doc["destinationSelection"] | "") == "atomic-v1"
+    && threadsEnvironmentId_.length() > 0;
 
   // An accepted mutation can lead its snapshot projection by a poll or two. Settle only when the
   // raw list agrees; until then, the event's rename/removal remains authoritative on this device.
@@ -857,6 +891,7 @@ void GatewayClient::openResponse(const String& after) {
   responseOpen_ = true;
   responseAfter_ = after;
   response_ = ThreadResponse();
+  responseStream_.clear();
   // `waiting` versus `loading` is the difference between "an answer is coming" and "show me
   // whatever is already there". Only the first keeps runCycle() polling, and only an `after`
   // justifies it: without one the gateway would hand back the PREVIOUS turn's completed answer
@@ -873,99 +908,172 @@ void GatewayClient::closeResponse() {
   responseOpen_ = false;
   responseAfter_ = "";
   response_ = ThreadResponse();
+  responseStream_.clear();
   touch();
+}
+
+size_t GatewayClient::copyResponseStream(char* out, size_t capacity, bool* complete, bool* truncated) {
+  StateLock guard(this);
+  if (complete) *complete = responseStream_.complete;
+  if (truncated) *truncated = responseStream_.truncated;
+  if (!out || capacity == 0) return 0;
+  size_t length = responseStream_.textBytes;
+  if (length > capacity - 1) {
+    length = capacity - 1;
+    // Never hand back half a character: step back over continuation bytes to the sequence start.
+    while (length > 0 && (static_cast<uint8_t>(responseStream_.text[length]) & 0xC0) == 0x80) --length;
+    if (truncated) *truncated = true;
+  }
+  for (size_t i = 0; i < length; ++i) out[i] = responseStream_.text[i];
+  out[length] = '\0';
+  return length;
 }
 
 bool GatewayClient::fetchResponsePage(int page) {
   StateLock guard(this);
-  String path = String("/v1/device/thread-output?page=") + (page < 0 ? 0 : page);
-  if (responseAfter_.length() > 0) path += String("&after=") + encodePathSegment(responseAfter_);
+  if (response_.state == "error" && response_.retryPage >= 0 && page == response_.page) page = response_.retryPage;
 
-  const uint32_t requestedGeneration = responseGeneration_;
-  const String requestedEnvironment = context_.environmentId;
-  const String requestedThread = context_.threadId;
-  const String requestedAfter = responseAfter_;
-  String response;
-  const int code = request("GET", path.c_str(), "", response);
-  // The socket releases the state lock. A console/device selection or a newer dispatch can
-  // change the response while it is away; the old result has no authority over that model.
-  if (!responseOpen_ || requestedGeneration != responseGeneration_
-      || requestedEnvironment != context_.environmentId
-      || requestedThread != context_.threadId || requestedAfter != responseAfter_) return false;
-  if (!ok(code)) {
-    response_.state = "error";
-    response_.retryPending = code <= 0 || code == 429 || code >= 500;
-    if (response_.retryPending) nextDisplayAt_ = millis() + 3000;
-    response_.page = page < 0 ? 0 : page;
-    response_.pageCount = 1;
-    response_.lineCount = 2;
-    response_.lines[0] = "Response fetch failed";
-    response_.lines[1] = code == 409 ? String("Select a thread first") : remedyFor(code);
+  // A read normally ends the call. It repeats (never more than kMaxResponseStreamReads) only while
+  // the gateway reports text beyond the cursor that the previous read made progress towards, which
+  // is the device being several 512-character chunks behind. Without this a response opened on an
+  // already-finished reply would hold only its first chunk, because polling stops when the turn has.
+  for (uint8_t attempt = 0; attempt < kMaxResponseStreamReads; ++attempt) {
+    String path = String("/v1/device/thread-output?page=") + (page < 0 ? 0 : page);
+    if (responseAfter_.length() > 0) path += String("&after=") + encodePathSegment(responseAfter_);
+    // Name the message and how much of it is already held. Absent until something is held, so a
+    // first read, an older gateway and a cleared response all send exactly what they always did.
+    if (responseStream_.hasCursor()) {
+      char offset[12];
+      formatResponseStreamOffset(offset, sizeof(offset), responseStream_.consumed);
+      path += String("&streamMessageId=") + encodePathSegment(responseStream_.messageId);
+      path += "&streamOffset=";
+      path += offset;
+      // Echo the gateway's own digest of what is held, verbatim and percent-encoded (it is opaque,
+      // so no character is assumed safe). With it a rewritten prefix comes back as `reset`; without
+      // it the gateway can only notice a shrink. Never sent empty or stale: it is written by the same
+      // step as the text and count it describes, and is absent from a gateway that sends none.
+      if (responseStream_.sendsFingerprint()) {
+        path += "&streamFingerprint=";
+        path += encodePathSegment(String(responseStream_.fingerprint));
+      }
+    }
+
+    const uint32_t requestedGeneration = responseGeneration_;
+    const String requestedEnvironment = context_.environmentId;
+    const String requestedThread = context_.threadId;
+    const String requestedAfter = responseAfter_;
+    String response;
+    const int code = request("GET", path.c_str(), "", response);
+    // The socket releases the state lock. A console/device selection or a newer dispatch can
+    // change the response while it is away; the old result has no authority over that model. That
+    // includes the stream: this check runs before anything below touches `responseStream_`, and
+    // open/close clear it, so a late block can neither append to nor reset a newer selection.
+    if (!responseOpen_ || requestedGeneration != responseGeneration_
+        || requestedEnvironment != context_.environmentId
+        || requestedThread != context_.threadId || requestedAfter != responseAfter_) return false;
+    if (!ok(code)) {
+      response_.retryPage = page < 0 ? 0 : page;
+      response_.state = "error";
+      response_.retryPending = code <= 0 || code == 429 || code >= 500;
+      if (response_.retryPending) nextDisplayAt_ = millis() + 3000;
+      response_.errorDetail = code == 409 ? String("Select a thread first") : remedyFor(code);
+      if (response_.lineCount == 0) {
+        response_.lineCount = 1;
+        response_.lines[0] = "Response fetch failed";
+      }
+      response_.followUpCount = 0;
+      touch();
+      return false;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, response)) {
+      response_.retryPage = page < 0 ? 0 : page;
+      response_.state = "error";
+      response_.retryPending = true;
+      nextDisplayAt_ = millis() + 5000;
+      response_.errorDetail = "Bad response JSON; try again";
+      if (response_.lineCount == 0) {
+        response_.lineCount = 1;
+        response_.lines[0] = "Bad response JSON";
+      }
+      response_.followUpCount = 0;
+      touch();
+      return false;
+    }
+
+    JsonObject output = doc["response"];
+    if (output.isNull()) {
+      response_.retryPage = page < 0 ? 0 : page;
+      response_.state = "error";
+      response_.retryPending = true;
+      nextDisplayAt_ = millis() + 5000;
+      response_.errorDetail = "Invalid response; try again";
+      if (response_.lineCount == 0) {
+        response_.lineCount = 1;
+        response_.lines[0] = "Invalid response";
+      }
+      response_.followUpCount = 0;
+      touch();
+      return false;
+    }
+    response_.retryPending = false;
+    response_.retryPage = -1;
+    response_.errorDetail = "";
+    response_.truncated = output["truncated"] | false;
+    response_.state = String(output["state"] | "empty");
+    response_.messageId = String(output["messageId"] | "");
+    response_.page = output["page"] | 0;
+    response_.pageCount = max(1, (int)(output["pageCount"] | 1));
+
+    response_.lineCount = 0;
+    JsonArray lines = output["lines"].as<JsonArray>();
+    for (JsonVariant line : lines) {
+      if (response_.lineCount >= kMaxResponseLines) break;
+      response_.lines[response_.lineCount++] = String(line | "");
+    }
+    // Pad rather than leave the tail alone: a short final page would otherwise show the previous
+    // page's text under its own last line.
+    while (response_.lineCount < kMaxResponseLines) response_.lines[response_.lineCount++] = "";
+
+    // Follow-ups are a recommendation from the model, never authority — the gateway has already
+    // discarded any id that does not resolve to an enabled, assigned, non-system action. They default
+    // to requiring confirmation because a suggestion gets no shortcut past the local review step.
     response_.followUpCount = 0;
+    JsonArray suggestions = doc["suggestions"].as<JsonArray>();
+    for (JsonObject suggestion : suggestions) {
+      if (response_.followUpCount >= kMaxFollowUpActions) break;
+      const String actionId = String(suggestion["actionId"] | "");
+      if (actionId.length() == 0) continue;
+      DeviceControl& row = response_.followUps[response_.followUpCount++];
+      row = DeviceControl();
+      row.id = actionId;
+      row.actionId = actionId;
+      row.label = String(suggestion["label"] | "Action");
+      row.kind = String(suggestion["kind"] | "remote_action");
+      row.requiresThread = true;
+      row.requiresConfirmation = suggestion["requiresConfirmation"] | true;
+    }
+
+    // The incremental block is additive: a missing or non-object `stream` (older gateway) just
+    // drops any retained text and leaves everything above exactly as it was. Decoding here, while
+    // `doc` is alive, because `appended` points into it.
+    ResponseStreamBlock block;
+    JsonObject stream = output["stream"].as<JsonObject>();
+    if (!stream.isNull()) {
+      block.present = true;
+      block.messageId = stream["messageId"] | "";
+      block.offset = stream["offset"] | 0u;
+      block.total = stream["total"] | 0u;
+      block.appended = stream["appended"] | "";
+      block.fingerprint = stream["fingerprint"] | "";
+      block.complete = stream["complete"] | false;
+      block.reset = stream["reset"] | false;
+    }
+    const ResponseStreamUpdate update = applyResponseStream(responseStream_, block);
     touch();
-    return false;
+    if (!update.more) return true;
   }
-
-  JsonDocument doc;
-  if (deserializeJson(doc, response)) {
-    response_.state = "error";
-    response_.lineCount = 2;
-    response_.retryPending = true;
-    nextDisplayAt_ = millis() + 5000;
-    response_.lines[0] = "Bad response JSON";
-    response_.lines[1] = "Try again";
-    response_.followUpCount = 0;
-    touch();
-    return false;
-  }
-
-  JsonObject output = doc["response"];
-  if (output.isNull()) {
-    response_.state = "error";
-    response_.lineCount = 2;
-    response_.retryPending = true;
-    nextDisplayAt_ = millis() + 5000;
-    response_.lines[0] = "Invalid response";
-    response_.lines[1] = "Try again";
-    response_.followUpCount = 0;
-    touch();
-    return false;
-  }
-  response_.retryPending = false;
-  response_.state = String(output["state"] | "empty");
-  response_.messageId = String(output["messageId"] | "");
-  response_.page = output["page"] | 0;
-  response_.pageCount = max(1, (int)(output["pageCount"] | 1));
-
-  response_.lineCount = 0;
-  JsonArray lines = output["lines"].as<JsonArray>();
-  for (JsonVariant line : lines) {
-    if (response_.lineCount >= kMaxResponseLines) break;
-    response_.lines[response_.lineCount++] = String(line | "");
-  }
-  // Pad rather than leave the tail alone: a short final page would otherwise show the previous
-  // page's text under its own last line.
-  while (response_.lineCount < kMaxResponseLines) response_.lines[response_.lineCount++] = "";
-
-  // Follow-ups are a recommendation from the model, never authority — the gateway has already
-  // discarded any id that does not resolve to an enabled, assigned, non-system action. They default
-  // to requiring confirmation because a suggestion gets no shortcut past the local review step.
-  response_.followUpCount = 0;
-  JsonArray suggestions = doc["suggestions"].as<JsonArray>();
-  for (JsonObject suggestion : suggestions) {
-    if (response_.followUpCount >= kMaxFollowUpActions) break;
-    const String actionId = String(suggestion["actionId"] | "");
-    if (actionId.length() == 0) continue;
-    DeviceControl& row = response_.followUps[response_.followUpCount++];
-    row = DeviceControl();
-    row.id = actionId;
-    row.actionId = actionId;
-    row.label = String(suggestion["label"] | "Action");
-    row.kind = String(suggestion["kind"] | "remote_action");
-    row.requiresThread = true;
-    row.requiresConfirmation = suggestion["requiresConfirmation"] | true;
-  }
-  touch();
   return true;
 }
 

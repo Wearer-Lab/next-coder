@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { arch as currentArch } from "node:os";
 import { inspectStatePermissions } from "./config.mjs";
+import { t3CliPlatformSupport } from "./t3Process.mjs";
 
 const execFileAsync = promisify(execFile);
 const TAILSCALE_STATUS_TIMEOUT_MS = 3_000;
@@ -47,34 +49,51 @@ export async function tailscaleStatus({ exec = execFileAsync, platform = process
   return tailscaleProjection({ installed: false, state: "not_installed" });
 }
 
-export async function diagnose({ stateDir, state, t3, fetchImpl, exec, platform = process.platform, credentialStore = null, ownedT3 = null } = {}) {
+export async function diagnose({ stateDir, state, t3, fetchImpl, exec, platform = process.platform, arch = currentArch(), credentialStore = null, ownedT3 = null } = {}) {
   const permissions = await inspectStatePermissions(stateDir);
   const checks = [
     { id: "node", ok: Number(process.versions.node.split(".")[0]) >= 22, detail: `Node ${process.versions.node}` },
     { id: "state", ok: Boolean(state), detail: state ? `connector ${state.connectorId}` : "not enrolled" },
     { id: "permissions", ok: permissions.secure, detail: permissions.exists ? `mode ${permissions.mode.toString(8).padStart(3, "0")}` : "no state file" },
   ];
+  // Lets an owner learn before enrolling that T3 cannot run here (there is no darwin-x64 build).
+  // Informational for health: a T3 someone already runs, or direct agents, work on any platform,
+  // so this never fails `healthy` by itself; the t3 reachability checks remain authoritative.
+  const hostPlatform = hostPlatformReport({ platform, arch });
+  checks.push({
+    id: "t3_platform",
+    ok: hostPlatform.t3CliSupported,
+    required: false,
+    detail: hostPlatform.t3CliSupported
+      ? `${hostPlatform.key}: T3 publishes a command-line build for this platform`
+      : `${hostPlatform.key}: T3 does not publish a command-line build for this platform, so the connector cannot start T3 here (supported: ${hostPlatform.supported.join(", ")}). Run T3 elsewhere or on a supported computer, or use direct agents with --agents-file`,
+  });
   if (credentialStore) checks.push({
     id: "credential_storage",
     ok: true,
     detail: credentialStore.native ? credentialStore.backend : `private-file fallback (${credentialStore.fallbackReason})`,
   });
-  if (ownedT3?.managed) checks.push({
+  if (!state?.agentConfig && ownedT3?.managed) checks.push({
     id: "t3_process",
     ok: ownedT3.running && ownedT3.verified,
     detail: ownedT3.running && ownedT3.verified ? `connector-owned process verified (PID ${ownedT3.pid})` : ownedT3.status,
   });
-  else checks.push({ id: "t3_process", ok: true, detail: "user-managed or not started yet" });
+  else checks.push({ id: "t3_process", ok: true, detail: state?.agentConfig ? "not required for direct agents" : "user-managed or not started yet" });
   if (state) {
     const cloud = await cloudReachability(state.server, { fetchImpl });
     checks.push({ id: "cloud", ok: cloud.reachable, detail: cloud.reachable ? `HTTP ${cloud.status}` : cloud.error });
-    try {
+    if (!state.agentConfig) { try {
       const info = await t3.environmentInfo();
       checks.push({ id: "t3", ok: true, detail: `reachable${info?.version ? ` (${info.version})` : ""}` });
     } catch (error) {
       checks.push({ id: "t3", ok: false, detail: error?.code ?? "connection_failed" });
-    }
-    if (state.t3AccessToken) {
+    } }
+    if (state.agentConfig) {
+      checks.push({ id: "direct_agents", ok: true, detail: "Direct agent configuration is present. Authentication and native capabilities are verified when used; T3 is optional." });
+      const age = Date.now() - Date.parse(state.lastHeartbeatAt ?? "");
+      const fresh = Number.isFinite(age) && age >= 0 && age < 90_000 && state.runtimeHealth === "ready";
+      checks.push({ id: "direct_connection", ok: fresh, detail: fresh ? "The local direct bridge recently sent an outbound heartbeat. Check dashboard health for cloud acceptance." : "No current direct-runtime heartbeat. Start the connector and check dashboard health." });
+    } else if (state.t3AccessToken) {
       try { await t3.snapshot(); checks.push({ id: "t3_auth", ok: true, detail: "authenticated" }); }
       catch (error) { checks.push({ id: "t3_auth", ok: false, detail: error?.code ?? "authentication_failed" }); }
       if (typeof t3.capabilityProbe === "function") {
@@ -104,7 +123,14 @@ export async function diagnose({ stateDir, state, t3, fetchImpl, exec, platform 
     healthy: checks.filter((check) => check.id !== "tailscale" && check.required !== false).every((check) => check.ok),
     checks,
     tailscale,
+    hostPlatform,
   };
+}
+
+// Only the two public Node identifiers; no hostname, OS build, user or home path.
+function hostPlatformReport({ platform, arch }) {
+  const support = t3CliPlatformSupport({ platform, arch });
+  return { platform: support.platform, arch: support.arch, key: support.key, t3CliSupported: support.supported, supported: support.supportedKeys };
 }
 
 function tailscaleProjection({ installed, state }) {

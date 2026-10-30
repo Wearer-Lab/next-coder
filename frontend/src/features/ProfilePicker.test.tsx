@@ -95,6 +95,26 @@ test("stays quiet when the picker still matches the assigned profile", () => {
   expect(screen.getByText("assigned")).toBeVisible();
 });
 
+test("names both standing-grant capabilities in plain words, and separates them", () => {
+  render(
+    <ProfilePicker
+      name="test-profile"
+      legend="Policy profile"
+      profiles={[{
+        id: "power-controller",
+        label: "Power controller",
+        capabilities: ["approval_response_persistent", "approval_response_always"],
+      }]}
+      value="power-controller"
+      onChange={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByText(/permission for the whole session/)).toBeVisible();
+  expect(screen.getByText(/permission from now on, not just for one session/)).toBeVisible();
+  expect(screen.queryByText("approval_response_always")).toBeNull();
+});
+
 test("diffCapabilities separates grants from revocations", () => {
   expect(diffCapabilities(["status", "shell_input"], ["status", "agent_prompt"])).toEqual({
     granted: ["agent_prompt"],

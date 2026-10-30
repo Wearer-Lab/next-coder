@@ -55,7 +55,7 @@ import {
   type UserInputDraft,
   type UserInputRequest,
 } from "../userInput";
-import type { Command, JsonRecord, SavedAction, T3SessionFailure } from "../types";
+import type { Command, JsonRecord, SavedAction, T3ModelOption, T3SessionFailure } from "../types";
 import { useWorkspaceLoader } from "../useWorkspaceLoader";
 import { composerAvailability } from "../t3CapabilityAvailability";
 import {
@@ -80,6 +80,7 @@ import {
   type ComposerMode,
 } from "./Composer";
 import { WorkGraphPanel } from "./WorkGraphPanel";
+import { DirectAgentControls } from "./DirectAgentControls";
 // The Operations workspace speaks the console's "intelligence design" language: a black
 // canvas, hairline glass cards, a pixel display face and glowing pill calls to action.
 import "./intelligence-operate.css";
@@ -112,6 +113,10 @@ export function OperatePage({ controller }: { controller: Controller }) {
   const [providerInstance, setProviderInstance] = useState("");
   const [model, setModel] = useState("");
   const [modelSelectionMode, setModelSelectionMode] = useState<"automatic" | "manual">("automatic");
+  // Per-model switches the provider itself declares — reasoning effort, service tier, fast mode.
+  // Keyed by descriptor id because the ids are the provider's own: Codex calls its reasoning
+  // control `reasoningEffort` and Claude calls it `effort`, so nothing here may name one.
+  const [modelOptions, setModelOptions] = useState<Record<string, string | boolean>>({});
   const [actionLabel, setActionLabel] = useState("");
   const [editingActionId, setEditingActionId] = useState<string | null>(null);
   const savedActions = c.actions ?? [];
@@ -119,6 +124,22 @@ export function OperatePage({ controller }: { controller: Controller }) {
   const usableHarnesses = c.harnesses.filter((harness) => harness.available !== false);
   const activeHarness = c.harnesses.find((harness) => harness.instanceId === providerInstance) ?? null;
   const availableModels = activeHarness?.models ?? [];
+  const activeModel = availableModels.find((entry) => entry.slug === model) ?? null;
+  const optionDescriptors = activeModel?.options ?? [];
+  // A descriptor the owner has not touched falls back to the provider's own current value, then to
+  // the choice it marked default. Mirrors how T3's own client resolves them.
+  const optionValue = (descriptor: T3ModelOption): string | boolean | null => {
+    const chosen = modelOptions[descriptor.id];
+    if (chosen !== undefined) return chosen;
+    if (descriptor.currentValue !== null && descriptor.currentValue !== undefined) return descriptor.currentValue;
+    if (descriptor.type === "boolean") return false;
+    return descriptor.choices.find((choice) => choice.isDefault)?.id ?? descriptor.choices[0]?.id ?? null;
+  };
+  // Only what the owner actually chose is sent. Echoing the provider's current values back on
+  // every turn would make an unchanged selection look like a deliberate change.
+  const selectedModelOptions = optionDescriptors
+    .filter((descriptor) => modelOptions[descriptor.id] !== undefined)
+    .map((descriptor) => ({ id: descriptor.id, value: modelOptions[descriptor.id] }));
   const selectedThread = c.threads.find((thread) => thread.id === c.selectedThreadId) ?? null;
   const projectThreads = useMemo(
     () => c.selectedProjectId
@@ -272,18 +293,28 @@ export function OperatePage({ controller }: { controller: Controller }) {
     const harness = c.harnesses.find((entry) => entry.instanceId === instanceId);
     const models = harness?.models ?? [];
     setModel(models.some((entry) => entry.slug === model) ? model : models[0]?.slug ?? "");
+    setModelOptions({});
   };
 
   const selectModel = (slug: string) => {
     setModelSelectionMode("manual");
     if (c.selectedThreadId) c.setSelectedThreadId("");
     setModel(slug);
+    // Descriptor ids are per model, so carrying a previous choice across a model change would
+    // send an option the new model never declared and the gateway would refuse the dispatch.
+    setModelOptions({});
+  };
+
+  const selectModelOption = (id: string, value: string | boolean) => {
+    setModelSelectionMode("manual");
+    setModelOptions((current) => ({ ...current, [id]: value }));
   };
 
   const selectEnvironment = (environmentId: string) => {
     setModelSelectionMode("automatic");
     setProviderInstance("");
     setModel("");
+    setModelOptions({});
     setComposerMode("prompt");
     draft.clearAttachments();
     c.setSelectedEnvironmentId(environmentId);
@@ -469,7 +500,13 @@ export function OperatePage({ controller }: { controller: Controller }) {
             : "Open this project and report that the remote session is ready."),
         ...(attachmentIds.length > 0 ? { mediaUploadIds: attachmentIds } : {}),
         ...(providerInstance && model
-          ? { modelSelection: { instanceId: providerInstance, model } }
+          ? {
+            modelSelection: {
+              instanceId: providerInstance,
+              model,
+              ...(selectedModelOptions.length > 0 ? { options: selectedModelOptions } : {}),
+            },
+          }
           : {}),
       })
     );
@@ -599,6 +636,50 @@ export function OperatePage({ controller }: { controller: Controller }) {
           ))}
         </select>
       </label>
+      {/*
+        Rendered from the provider's own declared descriptors, not from a list of switches this
+        console knows about. That is the only way one control serves Codex's `reasoningEffort`
+        (low…ultra) and Claude's `effort` (low…ultrathink) without naming either, and the only way
+        a switch T3 adds later appears here without a frontend change.
+      */}
+      {optionDescriptors.map((descriptor) => {
+        const value = optionValue(descriptor);
+        const controlId = `model-option-${descriptor.id}`;
+        if (descriptor.type === "boolean") {
+          return (
+            <label className="thread-context-control thread-context-control--switch" key={descriptor.id}>
+              <span className="ac-eyebrow">{descriptor.label}</span>
+              <input
+                id={controlId}
+                type="checkbox"
+                aria-label={descriptor.label}
+                checked={value === true}
+                disabled={!c.selectedProjectId}
+                onChange={(event) => selectModelOption(descriptor.id, event.target.checked)}
+              />
+            </label>
+          );
+        }
+        return (
+          <label className="thread-context-control" key={descriptor.id}>
+            <span className="ac-eyebrow">{descriptor.label}</span>
+            <select
+              id={controlId}
+              aria-label={descriptor.label}
+              value={typeof value === "string" ? value : ""}
+              disabled={!c.selectedProjectId || descriptor.choices.length === 0}
+              onChange={(event) => selectModelOption(descriptor.id, event.target.value)}
+            >
+              {descriptor.choices.length === 0 ? <option value="">Not reported</option> : null}
+              {descriptor.choices.map((choice) => (
+                <option key={choice.id} value={choice.id} title={choice.description ?? undefined}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        );
+      })}
       <div className="thread-context-actions">
         {selectedWorkspaceLoadState === "loading" ? (
           <ActivityStatus
@@ -812,6 +893,9 @@ export function OperatePage({ controller }: { controller: Controller }) {
               key={approval.requestId}
               approval={approval}
               busyAction={c.busyAction}
+              // Same grant as the question card below: the console acts as `power-controller`,
+              // which carries `approval_response` (src/profiles.mjs).
+              canAnswer
               onDecide={(decision) => {
                 if (!c.selectedEnvironmentId || !c.selectedThreadId) return;
                 void c.answerProviderApproval?.(
@@ -919,6 +1003,7 @@ export function OperatePage({ controller }: { controller: Controller }) {
 
       <div className="thread-composer-dock">
         {contextToolbar}
+        <DirectAgentControls controller={c} runtimeId={providerInstance} model={model} />
 
         <LiveFrame active={turnInFlight} tone="live" variant="line" className="live-frame">
           <ComposerShell
@@ -1126,16 +1211,27 @@ function LiveThreadBanner({
 export function ProviderApprovalCard({
   approval,
   busyAction,
+  canAnswer,
   allowedDecisions,
   onDecide,
 }: {
   approval: ProviderApproval;
   busyAction: string | null;
+  /** False when the acting profile lacks `approval_response`. It still sees the request. */
+  canAnswer: boolean;
   allowedDecisions?: readonly string[];
   onDecide: (decision: ProviderApprovalDecision) => void;
 }) {
   const busy = busyAction === `provider-approval-${approval.requestId}`;
-  const offered = offeredProviderApprovalDecisions(allowedDecisions);
+  // A request may carry its own list: a direct native agent offers a subset and refuses the rest,
+  // so this request's buttons must not promise more than it accepts. The top-level list is the
+  // fallback for a request that did not state one.
+  const offered = canAnswer
+    ? offeredProviderApprovalDecisions(approval.allowedDecisions ?? allowedDecisions)
+    : [];
+  // Two different reasons for no buttons, and only one of them is the owner's profile. The
+  // profile check wins: a read-only controller is not told the agent is at fault.
+  const agentOfferedNothing = canAnswer && approval.allowedDecisions !== undefined && offered.length === 0;
   return (
     <LiveFrame active tone="attention" className="live-frame live-frame--approval">
       <section className="thread-approval" data-approval-kind="provider">
@@ -1152,7 +1248,9 @@ export function ProviderApprovalCard({
         </div>
         {offered.length === 0 ? (
           <p className="text-xs text-ink-muted">
-            This profile can see approvals but not answer them.
+            {agentOfferedNothing
+              ? "The agent offered no decision this console can send, so answer it where the agent is running."
+              : "This profile can see approvals but not answer them."}
           </p>
         ) : (
           <div className="flex flex-col gap-2">

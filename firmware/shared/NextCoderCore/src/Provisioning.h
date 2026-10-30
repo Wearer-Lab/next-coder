@@ -35,11 +35,58 @@ struct ProvisioningStatus {
   uint8_t joinFailures = 0;
 };
 
+constexpr size_t kMaxWifiScanNetworks = 12;
+struct WifiScanNetwork {
+  String ssid;
+  int32_t rssi = -127;
+  bool secured = true;
+  bool supported = false;
+  bool saved = false;
+};
+struct WifiScanSnapshot {
+  WifiScanNetwork networks[kMaxWifiScanNetworks];
+  size_t count = 0;
+  bool scanning = false;
+  bool failed = false;
+  uint32_t revision = 0;
+};
+enum class WifiConnectionPhase { Idle, Scanning, Joining, TryingAlternate, Failed, Connected };
+enum class WifiCandidateResult { None, Pending, Succeeded, Failed, Cancelled };
+struct WifiConnectionSnapshot {
+  WifiConnectionPhase phase = WifiConnectionPhase::Idle;
+  String activeSsid;
+  String targetSsid;
+  String detail;
+  bool joinPending = false;
+  size_t savedCount = 0;
+  uint32_t revision = 0;
+  uint32_t candidateId = 0;
+  WifiCandidateResult candidateResult = WifiCandidateResult::None;
+  String candidateDetail; // retained across automatic fallback until the next explicit candidate
+};
+
+enum class PhoneSetupPhase { Inactive, Ready, Queued, Joining, WaitingHotspot, Succeeded, Failed };
+struct PhoneSetupSnapshot {
+  bool active = false;
+  String apName;
+  String apPassword; // temporary setup AP only, for the local display's QR; never home credentials
+  String portalUrl;
+  String detail;
+  PhoneSetupPhase phase = PhoneSetupPhase::Inactive;
+  uint32_t candidateId = 0;
+  WifiCandidateResult candidateResult = WifiCandidateResult::None;
+  bool hotspotHandoff = false;
+  bool waitingForHotspot = false;
+  uint32_t remainingSeconds = 0;
+  uint32_t expiresInSeconds = 0;
+  uint32_t revision = 0;
+};
+
 class Provisioning {
  public:
   // `apNameSeed` is the device id; the AP takes its last four characters so two units on a bench
-  // are distinguishable. The portal is an open network on purpose — it never carries the device
-  // secret, and a WPA passphrase read off a 122x250 panel doubles the failure surface for no gain.
+  // are distinguishable. Legacy boot portals remain open for small-display compatibility;
+  // explicit phone setup instead uses a temporary WPA2 password conveyed only by its local QR.
   void begin(DeviceStore& store, const String& apNameSeed);
 
   // Drives the state machine. Non-blocking: call it from loop(). Returns the current state so the
@@ -71,6 +118,19 @@ class Provisioning {
   // True exactly once after a successful join, so the caller can re-run its gateway handshake.
   bool consumeJustConnected();
 
+  // Main/UI task only, like poll(). Wi-Fi snapshots are copies without saved-network passwords.
+  bool startWifiScan();
+  void cancelWifiScan();
+  WifiScanSnapshot wifiScanSnapshot() const { return scan_; }
+  WifiConnectionSnapshot wifiConnectionSnapshot() const { return wifi_; }
+  uint32_t wifiRevision() const { return wifi_.revision; }
+  bool tryWifiNetwork(const String& ssid, const String& password);
+  bool connectSavedWifiNetwork(const String& ssid);
+  void cancelWifiJoin();
+  bool beginPhoneSetup();
+  void endPhoneSetup();
+  PhoneSetupSnapshot phoneSetupSnapshot() const;
+
  private:
   void enterProvisioning(bool keepStation = false);
   void enterConnecting();
@@ -80,7 +140,24 @@ class Provisioning {
   void handlePortalSubmit();
   void handlePortalNotFound();
   void pollPortalJoin();
+  void pollWifiScan();
+  void pollSavedJoin(bool keepPortal);
+  void startSavedAttempt(bool keepPortal);
+  bool startWifiCandidate(const String& ssid, const String& password, bool saved, bool fromPortal);
+  bool validateWifiCandidate(const String& ssid, const String& password, bool saved);
+  void failWifiCandidate(const String& reason, bool cancelled = false);
+  void publishWifi(WifiConnectionPhase phase, const String& detail);
   String scanOptionsHtml();
+  void pollPhoneSetup();
+  bool phoneRequestAllowed(bool requireToken = true);
+  void handlePhoneRoot();
+  void handlePhoneStatus();
+  void handlePhoneConnect();
+  void handlePhoneScan();
+  void handlePhoneFinish();
+  bool queuePhoneNetwork(const String& requestId, const String& ssid, const String& password,
+                         bool saved = false, const String& previousRequestId = String(), bool hotspot = false);
+  void phoneHeaders();
 
   DeviceStore* store_ = nullptr;
   bool configPortal_ = false;
@@ -103,4 +180,27 @@ class Provisioning {
   String portalError_;
   String scanCache_;
   uint32_t scanCachedAt_ = 0;
+  WifiScanSnapshot scan_;
+  WifiConnectionSnapshot wifi_;
+  uint32_t scanStartedAt_ = 0;
+  bool candidateSaved_ = false;
+  bool candidateBeginPending_ = false;
+  bool candidateFromPortal_ = false;
+  bool savedJoinPending_ = false;
+  bool savedBeginPending_ = false;
+  String savedAttemptPassword_;
+  String savedAttemptSsid_;
+  size_t nextSavedIndex_ = 0;
+  size_t savedAttempts_ = 0;
+  uint32_t nextSavedAttemptAt_ = 0;
+  PhoneSetupSnapshot phone_;
+  String phoneNonce_;
+  String phoneRequestId_;
+  String phoneQueuedSsid_, phoneQueuedPassword_;
+  bool phoneQueuedSaved_ = false;
+  uint32_t phoneExpiresAt_ = 0;
+  uint32_t phoneStartAt_ = 0;
+  uint32_t phoneFinishAt_ = 0;
+  uint32_t phoneHotspotDeadline_ = 0;
+  bool phonePortalClosed_ = false;
 };

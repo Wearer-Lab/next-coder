@@ -9,11 +9,15 @@ import {
   extractSessionFailures,
   mergeHostCatalogue,
   normalizeCatalogueEntry,
+  defaultModelOptions,
   reconcileCommandStatus,
   resolveLatestModelSelection,
   resolveModelSelection,
   usableHarnesses,
+  validateModelOptionSelections,
   validateModelSelection,
+  normalizeModelOptionSelections,
+  MAX_MODEL_OPTION_SELECTIONS,
 } from "../src/t3Harness.mjs";
 
 // Captured from a live T3 Code 0.0.28 server and revalidated against 0.0.32 on this machine:
@@ -195,4 +199,93 @@ test("completion evidence is timed from dispatch start across a delayed acknowle
 test("explicit dispatch start survives later updates of completion timestamps", () => {
   const command = { status: "dispatched", createdAt: "2026-10-22T12:00:23.000Z", metrics: { dispatchStartedAt: "2026-10-22T12:00:00.000Z", completedAt: "2026-10-22T12:01:00.000Z", dispatchDurationMs: 23000 } };
   assert.equal(reconcileCommandStatus(command, { lastAssistantAt: "2026-10-22T12:00:22.800Z", lastAssistantText: "OK" }).status, "completed");
+});
+
+// --- Per-model provider options (reasoning effort, service tier, context window) ---------------
+//
+// These run against the captured caches rather than invented descriptors, because the whole point
+// is that the ids and values are the provider's own and this gateway must not name them.
+
+function catalogueModel(instanceId, slug = null) {
+  const entry = normalizeCatalogueEntry(CATALOGUE.find((candidate) => candidate.instanceId === instanceId));
+  return slug ? entry.models.find((model) => model.slug === slug) : entry.models[0];
+}
+
+test("the captured catalogue really does declare each provider's own reasoning control", () => {
+  // If this fails the fixture changed and the tests below prove nothing.
+  assert.deepEqual(catalogueModel("codex").options.map((option) => option.id), ["reasoningEffort", "serviceTier"]);
+  assert.deepEqual(catalogueModel("claudeAgent").options.map((option) => option.id), ["effort", "contextWindow"]);
+});
+
+test("a reasoning value the provider offers is accepted, including the extremes", () => {
+  const codex = catalogueModel("codex");
+  const effort = codex.options.find((option) => option.id === "reasoningEffort");
+  assert.ok(effort.choices.length >= 2, "the fixture must offer a real choice list");
+  for (const choice of effort.choices) {
+    assert.equal(validateModelOptionSelections([{ id: "reasoningEffort", value: choice.id }], codex), null);
+  }
+});
+
+test("one provider's reasoning id is refused for another's model", () => {
+  // Codex calls it reasoningEffort and Claude calls it effort. A gateway that accepted either for
+  // either would forward an option the provider never declared, and T3 would fail the turn
+  // asynchronously rather than refusing the dispatch.
+  const codex = catalogueModel("codex");
+  const claude = catalogueModel("claudeAgent");
+  assert.match(validateModelOptionSelections([{ id: "effort", value: "high" }], codex).reason, /Unknown option "effort"/u);
+  assert.match(validateModelOptionSelections([{ id: "reasoningEffort", value: "high" }], claude).reason, /Unknown option "reasoningEffort"/u);
+});
+
+test("an invented reasoning value is refused before dispatch and names what is offered", () => {
+  const codex = catalogueModel("codex");
+  const refusal = validateModelOptionSelections([{ id: "reasoningEffort", value: "maximum" }], codex);
+  assert.match(refusal.reason, /Unknown value "maximum"/u);
+  assert.ok(refusal.known.includes("max"), "the refusal must say what the provider does offer");
+});
+
+test("options ride along with a full model selection and are validated with it", () => {
+  const harnesses = mergeHostCatalogue([], CATALOGUE);
+  assert.equal(
+    validateModelSelection({ instanceId: "codex", model: catalogueModel("codex").slug, options: [{ id: "reasoningEffort", value: "max" }] }, harnesses),
+    null,
+  );
+  assert.ok(
+    validateModelSelection({ instanceId: "codex", model: catalogueModel("codex").slug, options: [{ id: "reasoningEffort", value: "nope" }] }, harnesses),
+    "a bad option must fail the whole selection, not be dropped",
+  );
+});
+
+test("a selection with no options stays valid, so an unchanged thread is never cleared", () => {
+  const harnesses = mergeHostCatalogue([], CATALOGUE);
+  const model = catalogueModel("codex").slug;
+  for (const options of [undefined, null]) {
+    assert.equal(validateModelSelection({ instanceId: "codex", model, options }, harnesses), null);
+  }
+});
+
+test("malformed option payloads are refused rather than coerced", () => {
+  const codex = catalogueModel("codex");
+  assert.ok(validateModelOptionSelections("reasoningEffort=max", codex));
+  assert.ok(validateModelOptionSelections([{ value: "max" }], codex));
+  assert.ok(validateModelOptionSelections([{ id: "reasoningEffort" }], codex));
+  assert.ok(validateModelOptionSelections([{ id: "reasoningEffort", value: "max" }, { id: "reasoningEffort", value: "low" }], codex));
+  const tooMany = Array.from({ length: MAX_MODEL_OPTION_SELECTIONS + 1 }, (_unused, index) => ({ id: `o${index}`, value: "x" }));
+  assert.match(validateModelOptionSelections(tooMany, codex).reason, /at most/u);
+});
+
+test("normalization keeps shape and drops junk without deciding what is allowed", () => {
+  assert.deepEqual(
+    normalizeModelOptionSelections([{ id: "effort", value: "max" }, { id: "fast", value: true }, { id: "", value: "x" }, { id: "bad" }, "nope"]),
+    [{ id: "effort", value: "max" }, { id: "fast", value: true }],
+  );
+  assert.equal(normalizeModelOptionSelections([]), null);
+  assert.equal(normalizeModelOptionSelections("effort=max"), null);
+});
+
+test("the default options for a model come from the provider's own current values", () => {
+  const codex = catalogueModel("codex");
+  const defaults = defaultModelOptions(codex);
+  const effort = defaults.find((option) => option.id === "reasoningEffort");
+  assert.ok(effort, "a model declaring reasoningEffort must produce a default for it");
+  assert.equal(validateModelOptionSelections(defaults, codex), null, "defaults must themselves be valid");
 });

@@ -8,7 +8,7 @@ Cloud control plane ("gateway") that lets remote controller hardware (ESP32 devi
 [T3 Code](https://github.com/pingdotgg/t3code) agent environments running on a user's own machine. The gateway never
 runs agents itself — it authenticates actors, applies policy, and dispatches orchestration commands to a paired T3 Code
 instance. In managed-cloud mode that traffic crosses an authenticated outbound connector WebSocket while T3 remains
-loopback-local; direct HTTP transport is retained only for self-hosted deployments.
+loopback-local; the direct transport (HTTP for T3 0.0.x, WebSocket for 0.1.x) is retained only for self-hosted deployments.
 
 Node >= 22 is required. The server uses ESM (`.mjs`) with **zero runtime web framework** — a hand-rolled `node:http`
 server. The frontend is React 19 + Vite 8 + Tailwind 4.
@@ -108,6 +108,31 @@ On macOS, send a hex-encoded `add-generic-password -X` command through `security
 Bare `-w` prompts through the controlling terminal and can store an empty value from a piped
 process. Verify the native write by reading it back before committing the state pointer.
 
+**The connector pins the T3 version it starts.** `DEFAULT_T3_VERSION` (`"0.1.5"`, in
+`packages/connector/src/t3Process.mjs`) is what `npx --yes t3@<version> serve` launches; `connect
+--t3-version` or `NEXT_CODER_T3_VERSION` may name one other **exact** version (a prerelease such as
+`0.1.6-nightly.20261029` is allowed; `latest`, ranges and URLs fail with `T3_VERSION_INVALID`), and the
+service installer captures an explicit choice at install time. The pin applies to the launch path and to
+`auth pairing create` (same base directory, so it must be the same version) and is never consulted when
+the connector reuses a T3 someone else started, which is judged by the protocol it advertises. The
+contract moved inside 0.1.x (resume policy, subscribe opt-ins, default Claude slug, removed RPCs), so an
+unpinned `npx t3` took whatever resolved that day. **An override is an unaudited T3**: only 0.1.1 and
+0.1.5 were read, and changing the default means re-running the audit's extraction first. The pin makes
+the launched version deterministic; it does not make 0.1.5 verified. `src/t3Compatibility.mjs` keeps
+that distinction: `maximumTestedVersion` is 0.1.1 (run live), `maximumAuditedVersion` is 0.1.5 (read, never
+run), and a version between them reports `review_required` worded as "read, never run". 0.0.33 to 0.1.0
+were examined by no one and inherit "supported" from the ceiling.
+
+**Intel Macs (`darwin-x64`) cannot run T3 >= 0.1.0 at all.** The `t3` launcher supports exactly
+`darwin-arm64`, `linux-arm64`, `linux-x64`, `win32-arm64` and `win32-x64`; the connector mirrors that as
+`T3_CLI_PLATFORMS` and refuses with `T3_PLATFORM_UNSUPPORTED` before touching ownership state. The only
+T3 an Intel Mac can run from npm is the 0.0.x JavaScript line (protocol 1), reached through
+`--no-start-t3` against a hand-started T3 plus `--t3-pairing-token` or `--t3-token-file`. That path was
+blocked until 2026-10-30 by the `orchestration:write` pairing scope above; it is now unblocked in source,
+unproven in practice (no 0.0.x run, no Intel hardware). The honest product statement is Apple Silicon,
+x64/ARM64 Linux, x64/ARM64 Windows. The direct-agents path needs no T3 and is the answer for unsupported
+hardware, not a substitute for the console's T3 features.
+
 Connector-owned T3 process control is exact and platform-specific. POSIX uses a detached process
 group. Windows never executes `npx.cmd` through a shell: it resolves the verified npm
 `npx-cli.js`, launches it with the current `node.exe` and an argument array, fingerprints the
@@ -153,10 +178,21 @@ cookie is used and the query token is ignored.
 
 ### Agent harnesses and models
 
-Verified against a live T3 Code 0.0.28: `GET /api/orchestration/snapshot` returns **only**
-`{snapshotSequence, projects, threads, updatedAt}`. There is no provider catalogue on the paired
-HTTP API — T3 publishes it to its own web UI over the authenticated WebSocket (server spans:
-`upsertProviders`, `publishEnrichedSnapshot`). So harnesses come from two places, merged in
+**The T3 version matters in almost every paragraph below.** Unless a sentence names another version,
+a T3 contract in this file was established against T3 Code 0.0.28/0.0.32 (orchestration protocol 1).
+The owner's production T3 is 0.1.1 and the connector's pinned default is 0.1.5; both speak protocol 2,
+which differs materially (no orchestration HTTP routes, no `activities[]`, five approval decisions).
+[docs/t3-version-audit.md](docs/t3-version-audit.md) is the evidence-based comparison: a verdict per
+assumption, bundle line citations, and the method for reading any version's server source. Read it
+before trusting or extending a T3 claim here. Nothing in this repository has been observed against a
+running 0.1.5; every 0.1.5 statement is "the shipped bundle says", not "the server does".
+
+On T3 0.0.x (protocol 1, verified against a live 0.0.28), `GET /api/orchestration/snapshot` returns
+**only** `{snapshotSequence, projects, threads, updatedAt}`; that route does not exist at 0.1.x, where
+`orchestration.subscribeShell` is the equivalent (see "The T3 WebSocket API"). At neither version is
+there a provider catalogue on the paired HTTP API — T3 publishes it to its own web UI over the
+authenticated WebSocket (0.0.32 server spans: `upsertProviders`, `publishEnrichedSnapshot`; the
+`server.getConfig` RPC still returns it at 0.1.5). So harnesses come from two places, merged in
 `src/t3Harness.mjs`:
 
 1. **Snapshot-derived** — instances/models referenced by `projects[].defaultModelSelection` and
@@ -176,36 +212,84 @@ now validates before dispatch (422), and `extractSessionFailures()` surfaces `th
 ### The T3 WebSocket API
 
 T3 v0.1.1 advertises orchestration protocol 2 in `/.well-known/t3/environment`. Its old
-orchestration HTTP URLs return the web application, not snapshots. The local connector negotiates
+orchestration HTTP URLs return the web application, not snapshots. The 0.1.1 and 0.1.5 route tables
+agree (below). The local connector negotiates
 `orchestrationProtocol=2` on the ticket-authenticated socket and projects `subscribeShell` and
 bounded `subscribeThread` snapshots through `packages/connector/src/t3v2.mjs`. Native v2 message
 updates contain absolute text; only their streaming suffix becomes a gateway delta. Run IDs replace
 legacy active-turn IDs. Permission modes are set on the thread before `message.dispatch`, and local
-pairing requests `orchestration:operate` rather than the v1 `orchestration:write` scope. Reconnects
-request authoritative snapshots; native v2 historical pagination is not advertised by this adapter.
-On 2026-10-22 an isolated live v0.1.1 server returned actual Codex replies through both snapshot
-and streaming paths. This proves the local adapter, separately from cloud enrollment and hardware.
+pairing requests `orchestration:read orchestration:operate terminal:operate` (`T3_PAIRING_SCOPES`).
+Reconnects request authoritative snapshots; native v2 historical pagination is not advertised by this
+adapter. On 2026-10-22 an isolated live v0.1.1 server returned actual Codex replies through both
+snapshot and streaming paths. This proves the local adapter on 0.1.1, separately from cloud enrollment
+and hardware, and says nothing about 0.1.5.
 
-The orchestration HTTP API only exposes projects and threads. Everything else — the provider
-catalogue, terminals, settings — is served over an authenticated WebSocket speaking Effect's RPC
-protocol. `src/t3Ws.mjs` implements it (reverse-engineered against T3 Code 0.0.28, verified live):
+**The pairing scope was wrong for protocol 1 until 2026-10-30.** The connector's protocol-1 exchange
+requested `orchestration:write`, which is not a T3 scope at any version: 0.0.32's `token` handler
+answers an unrecognised scope with `invalid_scope` and rejects the whole exchange (0.0.32
+`src/auth/http.ts:261-277`), and 0.1.x silently drops it (`bundle-0.1.5.js:387157`), leaving a token
+without `operate`. The real scopes are `orchestration:read`, `orchestration:operate` and
+`terminal:operate` (0.0.32 `packages/contracts/src/auth.ts:76-94`; `bundle-0.1.5.js:29303`), and
+`operate` is what guards dispatch at every version. That fix is read from sources and covered by a
+request-shape test; no protocol-1 pairing against a running 0.0.x has been observed.
+
+**Protocol selection follows what the server advertises, never its version string.**
+`orchestrationProtocolVersion` in `/.well-known/t3/environment` is optional and **an absent field
+means 1** (`bundle-0.1.5.js:140431`). The connector (`fetchEnvironmentInfo`) and the direct transport
+(`negotiateOrchestrationProtocol` in `src/t3Ws.mjs`, cached per transport instance for five minutes)
+accept 1 or 2 and fail closed with `T3_PROTOCOL_UNSUPPORTED` for anything else. Protocol 1 (T3 0.0.x)
+keeps the HTTP routes `GET /api/orchestration/snapshot`, `GET /api/orchestration/threads/:id` and
+`POST /api/orchestration/dispatch`. **At 0.1.x the snapshot and dispatch routes do not exist**: the
+0.1.5 orchestration HTTP table is exactly `shell`, `threads/:threadId`, `threads/:threadId/transcript`,
+`/bounded` and `/history` (`bundle-0.1.5.js:42414-42437`; 0.1.1 `bundle-0.1.1.js:37605-37630`), and the
+surviving `threads/:threadId` returns a different document: no `activities`, and `turnLimit` has no
+meaning. Everything moves to the WebSocket (`subscribeShell`, `subscribeThread`, `dispatchCommand`), and
+`/ws` answers **426 `orchestration_protocol_incompatible`** to any client that does not put
+`orchestrationProtocol=2` on the upgrade URL, before it authenticates (`bundle-0.1.5.js:406750-406752`,
+`408438-408442`; 0.1.1 `:394726`). The direct transport (`src/t3Transport.mjs`, `src/t3Client.mjs`)
+selects per call and uses `src/t3Protocol2.mjs` (see Conventions for why that file is a copy). Before
+that landed the direct transport could not work against any 0.1.x server. Unproven: its tests use a fake
+T3 and captured fixtures, and no live run of the direct protocol-2 path is recorded.
+
+On protocol 1 the orchestration HTTP API only exposes projects and threads. Everything else — the
+provider catalogue, terminals, settings — is served over an authenticated WebSocket speaking Effect's
+RPC protocol (on protocol 2 orchestration itself moves there too). `src/t3Ws.mjs` implements it
+(reverse-engineered against T3 Code 0.0.28, verified live; the framing below was re-read, not re-run, in
+the 0.1.1 and 0.1.5 bundles, which carry Effect 4.0.5 and the same message tags):
 
 ```
 POST /api/auth/websocket-ticket   ->  { ticket }
-ws://host/ws?wsTicket=...
+ws://host/ws?wsTicket=...                      (0.1.x: &orchestrationProtocol=2 is mandatory)
 client -> {"_tag":"Request","id","tag","payload","headers":[]}
 server -> {"_tag":"Exit","requestId","exit":{"_tag":"Success","value"}}
           {"_tag":"Chunk","requestId","values":[…]}   // must be Ack'd or the stream stalls
-          {"_tag":"Defect","defect":"Unknown request tag: …"}
+          {"_tag":"Defect","defect":"Unknown request tag: …"}   // see the correction below
 ```
+
+The `Defect` line is imprecise at every version: an unknown *method* tag is answered per request as an
+`Exit` carrying a die cause (`sendRequestDefect`, `bundle-0.1.5.js:185881`), and only an unknown
+message `_tag` produces the top-level `Defect` (`:185553`). `callT3Rpc` treats any non-`Success` `Exit`
+as `T3_RPC_FAILED`, so a method removed by a newer T3 surfaces as a failure, not a defect. Examples of
+tags that differ by version: `server.getSettings` exists at 0.0.32 and 0.1.1 and is gone at 0.1.5
+(nothing here calls it; the constant was deleted from the connector). At 0.1.5 the ticket route also
+accepts a `/:use` suffix (`rpc | media`); the un-suffixed `POST /api/auth/websocket-ticket` still issues
+an audience-less ticket that `/ws` accepts (`bundle-0.1.5.js:29459`, `145559-145565`).
 
 `tag` values are T3's `WS_METHODS` (`server.getConfig`, `terminal.open`, `terminal.write`,
 `orchestration.dispatchCommand`, …). `server.getConfig` returns `providers` — the authoritative
 harness catalogue, which is why `catalogueSource` can now be `"live"`.
 
-If T3 changes this protocol, its own contract is readable at
-`/opt/homebrew/lib/node_modules/t3/dist/bin.mjs.map` (the source map ships `sourcesContent`,
-including `packages/contracts/src/rpc.ts`).
+If T3 changes this protocol, its own contract is readable, but how depends on the version. **0.0.x**:
+`/opt/homebrew/lib/node_modules/t3/dist/bin.mjs.map` ships `sourcesContent` (including
+`packages/contracts/src/rpc.ts`); that npm package is 0.0.32. **0.1.x**: the npm `t3` package is now a
+launcher whose `dist/bin.mjs` is 101 bytes and there is no source map. The 160 MB `t3` executable it
+downloads to `~/.t3/runtime/versions/<version>/` embeds the server's whole bundle as one plain,
+unminified, comment-bearing text blob, and [docs/t3-version-audit.md](docs/t3-version-audit.md) section 5
+extracts it with a short script (its section 1 lists SHA-256 hashes, and the extraction reproduces them
+for 0.1.1 and 0.1.5). Cite such lines as `bundle-<version>.js:N` and name the version: line numbers move
+every release, and the bundler hoists declarations, so grep the identifier rather than trusting the
+file-split markers. Reading never requires running the binary, and `t3 serve` opens ports and writes
+under `~/.t3`; do not run it to "see what it says".
 
 ### The live thread stream
 
@@ -218,19 +302,36 @@ It is deliberately not built on `callT3Rpc`, which collects chunks and resolves 
 make a subscription a different lifecycle:
 
 - **Every `Chunk` must be `Ack`ed.** Not folklore — `effect/dist/unstable/rpc/RpcServer.js:271-291`
-  does `latch.closeUnsafe(); write(Chunk); await latch` per streaming request, and only an inbound
+  (the 0.0.32 path; 0.1.x bundles Effect 4.0.5 at `bundle-0.1.5.js:185685-185706`, same logic) does
+  `latch.closeUnsafe(); write(Chunk); await latch` per streaming request, and only an inbound
   `Ack` opens it. Miss one and the stream goes quiet forever while looking healthy. Closing sends
   `Interrupt` first, or the server fiber stays parked on a latch nobody will open.
-- **The resume cursor is the event's global `sequence`** (`EventBaseFields`,
-  packages/contracts/src/orchestration.ts:1257-1267), *not* the optional per-activity `sequence` at
-  :323, which only orders activities inside a turn. A reconnect passes it as `afterSequence`;
-  anything at or below the cursor is dropped, because T3 attaches the live subscription before
-  draining the replay (src/ws.ts:1300-1306) so the overlap is by design.
-- **T3 answers an unfillable gap with a snapshot, not an error.** Past `THREAD_RESUME_MAX_GAP`
-  (1000, src/ws.ts:307) or with a cursor ahead of its head, it abandons the replay and sends a
-  fresh thread snapshot, because a truncated replay would drop events silently. The gateway
-  publishes that as `reset: true, gap: true`: nothing is lost — the snapshot is the thread in
-  full — but the intermediate history is, and a client must replace rather than append.
+- **The resume cursor is the event's global `sequence`** (0.0.32 `EventBaseFields`,
+  packages/contracts/src/orchestration.ts:1257-1267; at 0.1.x the high-water mark is
+  `latestAgentSequence`, `MAX(sequence)` over the thread's event stream, `bundle-0.1.5.js:64620-64627`),
+  *not* the optional per-activity `sequence` at 0.0.32 :323, which only orders activities inside a turn.
+  A reconnect passes it as `afterSequence`; anything at or below the cursor is dropped. At 0.0.32 that
+  overlap is by design because T3 attaches the live subscription before draining the replay
+  (0.0.32 src/ws.ts:1300-1306). At 0.1.x T3 dedupes server-side (`withLiveDedupe`) and also *coalesces*
+  repeated `*.updated` events in a replay, so a replay can omit intermediate message states; the 0.1.x
+  attach-then-drain ordering was not traced (audit S4). The client-side dedup is what makes either safe.
+- **T3 answers an unfillable gap with a snapshot, not an error — but the bound is per version.** At
+  0.0.x, past `THREAD_RESUME_MAX_GAP` = 1000 (0.0.32 src/ws.ts:301-307) or with a cursor ahead of its
+  head. At 0.1.x **that constant no longer exists**: a snapshot answers a cursor ahead of the head, more
+  than **128** events, more than **1 MiB** of raw payload (`THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES =
+  1048576`), or a recreated thread (`bundle-0.1.5.js:407152-407176`, `decideThreadResume` `:370513`;
+  identical in 0.1.1 at `bundle-0.1.1.js:395124-395139`). 1000 survives only as `SHELL_RESUME_MAX_GAP` on
+  the shell stream, which this repository does not resume. `T3_THREAD_RESUME_LIMITS` in `src/t3Ws.mjs` is
+  the single statement of both. Either way T3 abandons the replay and sends a fresh thread snapshot,
+  because a truncated replay would drop events silently. The gateway publishes that as `reset: true,
+  gap: true`: nothing is lost — the snapshot is the thread in full — but the intermediate history is,
+  and a client must replace rather than append. A 0.1.x gap opens after far less absence than a 0.0.x
+  one (129 events, one long reply).
+- **Behind a connector, or on the direct transport, protocol 2 is never resumed.** The connector's
+  protocol-2 `openThreadStream()` discards the cursor (`afterSequence: undefined`) and the direct
+  transport passes `resumeProtocol2: false`, because a replay arrives with no snapshot in front of it
+  and the projection cannot rebuild a thread from one. So every protocol-2 reconnect is a snapshot, and
+  `gap: true` there means "the history was not delivered", not "T3 could not fill it".
 
 Subscriptions are **demand-driven leases**, the same discipline as the snapshot poller one level
 finer: `POST|DELETE /v1/t3/environments/:id/threads/:threadId/watch` registers/renews, a device
@@ -239,9 +340,13 @@ socket on the next tick. Watches are in-memory on purpose — the same category 
 poller's active-user set — so no store method was added. Constructed in `createApp()`, **started
 only from `server.mjs`**, with `runOnce()` that tests drive.
 
-`thread.message-sent` with `streaming: true` carries a **delta**, not the whole message
-(T3's own projector appends it, src/orchestration/projector.ts:497-515). Treating a delta as the
-full text shows the last few tokens of every reply.
+On protocol 1, `thread.message-sent` with `streaming: true` carries a **delta**, not the whole message
+(0.0.32's own projector appends it, src/orchestration/projector.ts:497-515). Treating a delta as the
+full text shows the last few tokens of every reply. Protocol 2 sends absolute text with a `streaming`
+flag; `t3v2.mjs` converts the growth into the same suffix delta so everything downstream sees one
+shape, and a message update that does not extend the text already held cannot be a suffix, so the stream
+is closed with `T3_STREAM_RESET_REQUIRED` and the reconnect takes a fresh snapshot. Not re-verified
+live at 0.1.5.
 
 ### One command, one decision
 
@@ -296,21 +401,51 @@ for. It is a `command` row with status `approval_required`, answered at
 
 A **provider approval** is T3 stopping mid-turn because the agent wants permission. It lives in T3
 as a live provider callback, expires with the session, and the gateway neither owns nor can extend
-it. `src/providerApprovals.mjs` carries the contract with file:line citations into T3 0.0.32's own
-sources; the three facts that matter:
+it. `src/providerApprovals.mjs` carries the contract with file:line citations — into 0.0.32's own
+sources for protocol 1, and, in its "T3 0.1.x SUPERSEDES" block, into the extracted 0.1.1 and 0.1.5
+bundles. The facts that matter, by version:
 
-- **The decision set is four, not two** — `accept` | `acceptForSession` | `decline` | `cancel`
-  (`ProviderApprovalDecision`). `acceptForSession` is "allow always": the Claude adapter returns
-  `updatedPermissions`, so it writes a rule rather than answering a question. `buildT3Command()`
-  used to fold everything to accept/decline, which made two of the four unreachable.
-- **Pending approvals are NOT in the orchestration snapshot** (thread bodies empty). They are
-  derived from `threads[].activities[]` — `approval.requested` opens, `approval.resolved` closes,
+- **The decision set is four at 0.0.x and FIVE at 0.1.x.** 0.0.32: `accept` | `acceptForSession` |
+  `decline` | `cancel` (`ProviderApprovalDecision`, 0.0.32 orchestration.ts:134-139). 0.1.1 and 0.1.5
+  add **`acceptAlways`** (`bundle-0.1.5.js:36665-36671`; 0.1.1 `:31403`). The two grants are not
+  synonyms and **not uniform across providers**, which is why the gateway never assumes: on Claude v2
+  `permissionResultFromDecision` (`bundle-0.1.5.js:274105-274123`) allows only `accept` and
+  `acceptForSession` (the latter also returns `updatedPermissions` scoped to the session, i.e. a rule
+  rather than an answer) and **everything else, `acceptAlways` included, falls through to a deny** —
+  sending it silently refuses what the owner meant to allow. Codex v2 folds `acceptAlways` into
+  `acceptForSession` for commands and file changes (`:307972-307973`, `:308021-308022`) and offers a real
+  "forever" only for an MCP elicitation that says so (`:304372`); the generic ACP adapter treats it as a
+  rejection (`:191154-191157`); OpenCode treats the two as the same act (`:336263-336269`); Muse splits
+  them by scope (`:345629`). It follows that "`acceptForSession` is allow-always" is only a 0.0.x
+  statement. `buildT3Command()` used to fold everything to accept/decline, which made two of the four
+  (then) unreachable.
+- **Approval requests carry their own `options[]`** at 0.1.x: `[{decision, label, warning?}]` naming which
+  decisions that provider accepts (`bundle-0.1.5.js:36673-36677`, turn item `:38519`; present in 0.1.1,
+  but Claude 0.1.1 never forwards its narrowing). The gateway narrows against a request's own list
+  (`offeredDecisions`) and, when a request states none, against T3's default four — which omits
+  `acceptAlways`, matching T3's own UI. This guard is the gateway's alone: T3's
+  `dispatchRuntimeRequestRespond` checks only that the request exists, is `pending` and is not
+  `not_resumable` (`bundle-0.1.5.js:366820-366860`) and does not enforce `options`.
+- **There are five request kinds at 0.1.x, not three** (`ProviderRequestKind`, `bundle-0.1.5.js:36658-36664`):
+  `command`, `file-read`, `file-change`, plus `mcp-elicitation` (Codex) and `permission` (generic bucket,
+  e.g. Muse). 0.0.32 had the first three. Requests also carry `fullAccessOverride` (new in 0.1.5),
+  `reason`, `appName` and a `responseCapability` (`live | message | not_resumable`) that the adapter
+  ignores; what the server does on answering a `message`-only or `not_resumable` request was not traced
+  (audit A6).
+- **Pending approvals are NOT in the orchestration snapshot** (thread bodies empty). At protocol 1 they
+  are derived from `threads[].activities[]` — `approval.requested` opens, `approval.resolved` closes,
   and `provider.approval.respond.failed` closes it **only** when the detail marks the request
   stale/unknown. That last clause is T3's own rule (`hasOpenBlockingRequest` in its decider) and
-  omitting it leaves a card on screen for a request nothing is waiting on.
-- **T3 accepts a response to a dead request and fails later, asynchronously.** So the gateway
+  omitting it leaves a card on screen for a request nothing is waiting on. **Protocol 2 has no
+  `activities[]` at all**: pending state is `runtimeRequests[].status` = `pending | resolved | expired |
+  cancelled` (`bundle-0.1.5.js:38103`), and `t3v2.mjs` re-synthesises legacy approval activities from it
+  (any status other than `pending` or `resolved` becomes stale), so the stale-phrase matching above is
+  moot on that path.
+- **T3 0.0.32 accepts a response to a dead request and fails later, asynchronously.** So the gateway
   verifies the approval is still open before it dispatches, rather than discovering the problem as
-  an error activity nobody reads.
+  an error activity nobody reads. At 0.1.x the server itself refuses a non-`pending` request
+  (`bundle-0.1.5.js:366820-366830`), but the gateway's check stays: it is the only thing that knows
+  whether the owner already answered.
 
 `answerProviderApproval()` in `app.mjs` claims the request id in the store *before* dispatching
 (`claimProviderApprovalDecision`, all three store backends). Same decision twice is a 200 duplicate
@@ -318,16 +453,22 @@ with one dispatch; a different decision is a 409, because the first answer has a
 failed dispatch releases the claim — otherwise one second of T3 downtime would lock the approval
 out of reach for the rest of the session.
 
-Policy: `approval_response_persistent` is its own capability, held by `power-controller` (the
-console) and not by `next-coder`. A standing grant made from a 240x320 panel, where the
-request detail is clipped, is not the same act as making it in the console. Under a `maxAutoRisk`
-ceiling of medium or lower it escalates to a gateway confirmation instead of dispatching.
-`read-only` **sees** pending approvals — listing is a read — and is offered no decision at all.
+Policy: `approval_response_persistent` (`acceptForSession`) is its own capability, held by
+`power-controller` (the console) and not by `next-coder`. A standing grant made from a 240x320 panel,
+where the request detail is clipped, is not the same act as making it in the console. `acceptAlways`
+is a *third* capability, `approval_response_always`, for the same reason one level up: it is held by
+`power-controller` only, and the policy engine additionally requires the actor to be the signed-in
+owner and refuses a controller outright whatever its profile says (`baseline.approval-accept-always`,
+risk high). Under a `maxAutoRisk` ceiling of medium or lower either escalates to a gateway
+confirmation instead of dispatching. `read-only` **sees** pending approvals — listing is a read — and
+is offered no decision at all.
 
 ### Terminal input (Phase 9 stage 3)
 
 `terminal_input` is a capability **no built-in profile grants** — it needs a custom profile *and* an
-environment paired with the `terminal:operate` scope, which standard pairing never requests. It is
+environment paired with the `terminal:operate` scope, which the gateway's standard pairing never requests
+(the connector's own token exchange always does, so a connector-paired environment holds the scope and
+the custom profile remains the gate). It is
 also confirm-always: `baseline.terminal-input` returns `requiresApproval` regardless of which
 dimension allowed it, because a raw terminal write cannot be pattern-screened. Dispatch goes over
 the socket (`terminal.open` then `terminal.write`), not orchestration dispatch — both in
@@ -342,7 +483,8 @@ hardcoded copy, which silently un-gated any newly added capability.
 each reachable poll calls `extractThreadOutcomes()` and `reconcileCommandStatus()`, flipping stuck
 `dispatched` commands to `failed` or `completed` and emitting a `command.reconciled` SSE event.
 
-The discriminators matter and were verified against real T3 state — **`session.status` reads
+The discriminators matter and were verified against real T3 0.0.x state (they were not re-derived for
+the protocol-2 projection, which builds status from runs in `t3v2.mjs`) — **`session.status` reads
 `"stopped"` for success *and* failure**, so it proves nothing on its own:
 
 | | failed turn | successful turn |
@@ -366,7 +508,16 @@ published on the **selected** row's `status` in `GET /v1/device/threads` — the
 reads (`presentationForState()` in the Hosyond `ui.cpp`). The other six words are never replaced;
 a verb only ever refines `running`.
 
-**The snapshot cannot answer this and never could.** T3's own handler comment
+**On protocol 2 this whole feature has no input, in production today.** Everything below describes
+reading `thread.activities[]` over `GET /api/orchestration/threads/:threadId?turnLimit=1`. Protocol 2
+produces no `activities[]` (it replaces them with `nodes[]`, `subagents[]` and typed `turnItems[]`), that
+route no longer returns them, and the connector's `v2Thread()` synthesises only approval and user-input
+activities. So against the owner's 0.1.1 an agent never leaves `running`, and the orb never shows
+`searching` / `solving` / `weaving` / `shaping`. This is an inference from reading the adapter and the
+audit (W1, W2), not a run. The code is kept because it is correct for protocol 1 and because a
+classifier over protocol 2's typed turn items would be new work, not a patch to this one.
+
+**The snapshot cannot answer this and never could** (on protocol 1). T3's own handler comment
 (`src/orchestration/http.ts` in the 0.0.32 source map) says `GET /api/orchestration/snapshot`
 serves "the lightweight command read model (thread bodies empty)" because hydrating every message
 and activity "has OOM-killed servers" — which is why `test/fixtures/t3-snapshot.json` carries no
@@ -572,7 +723,7 @@ be a correctness bug.
 | | what it is | answered at | answer |
 |---|---|---|---|
 | gateway hold | `evaluateIntentPolicy()` refused to dispatch something the owner asked for | `/v1/commands/:id/approve\|reject` | approve / reject |
-| provider approval | the agent stopped mid-turn asking permission (`src/providerApprovals.mjs`) | `.../threads/:id/approvals/:requestId` | T3's four `ProviderApprovalDecision` values |
+| provider approval | the agent stopped mid-turn asking permission (`src/providerApprovals.mjs`) | `.../threads/:id/approvals/:requestId` | T3's `ProviderApprovalDecision` values (four at 0.0.x, five at 0.1.x), narrowed to what the request offers |
 | agent question | the agent needs a **value** — "which database?" (`src/userInput.mjs`) | `.../threads/:id/user-input/:requestId` | a per-question answer set |
 
 T3 separates the last two in its own code: `ProviderRuntimeIngestion.ts:372` and `:403` return `[]`
@@ -581,6 +732,13 @@ for a `tool_user_input` request, so it produces no approval activity at all and 
 `"approval"`. Its stale-request phrases are four *different* strings from the approval ones
 (`decider.ts:49-52`) — reusing the approval matcher would never match and every abandoned question
 would read as pending forever.
+
+The citations in this subsection are 0.0.32's. At 0.1.x the separation holds (a runtime request of
+`kind: "user_input"`, its own `user_input_request` turn item, its own `thread.user-input.dismiss`
+command; `bundle-0.1.5.js:38103`, `:38476`), but questions gained `allowCustomAnswer`,
+`initialAnswer`, `required` and per-option `value` and `preview` (`:38226-38240`), and **which token
+the server accepts as the answer — `label` or `value` — and whether `allowCustomAnswer: false` rejects
+free text were not determined** (audit U2). `src/userInput.mjs` validates against `label` only.
 
 **Question shapes come from the data, not a flag.** `options` is a required array that may be empty
 (`providerRuntime.ts:450-459`), so: non-empty + `!multiSelect` = single-choice, non-empty +
@@ -679,7 +837,9 @@ The core write path, in `submitIntent()` (`src/app.mjs`):
    `/v1/commands/:id/approve|reject`.
 3. `buildT3Command()` (`src/t3Client.mjs`) translates the intent into T3's wire protocol (`thread.turn.start`,
    `thread.session.stop`, `thread.turn.interrupt`, `thread.approval.respond`).
-4. `dispatchT3Command()` POSTs to `{environment.baseUrl}/api/orchestration/dispatch`.
+4. `dispatchT3Command()` sends it to T3, choosing by the advertised protocol: on protocol 1 (0.0.x) a `POST`
+   to `{environment.baseUrl}/api/orchestration/dispatch`, a route that **does not exist at 0.1.x**; on
+   protocol 2 an `orchestration.dispatchCommand` RPC with the command mapped by `v2Command`.
 
 Media referenced by an intent becomes a real attachment (`buildMediaAttachments`): a signed,
 short-lived, single-media URL (`src/mediaLinks.mjs`) that `GET /v1/media/:id/content` honours
@@ -710,7 +870,8 @@ Every step writes a command record plus a `commandEvent` timeline entry, so `/v1
 full history. T3 commands are always dispatched with `runtimeMode: "approval-required"`.
 
 Self-hosted T3 environments can be paired by exchanging a pairing token at `{baseUrl}/oauth/token` (RFC 8693 token
-exchange) or by supplying an access token directly (local dev only). In `DEPLOYMENT_MODE=cloud`, connector enrollment
+exchange; the gateway asks for `orchestration:read orchestration:operate`, `STANDARD_T3_SCOPES`) or by supplying an
+access token directly (local dev only). In `DEPLOYMENT_MODE=cloud`, connector enrollment
 is the only pairing path: the legacy redeem/create routes fail before consuming a code, accepting a URL/token, or making
 network requests, and the transport resolver refuses persisted direct environments. Expired self-hosted tokens surface
 as `token_expired` health and block snapshot/dispatch until re-paired.
@@ -794,7 +955,19 @@ still renders for anyone not watching.
 
 #### T3-native agents and background work
 
-T3 0.0.32's shipped source map now proves a task lifecycle that earlier roadmap drafts treated as
+**This section describes protocol 1 (T3 0.0.x), and under protocol 2 the work graph has no input in
+production.** The `task.*` activity rows are 0.0.32's contract; 0.1.1 still defines the four literals in
+its provider-runtime schema (`bundle-0.1.1.js:32079-32082`), 0.1.5 no longer does, and neither protocol-2
+wire carries activities. T3's replacement is first-class — `subagents[]` (status, progress, `workflow`,
+`parentNodeId`, `childThreadId`) and `nodes[]` of `kind` `root_turn | assistant_message | reasoning | plan |
+todo_list | tool_call | approval_request | user_input_request | subagent | hook | system`, with
+`subagent.updated` stream events (`bundle-0.1.5.js:37843`) — and `t3v2.mjs` maps neither, so
+`frontend/src/workGraph.ts`, `src/agentVerb.mjs` and `src/t3Work.mjs` receive nothing from the owner's
+0.1.1. The panel therefore shows an empty or roster state there. Do not delete this code (it is correct
+for 0.0.x and its fixture is real), and do not read a green work-graph test as production evidence.
+Projecting `subagents[]` into the legacy shape in `t3v2.mjs` (and its gateway copy) is the open fix.
+
+T3 0.0.32's shipped source map proves a task lifecycle that earlier roadmap drafts treated as
 hypothetical. `providerRuntime.ts:177-180,471-646` defines `task.started|progress|updated|completed`;
 `ProviderRuntimeIngestion.ts:315-357,539-739` preserves `taskId`, `agentKind`, `agentId`,
 `parentAgentId`, task identity, status, typed usage, workflow/phase fields, and stable progress IDs
@@ -812,15 +985,20 @@ rules. The UI calls an unlinked window a roster rather than drawing a fake tree.
 The projection is capped at 64 nodes and 16 activity rows per node, retaining active work ahead of
 old terminal nodes and reporting omissions. `Agents & work` distinguishes loading, empty, live,
 reconnecting/stale, stopped, failed, missing-parent, and truncated evidence. Active task lifecycle
-also keeps the thread visibly in flight after the foreground session settles. T3 exposes no stable
+also keeps the thread visibly in flight after the foreground session settles. T3 0.0.32 exposes no stable
 per-task input/stop/resume command, so there are no fake per-agent controls; the composer and Stop
-remain parent-thread operations.
+remain parent-thread operations. At 0.1.x `orchestration.stopWorkflow` (scope `operate`) is the first
+per-task stop T3 publishes, for provider-native workflow children (`bundle-0.1.5.js:401644`); its reach
+relative to ordinary subagents is not established and nothing here calls it.
 
 `src/t3CapabilityManifest.mjs` is the versioned adapter boundary for direct and connector T3 calls.
 Its `next-coder.t3-capabilities.v1` projection comes from read-only response shapes,
 `server.getConfig` flags, scopes, and actual adapter method availability—not the reported T3 version.
 Fresh manifests are cached for five minutes and stale fallback is labeled. T3 0.0.32 certifies image
-attachments only; audio/file and nonexistent per-task input/stop/resume controls must remain absent.
+attachments only; audio/file and nonexistent per-task input/stop/resume controls must remain absent
+*for 0.0.32*. At 0.1.x the contract has `ChatFileAttachment` (up to 50 MiB, up to 100 attachments) and
+unknown attachment types are accepted by the decoder (`bundle-0.1.5.js:27800-27917`); the manifest code and
+`docs/t3-capability-manifest.md` still state the 0.0.32 limits (audit section 2.5, outstanding).
 The owner sees the full bounded manifest; device health receives only a compact state/action.
 
 `src/t3Work.mjs` separately projects only status counts for `/v1/device/thread-output`; task IDs,
@@ -844,6 +1022,15 @@ The private connector ticket-consume service returns flat `ConnectorTicketClaims
 Store `{ connector, ticket, reason }` result. Exercise the real service projection in edge handshake
 tests, including audience and expiry checks; separate fixtures can otherwise hide protocol drift.
 
+- **`src/t3Protocol2.mjs` is a deliberate copy of `packages/connector/src/t3v2.mjs`, and the two must
+  move together.** The connector is a separate npm package and the release Container image copies only
+  `src/` (`COPY --chown=node:node src ./src` in `cloudflare-control-plane/Dockerfile`), so neither can
+  import the other, and the direct and connector transports are parallel implementations on purpose.
+  The gateway file is a header comment, a marker line, and then the connector file **byte for byte**; a
+  fix to a projection, command mapping or stream-delta rule belongs in both. `test/t3Protocol2.test.mjs`
+  compares everything below the marker and fails on drift — it has already caught one. To re-sync, replace
+  everything below the marker with the connector file's current contents. The same copy carries the
+  `ProviderApprovalDecision` vocabulary, which another test pins to `src/providerApprovals.mjs`.
 - Server code is `.mjs` ESM with no build step and only two runtime dependencies: `@clerk/backend`, and
   `web-push`, which `src/webPush.mjs` alone imports. Keep it that way.
 - IDs come from `src/ids.mjs` (`createId("prefix")`); timestamps are ISO strings via `nowIso()`.
@@ -879,6 +1066,9 @@ deployment validation), [docs/hardware-protocol.md](docs/hardware-protocol.md) (
 format), [roadmap/open-input-media-voice-environments-roadmap.md](roadmap/open-input-media-voice-environments-roadmap.md)
 (active product roadmap), and [roadmap/IMPLEMENTATION-STATUS.md](roadmap/IMPLEMENTATION-STATUS.md)
 (canonical verified progress).
+
+T3 versions: [docs/t3-version-audit.md](docs/t3-version-audit.md) compares 0.0.32, 0.1.1 and 0.1.5 with a
+verdict per assumption and the bundle-extraction method; it supersedes any unversioned T3 claim in this file.
 
 Operations: [docs/operator-setup.md](docs/operator-setup.md) is the ordered account, environment and
 first-deployment sequence; [docs/staging-drills.md](docs/staging-drills.md) documents the scripted
@@ -956,6 +1146,16 @@ the factory cannot know the customer's network. CrowPanel uses EXIT hold for Wi-
 uses BOOT hold, while a short BOOT tap reopens its configuration portal. See
 `firmware/shared/README.md` and the board READMEs.
 
+Wi-Fi candidates must use RAM-only SDK credentials (`WiFi.persistent(false)` before radio init).
+The versioned NVS profile blob commits at most five complete validated profiles; the legacy pair
+is only a compatibility mirror. A fresh exact-SSID association and successful persistence are
+both necessary for candidate success. Keep candidate ID/outcome separate from radio phase: a
+wrong password followed by automatic recovery to the same SSID with its old saved password is
+still a failed candidate. Use timeout-zero disconnect and defer `begin()` until disconnection is
+observed; the Arduino defaults otherwise wait on the UI task. Wi-Fi recovery controls must
+remain available with retained voice audio or an active portal. Gateway changes and Wi-Fi joins
+are separate portal saves so failed joins cannot partially change the authentication realm.
+
 Convex authentication bookkeeping (`ensureUser`, `authenticate*`, connector ticket issue/consume) must not broadcast full console invalidations. Every authenticated read runs that bookkeeping, so broadcasting it creates a read → auth → invalidation → read loop. Older deployed adapters are filtered at the console during rollout; real product mutations still invalidate their owner.
 
 Device gesture work is one bounded job drained by the existing gateway network task; the render task alone applies its completion. Do not add a permanent network task/stack per feature or call HTTP from touch handlers. Capture and reply results carry a target/generation so a late socket cannot overwrite a newer selection. DeviceStore transport and receipt snapshots are copied under its settings mutex; no transport may retain an unprotected reference across a yield. A pending request cannot cross a gateway/device realm change or be overwritten by a different uncertain intent.
@@ -964,7 +1164,7 @@ Device audio raw-upload sessions freeze their environment/thread before bytes tr
 
 Gateway HTTP state and TLS gates must never be held while waiting for each other. Release all recursive state-lock depth before waiting for the TLS gate, and destroy HTTP/socket objects plus release TLS before reacquiring state. A touch reply read otherwise holds state while waiting on a background heartbeat that is waiting to publish its result, producing a 10-second TLS-gate timeout. `test/firmware-request-locks.test.mjs` compiles the actual request body against lock-checking transport doubles and covers every transport exit. A reply-read failure must also leave Hosyond's Actions menu reachable.
 
-The environment capabilities HTTP response has both `manifest` (the versioned feature/freshness contract) and `capabilities` (coarse gateway permission flags). The console stores `manifest` in `health.capabilities`; storing the coarse flags there falsely disables all composer actions. Device SSE handshakes share the global TLS allocation gate, then release it for the established stream.
+The environment capabilities HTTP response has both `manifest` (the versioned feature/freshness contract) and `capabilities` (coarse gateway permission flags). The console stores `manifest` in `health.capabilities`; storing the coarse flags there falsely disables all composer actions. Device SSE holds the global TLS session lease for its entire socket lifetime. Foreground requests announce demand; SSE closes and destroys its own clients before releasing the lease. It reconciles authoritative snapshots after close and waits for a bounded foreground quiet window before reconnecting. Never wait for model state while holding the SSE lease. The 6-second handshake timeout is independent of HTTP read/connect timeouts. This prevents retained SSE buffers overlapping another internal-RAM TLS session.
 
 The explicit Cloudflare Node Container adapter currently needs `THREAD_STREAM_ENABLED=1` and `CLOUD_THREAD_STREAM_CONSUMER_ENABLED=0`. No platform thread-stream background task exists; setting the consumer flag without an implementation leaves watches idle and commands dispatched after real replies arrive. The existing one-second hub tick is demand-driven by expiring watches. Platform-native stream scheduling/fanout remains outstanding.
 
@@ -994,3 +1194,17 @@ Queue wakeups remove the five-minute Cron latency; a skipped busy media runner i
 not an acknowledgement. Production uses one leased job per invocation with a timeout shorter than
 the lease and private request budget. Voice dispatch uses `voice:${job.id}` as its request identity,
 so a crash after T3 acceptance but before media-job settlement cannot create a second turn.
+## Direct runtime boundary
+
+`packages/connector/src/agents/` owns optional native Codex/Claude/ACP integration. Its local
+conversation domain projects into the gateway's existing conversation contract; it does not
+pretend to be T3. `next-coder.runtime-probe.v1` explicitly identifies a direct runtime while the
+public manifest retains its compatibility envelope. Never infer T3 compatibility/version from it.
+Only direct entries may be selectable with unknown native authentication; retain `runtimeKind`
+through hello, catalogue normalization and persistence instead of fabricating an authenticated flag.
+
+The native conversation journal is local, single-writer and crash-safe. Prompts are claimed before
+native dispatch; restart never replays them. Separate per-agent native bindings plus bounded missed
+history implement handoffs. Reimporting an already-linked native session returns its existing app
+conversation. Unknown external-process ownership requires explicit idle-session handoff, not a claim
+of live attachment. Read payloads must not enter durable connector response receipts.

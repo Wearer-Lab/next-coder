@@ -44,6 +44,9 @@ void uiSleepUntilNextFrame();
 // deterministic; the action itself is dispatched through the ordinary runAction() path, because
 // the create -> splice -> adopt sequence is the thing under test and a harness that reimplements
 // it proves nothing.
+bool uiQualificationBusy();
+bool uiQualificationStep(unsigned step);
+bool uiQualificationVerify();
 void uiBenchGoToThreads();
 bool uiBenchRunAction(const char* label);
 bool uiBenchCaptureState(bool& audioReady, bool& threadReady, DeviceBlockerKind& blocker);

@@ -163,7 +163,7 @@ export class ConnectorClient {
     let t3Health = "ready";
     try {
       info = await this.t3.environmentInfo();
-      if (this.state.t3AccessToken) {
+      if (this.state.t3AccessToken || info?.runtimeKind === "direct") {
         capabilityProbe = typeof this.t3.capabilityProbe === "function" ? await this.t3.capabilityProbe() : null;
         providers = sanitizeProviders(await this.t3.providerCatalogue());
       } else {
@@ -184,9 +184,9 @@ export class ConnectorClient {
         environmentId: this.state.environmentId,
         ...(info?.version || info?.serverVersion ? { t3Version: info.version ?? info.serverVersion } : {}),
         t3Health,
-        capabilities: [...connectorCapabilities(
+        capabilities: [...(info?.runtimeKind === "direct" ? ["runtime.direct", "runtime.sessions"] : []), ...connectorCapabilities(
           capabilityProbe,
-          Boolean(this.state.t3AccessToken),
+          Boolean(this.state.t3AccessToken) || info?.runtimeKind === "direct",
           typeof this.t3.capabilityProbe === "function",
           info != null,
         ), ...(localVoice.ready ? ["media.transcribe"] : [])],
@@ -248,7 +248,7 @@ export class ConnectorClient {
     const terminalPromise = this.runRequest(frame, deadline, controller).then(async (terminal) => {
       // A transcript is private job output, not a durable connector receipt. Overlapping
       // deliveries still share this in-flight promise; the cloud owns durable completion.
-      if (body.method !== "media.transcribe") await this.rememberTerminal(body.idempotencyKey, terminal);
+      if (body.method !== "media.transcribe" && (!this.state.agentConfig || body.method === "dispatch")) await this.rememberTerminal(body.idempotencyKey, terminal);
       return terminal;
     });
     this.inFlightByKey.set(body.idempotencyKey, { acceptedAt, promise: terminalPromise });
@@ -395,13 +395,18 @@ export class ConnectorClient {
     if (this.heartbeatInProgress) return;
     this.heartbeatInProgress = true;
     try {
-      let t3Health = this.state.t3AccessToken ? "ready" : "auth_failed";
+      let t3Health = this.state.t3AccessToken || this.state.agentConfig ? "ready" : "auth_failed";
       try { await this.t3.environmentInfo(); } catch { t3Health = "error"; }
+      if (this.stopped) return;
       this.send(socket, {
         protocolVersion: 1, type: "heartbeat", connectionId: this.connectionId,
         body: { sequence: ++this.heartbeatSequence, t3Health, activeRequests: this.inFlight.size,
           queueDepth: 0, sentAt: new Date().toISOString() },
       });
+      if (this.state.agentConfig) {
+        this.state.lastHeartbeatAt = new Date().toISOString(); this.state.runtimeHealth = t3Health;
+        await this.persistState?.(this.state);
+      }
     } finally {
       this.heartbeatInProgress = false;
     }
@@ -462,13 +467,82 @@ function connectorCapabilities(probe, authenticated, probeAvailable, metadataAva
   return output;
 }
 
+// Per-model switches (reasoning effort, service tier, context window) travel as T3's own
+// `capabilities.optionDescriptors` and come back as `modelSelection.options: [{id, value}]`.
+// The bounds mirror the gateway's: it caps a selection at 16 options, and refuses an option id
+// over 120 characters or a value over 200 (normalizeModelOptionSelections in src/t3Harness.mjs).
+const MAX_OPTION_DESCRIPTORS = 16;
+const MAX_OPTION_CHOICES = 32;
+const MAX_OPTION_ID_LENGTH = 120;
+const MAX_OPTION_VALUE_LENGTH = 200;
+
+/**
+ * Project one provider-declared switch, or null when it cannot be offered faithfully.
+ *
+ * Ids are never clipped. They round-trip to the provider verbatim as `modelSelection.options`,
+ * so a truncated id is not a shorter label but a different, invalid dispatch; an implausibly long
+ * id means the descriptor is dropped instead. Labels and descriptions are display text and clip
+ * like every other string in the hello. The provider's own choice description is kept because it
+ * is the only thing that explains a value such as Claude's `ultracode`.
+ */
+function sanitizeOptionDescriptor(raw, text) {
+  if (raw === null || typeof raw !== "object") return null;
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  if (!id || id.length > MAX_OPTION_ID_LENGTH) return null;
+  const type = raw.type === "boolean" ? "boolean" : "select";
+  const description = text(raw.description, 240);
+  const base = { id, label: text(raw.label) || id, type, ...(description ? { description } : {}) };
+  if (type === "boolean") {
+    return { ...base, ...(typeof raw.currentValue === "boolean" ? { currentValue: raw.currentValue } : {}) };
+  }
+  const seen = new Set();
+  const options = [];
+  // T3 spells the choice list `options`; the gateway also accepts `choices`.
+  for (const choice of Array.isArray(raw.options ?? raw.choices) ? (raw.options ?? raw.choices) : []) {
+    if (options.length >= MAX_OPTION_CHOICES) break;
+    const choiceId = typeof choice?.id === "string" ? choice.id.trim() : "";
+    if (!choiceId || choiceId.length > MAX_OPTION_VALUE_LENGTH || seen.has(choiceId)) continue;
+    seen.add(choiceId);
+    const choiceDescription = text(choice.description, 240);
+    options.push({
+      id: choiceId,
+      label: text(choice.label) || choiceId,
+      ...(choice.isDefault === true ? { isDefault: true } : {}),
+      ...(choiceDescription ? { description: choiceDescription } : {}),
+    });
+  }
+  // A select without choices cannot be offered; a current value outside the list is not a
+  // value the provider would accept back.
+  if (!options.length) return null;
+  const current = typeof raw.currentValue === "string" && seen.has(raw.currentValue) ? raw.currentValue : undefined;
+  return { ...base, ...(current !== undefined ? { currentValue: current } : {}), options };
+}
+
+function sanitizeModelDescriptors(model, text) {
+  if (model === null || typeof model !== "object") return [];
+  // Raw T3 records nest descriptors under capabilities; a flattened catalogue carries `options`.
+  const raw = model.capabilities?.optionDescriptors ?? model.options;
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const descriptors = [];
+  for (const entry of raw) {
+    if (descriptors.length >= MAX_OPTION_DESCRIPTORS) break;
+    const descriptor = sanitizeOptionDescriptor(entry, text);
+    if (!descriptor || seen.has(descriptor.id)) continue;
+    seen.add(descriptor.id);
+    descriptors.push(descriptor);
+  }
+  return descriptors;
+}
+
 function sanitizeProviders(providers) {
   if (!Array.isArray(providers)) return [];
   const statuses = new Set(["ready", "error", "disabled", "unknown", "starting", "stopped", "unavailable"]);
   const authStatuses = new Set(["authenticated", "unauthenticated", "unknown", "error"]);
-  const text = (value) => typeof value === "string" ? value.slice(0, 120) : "";
+  const text = (value, max = 120) => typeof value === "string" ? value.slice(0, max) : "";
   return providers.slice(0, 50).map((provider) => ({
     id: text(provider?.id ?? provider?.instanceId),
+    ...(provider?.runtimeKind === "direct" ? { runtimeKind: "direct" } : {}),
     label: text(provider?.displayName ?? provider?.label ?? provider?.name),
     // Readiness is independent from the existence of model slugs. Preserve only explicit
     // structured evidence; never send provider error messages, login labels, or credentials.
@@ -476,10 +550,14 @@ function sanitizeProviders(providers) {
     enabled: provider?.enabled === true,
     installed: provider?.installed === true,
     auth: { status: authStatuses.has(provider?.auth?.status) ? provider.auth.status : "unknown" },
-    models: Array.isArray(provider?.models) ? provider.models.slice(0, 50).map((model) => ({
-      id: text(typeof model === "string" ? model : model?.id ?? model?.slug),
-      label: text(typeof model === "string" ? model : model?.label ?? model?.name ?? model?.id ?? model?.slug),
-    })).filter((model) => model.id) : [],
+    models: Array.isArray(provider?.models) ? provider.models.slice(0, 50).map((model) => {
+      const descriptors = sanitizeModelDescriptors(model, text);
+      return {
+        id: text(typeof model === "string" ? model : model?.id ?? model?.slug),
+        label: text(typeof model === "string" ? model : model?.label ?? model?.name ?? model?.id ?? model?.slug),
+        ...(descriptors.length ? { capabilities: { optionDescriptors: descriptors } } : {}),
+      };
+    }).filter((model) => model.id) : [],
   })).filter((provider) => provider.id);
 }
 

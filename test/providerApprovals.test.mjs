@@ -4,21 +4,33 @@ import test from "node:test";
 import { createApp } from "../src/app.mjs";
 import { buildT3Command } from "../src/t3Client.mjs";
 import {
+  ALWAYS_PROVIDER_APPROVAL_DECISIONS,
+  DEFAULT_OFFERED_PROVIDER_APPROVAL_DECISIONS,
+  DEVICE_APPROVAL_DETAIL_LIMIT,
+  PERSISTENT_PROVIDER_APPROVAL_DECISIONS,
   PROVIDER_APPROVAL_DECISIONS,
+  PROVIDER_APPROVAL_DECISION_CATALOGUE,
+  PROVIDER_REQUEST_KINDS,
   allowedProviderApprovalDecisions,
+  capabilityForProviderApprovalDecision,
   collectProviderApprovals,
+  deviceProviderApprovalView,
   isStaleProviderRequestDetail,
   normalizeProviderApprovalDecision,
+  offeredProviderApprovalDecisions,
+  providerApprovalOffers,
 } from "../src/providerApprovals.mjs";
-import { capabilitiesForProfile } from "../src/profiles.mjs";
+import { DEVICE_CAPABILITIES, capabilitiesForProfile } from "../src/profiles.mjs";
 import { evaluateIntentPolicy } from "../src/policy.mjs";
 
 // ---------------------------------------------------------------------------------------------
 // The contract, as a test rather than a comment.
 // ---------------------------------------------------------------------------------------------
 
-test("the decision set is T3's four, not a binary approve/reject", () => {
-  assert.deepEqual(PROVIDER_APPROVAL_DECISIONS, ["accept", "acceptForSession", "decline", "cancel"]);
+test("the decision set is T3's five, in T3's declaration order, not a binary approve/reject", () => {
+  // `ProviderApprovalDecision` in the 0.1.1 and 0.1.5 bundles (docs/t3-version-audit.md section 5):
+  // the same five literals in the same order. Four in 0.0.32; acceptAlways arrived in 0.1.1.
+  assert.deepEqual(PROVIDER_APPROVAL_DECISIONS, ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"]);
   for (const decision of PROVIDER_APPROVAL_DECISIONS) {
     assert.equal(normalizeProviderApprovalDecision(decision), decision);
   }
@@ -28,6 +40,11 @@ test("the decision set is T3's four, not a binary approve/reject", () => {
   assert.equal(normalizeProviderApprovalDecision("reject"), "decline");
   assert.equal(normalizeProviderApprovalDecision("allow-always"), null);
   assert.equal(normalizeProviderApprovalDecision(""), null);
+  // Properties every object has are not decisions. A bare index into the alias table used to
+  // hand back `Object` for "constructor".
+  for (const inherited of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+    assert.equal(normalizeProviderApprovalDecision(inherited), null, inherited);
+  }
 });
 
 test("every decision reaches T3 as itself", () => {
@@ -178,6 +195,44 @@ test("a standing grant escalates to owner confirmation under a medium risk ceili
   assert.equal(escalated.risk, "high");
 });
 
+test("a request's own decision list narrows what is offered; unstated keeps T3's default four", () => {
+  const power = capabilitiesForProfile("power-controller");
+  const stated = collectProviderApprovals({
+    id: THREAD_ID,
+    activities: [approvalRequested("req_direct", { payload: {
+      requestId: "req_direct",
+      requestKind: "command",
+      decisions: ["accept", "decline", "bogus", "accept"],
+    } })],
+  })[0];
+  // Unrecognised entries are dropped and duplicates collapse; the list is the request's, in
+  // catalogue order once intersected.
+  assert.deepEqual(stated.offeredDecisions, ["accept", "decline"]);
+  assert.deepEqual(allowedProviderApprovalDecisions(power, stated), ["accept", "decline"]);
+
+  // T3 itself never states one: null means "unstated", not "nothing".
+  const unstated = collectProviderApprovals({ id: THREAD_ID, activities: [approvalRequested("req_t3")] })[0];
+  assert.equal(unstated.offeredDecisions, null);
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(power, unstated),
+    ["accept", "acceptForSession", "decline", "cancel"],
+  );
+
+  // A list that named only unrecognised decisions must not widen back to all four.
+  const garbled = collectProviderApprovals({
+    id: THREAD_ID,
+    activities: [approvalRequested("req_x", { payload: { requestId: "req_x", decisions: ["nope"] } })],
+  })[0];
+  assert.deepEqual(garbled.offeredDecisions, []);
+  assert.deepEqual(allowedProviderApprovalDecisions(power, garbled), []);
+
+  // Capability still wins: offering a decision never grants it.
+  const hardware = capabilitiesForProfile("next-coder");
+  const offeredAll = { offeredDecisions: ["accept", "acceptForSession"] };
+  assert.deepEqual(allowedProviderApprovalDecisions(hardware, offeredAll), ["accept"]);
+  assert.deepEqual(allowedProviderApprovalDecisions(capabilitiesForProfile("read-only"), offeredAll), []);
+});
+
 // ---------------------------------------------------------------------------------------------
 // The routes
 // ---------------------------------------------------------------------------------------------
@@ -288,21 +343,29 @@ test("a pending provider approval surfaces to the owner with the full decision s
   assert.equal(listed.approvals[0].localDecision, null);
   assert.deepEqual(
     listed.decisions.map((entry) => entry.decision),
-    ["accept", "acceptForSession", "decline", "cancel"],
+    ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"],
   );
-  // Exactly one decision is a standing grant, and the catalogue says which.
+  // Two decisions are standing grants, and the catalogue says which.
   assert.deepEqual(
     listed.decisions.filter((entry) => entry.persistent).map((entry) => entry.decision),
-    ["acceptForSession"],
+    ["acceptForSession", "acceptAlways"],
   );
+  // The top-level list is capability-only and unchanged for deployed clients: a request that
+  // states nothing is read as T3's default four, which never includes acceptAlways.
   assert.deepEqual(listed.allowedDecisions, ["accept", "acceptForSession", "decline", "cancel"]);
 });
 
 test("each decision in the full set round-trips to T3 as itself", async (t) => {
   for (const decision of PROVIDER_APPROVAL_DECISIONS) {
+    // acceptAlways is only ever offered by a request that LISTS it (see the default set), so its
+    // request below does; the route passes the console's realm to the policy engine.
     await t.test(decision, async (subtest) => {
       const requestId = `req_${decision}`;
-      const h = await harness(subtest, { activities: [approvalRequested(requestId)] });
+      const h = await harness(subtest, {
+        activities: [decision === "acceptAlways"
+          ? directApproval(requestId, ["accept", "acceptAlways", "decline", "cancel"])
+          : approvalRequested(requestId)],
+      });
       const answered = await h.call(`${h.approvalsPath}/${requestId}`, {
         method: "POST",
         headers: h.authHeaders,
@@ -448,7 +511,7 @@ test("an unrecognised decision is refused with the real vocabulary", async (t) =
     body: { decision: "allow-always" },
   });
   assert.equal(response.status, 400);
-  assert.match((await response.json()).error.message, /accept, acceptForSession, decline, cancel/u);
+  assert.match((await response.json()).error.message, /accept, acceptForSession, acceptAlways, decline, cancel/u);
 });
 
 test("the device approval poll keeps the two kinds of approval apart", async (t) => {
@@ -542,9 +605,98 @@ test("a read-only controller sees a pending approval and is offered nothing", as
       headers: h.deviceHeaders,
       body: { decision },
     });
-    assert.equal(response.status, 403, `read-only must not be able to answer with ${decision}`);
+    // acceptAlways is not part of T3's default four, so this request never offered it and the
+    // answer route refuses it first (422) — before the capability check that would give a 403.
+    // Either way nothing is claimed or dispatched.
+    const expected = decision === "acceptAlways" ? 422 : 403;
+    assert.equal(response.status, expected, `read-only must not be able to answer with ${decision}`);
   }
   assert.equal(h.dispatches.length, 0);
+});
+
+// A direct runtime offers only what the native agent exposed. These run the whole path: the
+// decision list recorded on the activity, the per-entry lists on both read routes, and the refusal
+// of an unoffered answer before anything is claimed or dispatched.
+function directApproval(requestId, decisions) {
+  return approvalRequested(requestId, { payload: {
+    requestId,
+    requestKind: "command",
+    requestType: "command_execution_approval",
+    detail: "npm test",
+    decisions,
+  } });
+}
+
+test("per-approval allowedDecisions narrow the console list; the top-level list is unchanged", async (t) => {
+  const h = await harness(t, { activities: [directApproval("req_direct", ["accept", "decline"]), approvalRequested("req_t3", { sequence: 2 })] });
+  const listed = await h.call(h.approvalsPath, { method: "GET", headers: h.authHeaders });
+
+  const byId = Object.fromEntries(listed.approvals.map((approval) => [approval.requestId, approval]));
+  assert.deepEqual(byId.req_direct.allowedDecisions, ["accept", "decline"]);
+  assert.deepEqual(byId.req_t3.allowedDecisions, ["accept", "acceptForSession", "decline", "cancel"]);
+  // Backward compatibility: already-deployed clients read only this and must see exactly what they
+  // always saw (capability-only).
+  assert.deepEqual(listed.allowedDecisions, ["accept", "acceptForSession", "decline", "cancel"]);
+});
+
+test("per-approval allowedDecisions narrow the device list by request and by capability", async (t) => {
+  const h = await harness(t, { activities: [directApproval("req_direct", ["accept", "acceptForSession", "cancel"]), approvalRequested("req_t3", { sequence: 2 })] });
+  const listed = await h.call("/v1/device/approvals", { method: "GET", headers: h.deviceHeaders });
+
+  const byId = Object.fromEntries(listed.providerApprovals.map((approval) => [approval.requestId, approval]));
+  // The hardware profile holds no standing-grant capability, so offered-but-not-permitted drops.
+  assert.deepEqual(byId.req_direct.allowedDecisions, ["accept", "cancel"]);
+  assert.deepEqual(byId.req_t3.allowedDecisions, ["accept", "decline", "cancel"]);
+  assert.deepEqual(listed.allowedDecisions, ["accept", "decline", "cancel"]);
+  // The device view stays small: the raw offered list is not part of it.
+  assert.equal(byId.req_direct.offeredDecisions, undefined);
+});
+
+test("a decision the request never offered is refused before any claim or dispatch", async (t) => {
+  const h = await harness(t, { activities: [directApproval("req_direct", ["accept", "decline"])] });
+
+  const refused = await h.raw(`${h.approvalsPath}/req_direct`, {
+    method: "POST",
+    headers: h.authHeaders,
+    body: { decision: "cancel" },
+  });
+  assert.equal(refused.status, 422);
+  const body = await refused.json();
+  assert.match(body.error.message, /does not offer/u);
+  assert.deepEqual(body.error.details.offeredDecisions, ["accept", "decline"]);
+  assert.equal(h.dispatches.length, 0);
+
+  // The device route shares the check.
+  const deviceRefused = await h.raw("/v1/device/provider-approvals/req_direct", {
+    method: "POST",
+    headers: h.deviceHeaders,
+    body: { decision: "cancel" },
+  });
+  assert.equal(deviceRefused.status, 422);
+  assert.equal(h.dispatches.length, 0);
+
+  // Nothing was claimed, so an offered answer still goes through, and its duplicate is a 200.
+  const answered = await h.call(`${h.approvalsPath}/req_direct`, {
+    method: "POST",
+    headers: h.authHeaders,
+    body: { decision: "decline" },
+  });
+  assert.equal(answered.decision.decision, "decline");
+  const duplicate = await h.raw(`${h.approvalsPath}/req_direct`, {
+    method: "POST",
+    headers: h.authHeaders,
+    body: { decision: "decline" },
+  });
+  assert.equal(duplicate.status, 200);
+  assert.equal(h.dispatches.length, 1);
+
+  // And a different decision after the claim is still the 409 it always was.
+  const conflict = await h.raw(`${h.approvalsPath}/req_direct`, {
+    method: "POST",
+    headers: h.authHeaders,
+    body: { decision: "accept" },
+  });
+  assert.equal(conflict.status, 409);
 });
 
 test("a device poll still answers gateway approvals when T3 is unreachable", async (t) => {
@@ -554,14 +706,422 @@ test("a device poll still answers gateway approvals when T3 is unreachable", asy
     if (String(url).includes("/api/orchestration/threads/")) throw new Error("T3 host asleep");
     return originalFetch(url, init);
   };
-  t.after(() => {
-    globalThis.fetch = originalFetch;
-  });
+  // No restore here: the harness's own after-hook puts the real fetch back, and a second restore
+  // from this test would run after it and leave the stub installed for every later test.
 
   const listed = await h.call("/v1/device/approvals", { method: "GET", headers: h.deviceHeaders });
   assert.deepEqual(listed.providerApprovals, []);
   assert.match(listed.providerApprovalsError, /asleep/u);
   assert.ok(Array.isArray(listed.commands));
+});
+
+// ---------------------------------------------------------------------------------------------
+// acceptAlways — the fifth decision (T3 0.1.1+). Unit level first, then the routes.
+// ---------------------------------------------------------------------------------------------
+
+test("acceptAlways is a standing grant, one tier above acceptForSession, and not offered by default", () => {
+  assert.deepEqual(PERSISTENT_PROVIDER_APPROVAL_DECISIONS, ["acceptForSession", "acceptAlways"]);
+  assert.deepEqual(ALWAYS_PROVIDER_APPROVAL_DECISIONS, ["acceptAlways"]);
+  // T3's own web UI fallback when a request lists no options: cancel, decline, "Always allow this
+  // session", approve. acceptAlways is not in it, because Claude turns it into a deny and ACP into
+  // a rejection — offering it speculatively would silently refuse what the owner meant to allow.
+  assert.deepEqual(DEFAULT_OFFERED_PROVIDER_APPROVAL_DECISIONS, ["accept", "acceptForSession", "decline", "cancel"]);
+
+  assert.equal(capabilityForProviderApprovalDecision("accept"), "approval_response");
+  assert.equal(capabilityForProviderApprovalDecision("decline"), "approval_response");
+  assert.equal(capabilityForProviderApprovalDecision("cancel"), "approval_response");
+  assert.equal(capabilityForProviderApprovalDecision("acceptForSession"), "approval_response_persistent");
+  assert.equal(capabilityForProviderApprovalDecision("acceptAlways"), "approval_response_always");
+
+  // Every capability the mapping can name exists, so the policy engine's derived deny-by-default
+  // list covers it (it is built from DEVICE_CAPABILITIES, never a hand-kept copy).
+  for (const decision of PROVIDER_APPROVAL_DECISIONS) {
+    assert.ok(DEVICE_CAPABILITIES.includes(capabilityForProviderApprovalDecision(decision)), decision);
+  }
+});
+
+test("the catalogue describes all five in vocabulary order and says what is offered by default", () => {
+  assert.deepEqual(
+    PROVIDER_APPROVAL_DECISION_CATALOGUE.map((entry) => entry.decision),
+    [...PROVIDER_APPROVAL_DECISIONS],
+  );
+  assert.deepEqual(
+    PROVIDER_APPROVAL_DECISION_CATALOGUE.filter((entry) => entry.offeredByDefault).map((entry) => entry.decision),
+    [...DEFAULT_OFFERED_PROVIDER_APPROVAL_DECISIONS],
+  );
+  assert.deepEqual(
+    PROVIDER_APPROVAL_DECISION_CATALOGUE.filter((entry) => entry.persistent).map((entry) => entry.decision),
+    [...PERSISTENT_PROVIDER_APPROVAL_DECISIONS],
+  );
+  // The description must not promise "forever": on Codex it is session-scoped and on Claude it is
+  // not supported at all.
+  const always = PROVIDER_APPROVAL_DECISION_CATALOGUE.find((entry) => entry.decision === "acceptAlways");
+  assert.match(always.description, /where the provider supports/u);
+});
+
+test("acceptAlways reaches a button only when capability, request and realm all agree", () => {
+  const power = capabilitiesForProfile("power-controller");
+  const offersAlways = { offeredDecisions: ["accept", "acceptAlways", "decline", "cancel"] };
+  const everything = { offeredDecisions: [...PROVIDER_APPROVAL_DECISIONS] };
+
+  // The owner, the request offering it, the capability held: listed, in vocabulary order.
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(power, offersAlways, { realm: "user" }),
+    ["accept", "acceptAlways", "decline", "cancel"],
+  );
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(power, everything, { realm: "user" }),
+    [...PROVIDER_APPROVAL_DECISIONS],
+  );
+
+  // A request that never listed it: not offered, whoever asks and whatever they hold.
+  assert.equal(allowedProviderApprovalDecisions(power, null, { realm: "user" }).includes("acceptAlways"), false);
+  assert.equal(
+    allowedProviderApprovalDecisions(power, { offeredDecisions: null }, { realm: "user" }).includes("acceptAlways"),
+    false,
+  );
+
+  // The realm argument fails closed: omitted, unknown, or "device" all withhold it.
+  for (const realm of [undefined, null, "device", "admin", ""]) {
+    assert.equal(
+      allowedProviderApprovalDecisions(power, everything, realm === undefined ? {} : { realm }).includes("acceptAlways"),
+      false,
+      `realm ${JSON.stringify(realm)}`,
+    );
+  }
+
+  // Capability: a profile with the session grant but not the standing one gets the former only.
+  const sessionOnly = new Set(["approval_response", "approval_response_persistent"]);
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(sessionOnly, everything, { realm: "user" }),
+    ["accept", "acceptForSession", "decline", "cancel"],
+  );
+  // And the built-in hardware profile holds neither.
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(capabilitiesForProfile("next-coder"), everything, { realm: "user" }),
+    ["accept", "decline", "cancel"],
+  );
+  assert.deepEqual(allowedProviderApprovalDecisions(capabilitiesForProfile("read-only"), everything, { realm: "user" }), []);
+});
+
+test("a controller is never offered a durable grant for a request it cannot display in full", () => {
+  const power = capabilitiesForProfile("power-controller");
+  const offered = ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"];
+  const approval = (detail) => ({ offeredDecisions: offered, detail });
+  const shown = "npm test";
+  const clipped = "x".repeat(DEVICE_APPROVAL_DETAIL_LIMIT + 1);
+  const exact = "y".repeat(DEVICE_APPROVAL_DETAIL_LIMIT);
+
+  // Fits the panel: the session grant the profile carries is offered; the standing one never is.
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(power, approval(shown), { realm: "device" }),
+    ["accept", "acceptForSession", "decline", "cancel"],
+  );
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(power, approval(exact), { realm: "device" }),
+    ["accept", "acceptForSession", "decline", "cancel"],
+  );
+  // Clipped, or nothing to read: the one-off answers and the refusals remain, the grants go.
+  for (const detail of [clipped, null, "   "]) {
+    assert.deepEqual(
+      allowedProviderApprovalDecisions(power, approval(detail), { realm: "device" }),
+      ["accept", "decline", "cancel"],
+      JSON.stringify(detail?.slice(0, 8)),
+    );
+  }
+  // The same request is unaffected for the owner, who has the whole detail.
+  assert.deepEqual(
+    allowedProviderApprovalDecisions(power, approval(clipped), { realm: "user" }),
+    [...PROVIDER_APPROVAL_DECISIONS],
+  );
+
+  // The rule and the clip share one number, so they cannot disagree.
+  assert.equal(deviceProviderApprovalView(approval(exact)).detail.length, DEVICE_APPROVAL_DETAIL_LIMIT);
+  assert.equal(deviceProviderApprovalView(approval(clipped)).detail.endsWith("…"), true);
+});
+
+test("the device projection did not grow when the vocabulary did", () => {
+  const view = deviceProviderApprovalView({
+    requestId: "req_1", threadId: "thread_1", requestKind: "command", requestType: "command_execution_approval",
+    detail: "npm test", summary: "Approval requested", requestedAt: "2026-10-30T10:00:00.000Z",
+    activityId: "act_1", failure: "private", offeredDecisions: [...PROVIDER_APPROVAL_DECISIONS],
+  });
+  assert.deepEqual(
+    Object.keys(view).sort(),
+    ["detail", "kind", "requestId", "requestKind", "requestedAt", "threadId", "title"],
+  );
+});
+
+test("providerApprovalOffers is the one check for 'is this decision open on this request'", () => {
+  const stated = { offeredDecisions: ["accept", "acceptAlways"] };
+  assert.equal(providerApprovalOffers(stated, "acceptAlways"), true);
+  assert.equal(providerApprovalOffers(stated, "decline"), false);
+  // Legacy firmware spelling folds first, so approve is asked as accept.
+  assert.equal(providerApprovalOffers(stated, "approve"), true);
+  // Unstated is T3's default four, which excludes the standing grant.
+  assert.deepEqual(offeredProviderApprovalDecisions({ offeredDecisions: null }), [...DEFAULT_OFFERED_PROVIDER_APPROVAL_DECISIONS]);
+  assert.equal(providerApprovalOffers({ offeredDecisions: null }, "acceptAlways"), false);
+  assert.equal(providerApprovalOffers({ offeredDecisions: null }, "acceptForSession"), true);
+  assert.equal(providerApprovalOffers({}, "acceptAlways"), false);
+  // Garbage in, no decision out.
+  assert.equal(providerApprovalOffers(stated, "constructor"), false);
+  assert.equal(providerApprovalOffers(stated, 7), false);
+  // A statement that named only unknown decisions still offers nothing; it never widens.
+  assert.equal(providerApprovalOffers({ offeredDecisions: ["nope"] }, "accept"), false);
+});
+
+test("a request's decisions list and a resolution can both carry acceptAlways", () => {
+  const [approval] = collectProviderApprovals({
+    id: THREAD_ID,
+    activities: [
+      directApproval("req_always", ["cancel", "decline", "acceptAlways", "accept"]),
+      {
+        id: "act_resolved", kind: "approval.resolved", payload: { requestId: "req_always", decision: "acceptAlways" },
+        sequence: 2, createdAt: "2026-08-24T10:00:05.000Z",
+      },
+    ],
+  });
+  assert.deepEqual(approval.offeredDecisions, ["cancel", "decline", "acceptAlways", "accept"]);
+  assert.equal(approval.status, "resolved");
+  assert.equal(approval.decision, "acceptAlways");
+});
+
+test("all five request kinds are recognised and titled; anything else is dropped to null", () => {
+  assert.deepEqual(PROVIDER_REQUEST_KINDS, ["command", "file-read", "file-change", "mcp-elicitation", "permission"]);
+  const kindOf = (requestKind) => collectProviderApprovals({
+    id: THREAD_ID,
+    activities: [approvalRequested("req_k", { payload: { requestId: "req_k", requestKind, detail: "d" } })],
+  })[0];
+  for (const kind of PROVIDER_REQUEST_KINDS) {
+    const approval = kindOf(kind);
+    assert.equal(approval.requestKind, kind);
+    // A recognised kind is titled from the table, never from the provider's own summary.
+    const title = deviceProviderApprovalView(approval).title;
+    assert.notEqual(title, approval.summary, kind);
+    assert.ok(title.length > 0 && title.length < 40, kind);
+  }
+  assert.equal(kindOf("mcp-elicitation").requestKind, "mcp-elicitation");
+  assert.equal(kindOf("a-sixth-kind").requestKind, null);
+  // An unrecognised kind has no title of its own, so it falls back to what T3 called the activity.
+  assert.equal(deviceProviderApprovalView(kindOf("a-sixth-kind")).title, kindOf("a-sixth-kind").summary);
+});
+
+// -- policy ------------------------------------------------------------------
+
+test("the policy engine gates acceptAlways as its own capability and only for the owner", () => {
+  const decide = (profile, decision, extra = {}) => evaluateIntentPolicy({
+    device: { profile },
+    intent: { type: "approval_response", requestId: "req_1", decision },
+    ...extra,
+  });
+
+  // The hardware profile holds neither grant: refused at the device dimension, as before.
+  const hardware = decide("next-coder", "acceptAlways", { actorType: "user" });
+  assert.equal(hardware.allowed, false);
+  assert.equal(hardware.risk, "blocked");
+  assert.equal(hardware.dimension, "device");
+
+  // A profile with the SESSION grant alone cannot give the standing one: separate capabilities.
+  const sessionOnly = { id: "session-only", capabilities: ["status", "approval_response", "approval_response_persistent"] };
+  assert.equal(decide(sessionOnly, "acceptForSession", { actorType: "user" }).allowed, true);
+  const refused = decide(sessionOnly, "acceptAlways", { actorType: "user" });
+  assert.equal(refused.allowed, false);
+  assert.equal(refused.dimension, "device");
+  assert.match(refused.reason, /approval_response_always/u);
+
+  // The owner on the console profile may.
+  const granted = decide("power-controller", "acceptAlways", { actorType: "user" });
+  assert.equal(granted.allowed, true);
+  assert.equal(granted.risk, "high");
+  assert.equal(granted.matchedRule, "baseline.approval-accept-always");
+  // The session grant keeps its stored rule id.
+  assert.equal(decide("power-controller", "acceptForSession", { actorType: "user" }).matchedRule, "baseline.approval-accept-for-session");
+});
+
+test("acceptAlways fails closed: a controller is refused whatever its profile says, and so is an unlabelled caller", () => {
+  const power = { profile: "power-controller" };
+  const intent = { type: "approval_response", requestId: "req_1", decision: "acceptAlways" };
+
+  // `power-controller` is the console's profile AND an "advanced device" one. Holding the
+  // capability is therefore not enough; the realm decides.
+  for (const actorType of ["device", "admin", "", null, undefined]) {
+    const result = evaluateIntentPolicy({ device: power, intent, ...(actorType === undefined ? {} : { actorType }) });
+    assert.equal(result.allowed, false, `actorType ${JSON.stringify(actorType)}`);
+    assert.equal(result.requiresApproval, undefined, "not a confirmation: nobody can approve a controller into it");
+    assert.equal(result.risk, "blocked");
+    assert.equal(result.matchedRule, "realm.standing-grant-owner-only");
+  }
+  // Nothing else reads actorType: the rest of the approval vocabulary is untouched by it.
+  for (const decision of ["accept", "acceptForSession", "decline", "cancel"]) {
+    assert.equal(evaluateIntentPolicy({ device: power, intent: { ...intent, decision }, actorType: "device" }).allowed, true, decision);
+  }
+});
+
+test("acceptAlways escalates to owner confirmation under a medium ceiling, like the session grant", () => {
+  const fromUntrusted = (decision) => evaluateIntentPolicy({
+    device: { profile: "power-controller" },
+    intent: { type: "approval_response", requestId: "req_1", decision },
+    networkLocation: "untrusted",
+    actorType: "user",
+  });
+  // An untrusted network caps automatic dispatch at low risk: refusing still lands.
+  assert.equal(fromUntrusted("decline").allowed, true);
+  for (const decision of ["acceptForSession", "acceptAlways"]) {
+    const escalated = fromUntrusted(decision);
+    assert.equal(escalated.allowed, false, decision);
+    assert.equal(escalated.requiresApproval, true, decision);
+    assert.equal(escalated.risk, "high", decision);
+  }
+  // Same on the free tier (medium ceiling).
+  const free = evaluateIntentPolicy({
+    device: { profile: "power-controller" },
+    intent: { type: "approval_response", requestId: "req_1", decision: "acceptAlways" },
+    subscriptionTier: "free",
+    actorType: "user",
+  });
+  assert.equal(free.requiresApproval, true);
+});
+
+test("a viewer role cannot give either standing grant", () => {
+  for (const decision of ["acceptForSession", "acceptAlways"]) {
+    const result = evaluateIntentPolicy({
+      device: { profile: "power-controller" },
+      user: { role: "viewer" },
+      intent: { type: "approval_response", requestId: "req_1", decision },
+      actorType: "user",
+    });
+    assert.equal(result.allowed, false, decision);
+    assert.equal(result.dimension, "user", decision);
+  }
+});
+
+test("only power-controller carries the standing-grant capabilities", () => {
+  for (const profile of ["next-coder", "read-only"]) {
+    const capabilities = capabilitiesForProfile(profile);
+    assert.equal(capabilities.has("approval_response_persistent"), false, profile);
+    assert.equal(capabilities.has("approval_response_always"), false, profile);
+  }
+  const power = capabilitiesForProfile("power-controller");
+  assert.equal(power.has("approval_response_persistent"), true);
+  assert.equal(power.has("approval_response_always"), true);
+});
+
+// -- the routes ----------------------------------------------------------------
+
+test("a controller is never listed, or able to give, acceptAlways, even on the console's own profile", async (t) => {
+  // The request offers it, the device holds the broadest profile, and the detail is short.
+  const h = await harness(t, {
+    profile: "power-controller",
+    activities: [directApproval("req_always", ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"])],
+  });
+
+  const listed = await h.call("/v1/device/approvals", { method: "GET", headers: h.deviceHeaders });
+  assert.equal(listed.providerApprovals.length, 1);
+  assert.equal(listed.providerApprovals[0].allowedDecisions.includes("acceptAlways"), false);
+  assert.equal(listed.allowedDecisions.includes("acceptAlways"), false);
+  // The view that reaches the panel carries no decision list of its own.
+  assert.equal(listed.providerApprovals[0].offeredDecisions, undefined);
+
+  const refused = await h.raw("/v1/device/provider-approvals/req_always", {
+    method: "POST",
+    headers: h.deviceHeaders,
+    body: { decision: "acceptAlways" },
+  });
+  assert.equal(refused.status, 403);
+  assert.equal(h.dispatches.length, 0, "nothing may reach the provider");
+
+  // Refusal released the claim: an offered, permitted answer still goes through.
+  const answered = await h.call("/v1/device/provider-approvals/req_always", {
+    method: "POST",
+    headers: h.deviceHeaders,
+    body: { decision: "decline" },
+  });
+  assert.equal(answered.decision.decision, "decline");
+  assert.equal(h.dispatches.length, 1);
+});
+
+test("a read-only or hardware profile cannot reach acceptAlways by any route", async (t) => {
+  for (const profile of ["next-coder", "read-only"]) {
+    await t.test(profile, async (subtest) => {
+      const h = await harness(subtest, {
+        profile,
+        activities: [directApproval("req_always", ["accept", "acceptAlways", "decline", "cancel"])],
+      });
+      const refused = await h.raw("/v1/device/provider-approvals/req_always", {
+        method: "POST",
+        headers: h.deviceHeaders,
+        body: { decision: "acceptAlways" },
+      });
+      assert.equal(refused.status, 403);
+      assert.equal(h.dispatches.length, 0);
+    });
+  }
+});
+
+test("the console cannot send acceptAlways to a request that never offered it", async (t) => {
+  // Default request: no `options`, so T3's own four. On Claude's adapter an unlisted acceptAlways
+  // falls through to behavior "deny" while T3 itself accepts the dispatch — the owner's "allow"
+  // would silently become a refusal. It must be refused here, before any claim or dispatch.
+  const h = await harness(t, { profile: "power-controller" });
+
+  const refused = await h.raw(`${h.approvalsPath}/req_1`, {
+    method: "POST",
+    headers: h.authHeaders,
+    body: { decision: "acceptAlways" },
+  });
+  assert.equal(refused.status, 422);
+  const body = await refused.json();
+  assert.match(body.error.message, /does not offer/u);
+  assert.deepEqual(body.error.details.offeredDecisions, ["accept", "acceptForSession", "decline", "cancel"]);
+  assert.equal(h.dispatches.length, 0);
+
+  // Nothing was claimed: an offered answer still goes through.
+  const answered = await h.call(`${h.approvalsPath}/req_1`, {
+    method: "POST",
+    headers: h.authHeaders,
+    body: { decision: "accept" },
+  });
+  assert.equal(answered.decision.decision, "accept");
+  assert.equal(h.dispatches.length, 1);
+});
+
+test("the console list offers acceptAlways only on a request that lists it; a controller never sees it", async (t) => {
+  const h = await harness(t, {
+    profile: "power-controller",
+    activities: [
+      directApproval("req_always", ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"]),
+      approvalRequested("req_default", { id: "act_default", sequence: 2 }),
+    ],
+  });
+
+  const listed = await h.call(h.approvalsPath, { method: "GET", headers: h.authHeaders });
+  const byId = new Map(listed.approvals.map((approval) => [approval.requestId, approval]));
+  assert.deepEqual(byId.get("req_always").allowedDecisions, PROVIDER_APPROVAL_DECISIONS);
+  assert.deepEqual(byId.get("req_default").allowedDecisions, ["accept", "acceptForSession", "decline", "cancel"]);
+
+  // The same request, same profile, through the device realm: realm is what withholds it.
+  const device = await h.call("/v1/device/approvals", { method: "GET", headers: h.deviceHeaders });
+  const deviceEntry = device.providerApprovals.find((entry) => entry.requestId === "req_always");
+  assert.equal(deviceEntry.allowedDecisions.includes("acceptAlways"), false);
+});
+
+test("a controller cannot give acceptAlways through the generic device intent route either", async (t) => {
+  // The generic route runs the same policy engine; the realm gate reads the actor, not the body.
+  const h = await harness(t, {
+    profile: "power-controller",
+    activities: [directApproval("req_always", ["accept", "acceptAlways", "decline", "cancel"])],
+  });
+  const viaDeviceIntent = await h.raw("/v1/device/intents", {
+    method: "POST",
+    headers: h.deviceHeaders,
+    body: {
+      threadId: THREAD_ID,
+      clientRequestId: "req_always_device_1",
+      intent: { type: "approval_response", requestId: "req_always", decision: "acceptAlways" },
+    },
+  });
+  assert.equal(viaDeviceIntent.status, 403);
+  assert.equal(h.dispatches.length, 0, "a controller's intent must not reach the provider");
 });
 
 // ---------------------------------------------------------------------------------------------

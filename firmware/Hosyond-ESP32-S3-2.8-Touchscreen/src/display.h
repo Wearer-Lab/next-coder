@@ -77,6 +77,29 @@ bool displayBegin();
 // the device is most likely to actually have. Pass 0 to skip it.
 bool displayBeginCanvases(uint16_t orbSize, uint16_t miniSize = 0);
 
+// Composes opaque full-width strips in the existing verified INTERNAL 240x22 RGB565 canvas.
+// No allocation and no panel clear precedes the finished strip. `bandTopY` is absolute panel Y;
+// painter coordinates are local to that band (draw a panel item at itemY-bandTopY). GFX clips
+// negative/outside coordinates to the canvas. Colours are physical RGB565 from panelGrey/Accent.
+// Call on the UI task only. The callback may use the supplied GFX only: no panel writes, canvas
+// rotation changes, recursive composition, or retained references. It can run once per 22px band.
+// The interval clips to panel Y0..320, the final short band flushes only its visible rows.
+// False means unavailable/empty/reentrant; caller retains its dirty state for a later frame.
+using DisplayBandPainter = void (*)(Adafruit_GFX&, int16_t bandTopY, void* context);
+bool displayComposeBands(int16_t y, int16_t height, uint16_t background,
+                         DisplayBandPainter painter, void* context);
+
+// Absolute-coordinate GFX proxy during scene replay; physical panel otherwise. The proxy clips
+// before writing to the active internal band. UI drawing must use this, never displayPanel().
+Adafruit_GFX& displayRenderGfx();
+bool displaySceneActive();
+bool displayRenderIntersects(int16_t x, int16_t y, int32_t width, int32_t height);
+using DisplayScenePainter = void (*)(void* context);
+// Replays a PURE, stable painter per band. No model updates, network, animation advancement,
+// nested composition or drawing callbacks with side effects. Full-screen RAM is never allocated.
+bool displayComposeScene(int16_t y, int16_t height, uint16_t background,
+                         DisplayScenePainter painter, void* context);
+
 // Paints one orb frame centred at (cx, cy). Dots are drawn far-to-near as the renderer ordered
 // them, so overlap reads as depth.
 //

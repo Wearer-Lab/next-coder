@@ -7,6 +7,57 @@ const MAX_STREAM_TEXT_BYTES = 256 * 1024;
 
 function invalid(code) { return Object.assign(new Error(code), { code }); }
 
+// T3's `ProviderApprovalDecision` (0.1.1 bundle :31403-31409, 0.1.5 :36665-36671): five wire
+// literals. This is a CLOSED TABLE, not a pass-through, and it is a copy on purpose — the npm
+// package ships `src/` alone and cannot import the gateway's vocabulary. A test pins it to
+// `PROVIDER_APPROVAL_DECISIONS` in the gateway so the two cannot drift. The right-hand side is the
+// gateway spelling; it is identical today, and stays a table so a future T3 rename lands here, at
+// the boundary, instead of in every consumer.
+const GATEWAY_DECISION = Object.freeze({
+  accept: "accept",
+  acceptForSession: "acceptForSession",
+  acceptAlways: "acceptAlways",
+  decline: "decline",
+  cancel: "cancel",
+});
+// What to offer when T3 states a list we cannot use at all (empty, or only unknown values).
+// Offering nothing would strand an agent that is blocked on the owner; falling back to the
+// default set would hand out a grant the provider never listed. Refusals are the one answer that
+// is safe whatever the list was meant to say — they grant nothing — and T3 accepts either on the
+// wire for any request (it does not check a response against `options`; 0.1.5 :366820-366860).
+const REFUSAL_ONLY = Object.freeze(["decline", "cancel"]);
+// Far above the five that exist; only bounds the scan of an attacker- or bug-shaped array.
+const MAX_OPTION_ENTRIES = 16;
+
+/**
+ * The decisions an approval request offers, in the gateway's vocabulary.
+ *
+ * Source: the `approval_request` turn item's `options: [{ decision, label, warning? }]`
+ * (`ProviderApprovalOption`, 0.1.5 :36673-36677; item :38519-38527; present since 0.1.1
+ * :33949-33955). Providers narrow it deliberately — Claude 0.1.5 offers decline+accept only when
+ * its CLI refuses a standing rule (`CLAUDE_NO_STANDING_GRANT_OPTIONS`, :275580), Codex MCP lists
+ * the persistence choices it really supports — and T3's server does not enforce it on answer, so
+ * this is the only chance to carry it to the gateway's per-request narrowing.
+ *
+ * Only `decision` is read. `label` and `warning` are provider-authored prose and stay behind, as
+ * does anything else on the entry: this field is vocabulary, not content.
+ *
+ * @returns {string[]|undefined} `undefined` when the request stated nothing (the gateway then
+ *   applies T3's own default set); otherwise 1..5 distinct decisions in the order T3 gave them.
+ */
+export function v2OfferedDecisions(options) {
+  if (!Array.isArray(options)) return undefined;
+  const offered = [];
+  for (const option of options.slice(0, MAX_OPTION_ENTRIES)) {
+    const raw = option && typeof option === "object" ? option.decision : null;
+    // `hasOwn` so "constructor" / "__proto__" cannot look up a function off the prototype.
+    const decision = typeof raw === "string" && raw.length <= 32 && Object.hasOwn(GATEWAY_DECISION, raw)
+      ? GATEWAY_DECISION[raw] : null;
+    if (decision && !offered.includes(decision)) offered.push(decision);
+  }
+  return offered.length > 0 ? offered : [...REFUSAL_ONLY];
+}
+
 export function v2Session(thread, run = null) {
   const status = run?.status ?? thread.status ?? "idle";
   return {
@@ -37,9 +88,13 @@ export function v2RequestActivities(request, item, threadId) {
   if (!question && item.type !== "approval_request") return [];
   const prefix = question ? "user-input" : "approval";
   const base = { threadId, createdAt: request.createdAt, tone: question ? "info" : "approval" };
+  // `decisions` is the field the gateway's collectProviderApprovals() already reads for native
+  // runtimes (`offeredDecisions`); T3 0.1.x states the same fact as `options[]` on the item.
+  const decisions = question ? undefined : v2OfferedDecisions(item.options);
   const payload = {
     requestId: request.id,
-    ...(question ? { questions: item.questions } : { requestKind: item.requestKind, detail: item.prompt }),
+    ...(question ? { questions: item.questions }
+      : { requestKind: item.requestKind, detail: item.prompt, ...(decisions ? { decisions } : {}) }),
   };
   const activities = [{ ...base, id: request.id + ":requested", kind: prefix + ".requested",
     summary: question ? "User input requested" : "Provider approval requested", payload }];

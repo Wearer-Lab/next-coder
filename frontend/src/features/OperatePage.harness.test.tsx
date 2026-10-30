@@ -3,7 +3,7 @@ import { vi } from "vitest";
 
 import type { Controller } from "../controller";
 import { capableT3Environment } from "../test/t3Capabilities";
-import type { T3Harness, T3SessionFailure } from "../types";
+import type { T3Harness, T3HarnessModel, T3ModelOption, T3SessionFailure } from "../types";
 import { ConfirmProvider } from "../ui";
 import { OperatePage } from "./OperatePage";
 
@@ -513,4 +513,158 @@ test("does not run a media action without selecting an upload", () => {
   expect(row).not.toBeNull();
   expect(within(row as HTMLElement).getByRole("button", { name: "Run" })).toBeDisabled();
   expect(c.api).not.toHaveBeenCalledWith("/v1/actions/action_photo/run", expect.anything());
+});
+
+// Model-declared options. Ids and choices are the provider's own: Codex calls its control
+// `reasoningEffort`, Claude calls it `effort`, and the console must render whichever it is handed.
+const choice = (id: string, label: string, isDefault = false) => ({ id, label, isDefault });
+
+const CODEX_REASONING: T3ModelOption = {
+  id: "reasoningEffort",
+  label: "Reasoning",
+  type: "select",
+  currentValue: null,
+  choices: [
+    choice("low", "Low"),
+    choice("medium", "Medium", true),
+    choice("high", "High"),
+    choice("xhigh", "Extra high"),
+    choice("max", "Max"),
+    choice("ultra", "Ultra"),
+  ],
+};
+
+const CLAUDE_EFFORT: T3ModelOption = {
+  id: "effort",
+  label: "Effort",
+  type: "select",
+  currentValue: "high",
+  choices: [choice("low", "Low"), choice("high", "High"), choice("ultrathink", "Ultrathink")],
+};
+
+const FAST_MODE: T3ModelOption = {
+  id: "fastMode",
+  label: "Fast mode",
+  type: "boolean",
+  currentValue: false,
+  choices: [],
+};
+
+const REASONING_MODEL: T3HarnessModel = {
+  slug: "gpt-5.6-sol",
+  name: "GPT-5.6-Sol",
+  isCustom: false,
+  options: [CODEX_REASONING],
+};
+
+const FAST_MODEL: T3HarnessModel = {
+  slug: "gpt-5.4",
+  name: "GPT-5.4",
+  isCustom: false,
+  options: [FAST_MODE],
+};
+
+function harnessesWithCodexModels(models: T3HarnessModel[]): T3Harness[] {
+  return [{ ...HARNESSES[0], models }, HARNESSES[1], HARNESSES[2]];
+}
+
+function renderNewThread(overrides: Record<string, unknown> = {}) {
+  const c = controller({ selectedThreadId: "", ...overrides });
+  render(<ConfirmProvider><OperatePage controller={c} /></ConfirmProvider>);
+  return c;
+}
+
+/** Launches a new thread and returns the model selection the controller was handed. */
+async function launchAndReadModelSelection(c: Controller) {
+  fireEvent.change(screen.getByLabelText("Command or prompt"), { target: { value: "Review the release" } });
+  const start = await screen.findByRole("button", { name: "Start new thread" });
+  await waitFor(() => expect(start).toBeEnabled());
+  fireEvent.click(start);
+  await waitFor(() => expect(c.launchProject).toHaveBeenCalled());
+  const [request] = vi.mocked(c.launchProject).mock.calls[0] as unknown as [
+    { modelSelection?: Record<string, unknown> },
+  ];
+  return request.modelSelection;
+}
+
+test("renders a model's Codex-style reasoning control with its declared choices", () => {
+  renderNewThread({ harnesses: harnessesWithCodexModels([REASONING_MODEL]) });
+
+  const reasoning = screen.getByLabelText("Reasoning");
+  expect(reasoning.tagName).toBe("SELECT");
+  const values = Array.from(reasoning.querySelectorAll("option")).map((option) => option.value);
+  expect(values).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
+  // Untouched, it shows the choice the provider marked default.
+  expect(reasoning).toHaveValue("medium");
+});
+
+test("renders a Claude-style effort control from its own ids, not a hardcoded provider name", async () => {
+  renderNewThread({
+    harnesses: [
+      HARNESSES[0],
+      { ...HARNESSES[1], models: [{ slug: "claude-fable-5", name: "Claude Fable 5", isCustom: false, options: [CLAUDE_EFFORT] }] },
+      HARNESSES[2],
+    ],
+  });
+
+  fireEvent.change(screen.getByLabelText("Agent harness"), { target: { value: "claudeAgent" } });
+
+  const effort = await screen.findByLabelText("Effort");
+  expect(effort.tagName).toBe("SELECT");
+  expect(Array.from(effort.querySelectorAll("option")).map((option) => option.value))
+    .toEqual(["low", "high", "ultrathink"]);
+  // The provider's own current value wins over the first choice.
+  expect(effort).toHaveValue("high");
+  expect(screen.queryByLabelText("Reasoning")).toBeNull();
+});
+
+test("choosing a value and launching submits exactly that one option", async () => {
+  const c = renderNewThread({ harnesses: harnessesWithCodexModels([REASONING_MODEL]) });
+
+  fireEvent.change(screen.getByLabelText("Reasoning"), { target: { value: "high" } });
+  const modelSelection = await launchAndReadModelSelection(c);
+
+  expect(modelSelection).toEqual({
+    instanceId: "codex",
+    model: "gpt-5.6-sol",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  });
+});
+
+test("launching without touching the option sends no options key at all", async () => {
+  const c = renderNewThread({ harnesses: harnessesWithCodexModels([REASONING_MODEL]) });
+
+  const modelSelection = await launchAndReadModelSelection(c);
+
+  expect(modelSelection).toEqual({ instanceId: "codex", model: "gpt-5.6-sol" });
+  expect(modelSelection).not.toHaveProperty("options");
+});
+
+test("switching model clears a previously chosen option so it is never carried over", async () => {
+  const c = renderNewThread({ harnesses: harnessesWithCodexModels([REASONING_MODEL, FAST_MODEL]) });
+
+  fireEvent.change(screen.getByLabelText("Reasoning"), { target: { value: "high" } });
+  fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gpt-5.4" } });
+  // The second model never declared a reasoning control.
+  expect(screen.queryByLabelText("Reasoning")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gpt-5.6-sol" } });
+
+  // Back on the first model the choice is gone, not remembered: the default is shown again.
+  expect(screen.getByLabelText("Reasoning")).toHaveValue("medium");
+  const modelSelection = await launchAndReadModelSelection(c);
+  expect(modelSelection).not.toHaveProperty("options");
+});
+
+test("a boolean option renders as a checkbox and submits a real boolean", async () => {
+  const c = renderNewThread({ harnesses: harnessesWithCodexModels([FAST_MODEL]) });
+
+  const fastMode = screen.getByRole("checkbox", { name: "Fast mode" });
+  expect(fastMode).not.toBeChecked();
+  fireEvent.click(fastMode);
+  expect(screen.getByRole("checkbox", { name: "Fast mode" })).toBeChecked();
+
+  const modelSelection = await launchAndReadModelSelection(c);
+  const options = modelSelection?.options as Array<{ id: string; value: unknown }>;
+  expect(options).toEqual([{ id: "fastMode", value: true }]);
+  expect(typeof options[0].value).toBe("boolean");
 });

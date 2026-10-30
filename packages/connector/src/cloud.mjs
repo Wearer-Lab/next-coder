@@ -1,7 +1,49 @@
+import { hostname as osHostname } from "node:os";
 import { connectorAuthorization, requestJson } from "./http.mjs";
 
 export const PROTOCOL_VERSION = 1;
 export const CONNECTOR_VERSION = "0.1.0";
+
+/**
+ * How a computer names itself when the owner did not pass `--label`.
+ *
+ * The console used to prefill the literal string "Mac T3 Code" for every new environment, so a
+ * Windows machine offered to enrol itself as a Mac and the owner could not tell a new workspace
+ * from the one already in the list. The host is the only party that knows its own name, so it
+ * says so at enrollment and the gateway keeps that name unless the owner typed one.
+ *
+ * `os.hostname()` is used rather than a platform word because two Macs are two different
+ * computers and "Mac" distinguishes neither. The platform is appended only when the bare hostname
+ * would not already imply it, so a machine called `serge-windows-pc` is not labelled
+ * "serge-windows-pc (Windows)".
+ */
+export const PLATFORM_LABELS = Object.freeze({
+  darwin: "macOS",
+  win32: "Windows",
+  linux: "Linux",
+  freebsd: "FreeBSD",
+  openbsd: "OpenBSD",
+  sunos: "illumos",
+  aix: "AIX",
+});
+
+export function describeHostPlatform(platform) {
+  return PLATFORM_LABELS[platform] ?? null;
+}
+
+export function defaultConnectorLabel({ platform, hostname = osHostname() } = {}) {
+  // macOS hands back "Serges-MacBook-Pro.local"; the suffix is noise on a label.
+  const bare = String(hostname ?? "").trim().replace(/\.local$/iu, "").replace(/\.lan$/iu, "");
+  const host = bare.length > 0 && bare.toLowerCase() !== "localhost" ? bare.slice(0, 60) : null;
+  const platformName = describeHostPlatform(platform);
+  if (!host) return platformName ? `${platformName} computer` : "T3 Code";
+  if (!platformName) return host;
+  // Avoid "mac-mini (macOS)" and "win-box (Windows)" by not repeating what the name already says.
+  const collapsed = host.toLowerCase().replace(/[^a-z0-9]/gu, "");
+  const implied = platform === "darwin" ? ["mac", "imac", "macbook"] : platform === "win32" ? ["windows", "win"] : ["linux", "ubuntu", "debian", "fedora"];
+  if (implied.some((token) => collapsed.includes(token))) return host;
+  return `${host} (${platformName})`;
+}
 
 export async function enrollConnector({ server, code, label, capabilities = [], fetchImpl, platform }) {
   const payload = await requestJson(new URL("/v1/connectors/enroll", server), {
@@ -9,7 +51,9 @@ export async function enrollConnector({ server, code, label, capabilities = [], 
     method: "POST",
     body: {
       code,
-      ...(label ? { label } : {}),
+      // Always send a label: an unnamed machine is what produced the "is this the Mac I already
+      // set up?" confusion. An owner-supplied --label still wins over the derived name.
+      label: String(label ?? "").trim() || defaultConnectorLabel({ platform }),
       protocolVersion: PROTOCOL_VERSION,
       connectorVersion: CONNECTOR_VERSION,
       platform,

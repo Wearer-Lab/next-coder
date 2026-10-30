@@ -38,6 +38,8 @@ int16_t startX = 0, startY = 0;
 int16_t lastX = 0, lastY = 0;
 int16_t prevX = 0, prevY = 0;     // the previous poll's point, for the per-poll delta
 uint32_t startMs = 0;
+uint32_t contactSequence = 0;
+int16_t minX = 0, minY = 0, maxX = 0, maxY = 0;
 bool moved = false;               // travelled beyond the tap slop at any point in this press
 
 // A swipe has to travel this far to count, and a tap has to stay within it. Below this the two are
@@ -48,8 +50,8 @@ constexpr uint32_t kLongPressMs = 1200;
 // A long press is a press, not a slow drag: the finger has to stay put.
 constexpr int16_t kLongPressSlopPx = 24;
 // Movement beyond this in either axis means the press was a drag, and a drag is never also a tap.
-// Larger than the long-press slop because a list scroll starts as a deliberate pull, while an
-// accidental tap wobble is a few pixels.
+// A small wobble stays a tap; once this threshold is crossed the contact is permanently
+// ineligible for tap or long-press activation, even if it later returns to the origin.
 constexpr int16_t kDragSlopPx = 8;
 bool longFired = false;
 bool longEligible = true;
@@ -105,6 +107,7 @@ PointSample readPoint(int16_t& x, int16_t& y) {
 
 bool touchPresent() { return present; }
 bool touchDown() { return down; }
+uint32_t touchContactId() { return contactSequence; }
 
 bool touchBegin() {
   pinMode(TOUCH_RST_PIN, OUTPUT);
@@ -124,6 +127,10 @@ bool touchBegin() {
 
 TouchEvent touchPoll() {
   TouchEvent event;
+  event.contactId = contactSequence;
+  event.startX = startX; event.startY = startY;
+  event.sampledAt = millis();
+  event.minX=minX;event.minY=minY;event.maxX=maxX;event.maxY=maxY;
   if (!present) return event;
 
   int16_t x = 0, y = 0;
@@ -160,6 +167,12 @@ TouchEvent touchPoll() {
       startX = prevX = lastX = x;
       startY = prevY = lastY = y;
       startMs = millis();
+      contactSequence += 1;
+      if (contactSequence == 0) contactSequence = 1;
+      event.contactId = contactSequence;
+      event.startX = x; event.startY = y;
+      minX=maxX=x;minY=maxY=y;
+      event.minX=minX;event.minY=minY;event.maxX=maxX;event.maxY=maxY;
       event.gesture = TouchGesture::Press;
       event.x = x;
       event.y = y;
@@ -169,8 +182,13 @@ TouchEvent touchPoll() {
     // point seen while the finger was still down.
     lastX = x;
     lastY = y;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    event.minX=minX;event.minY=minY;event.maxX=maxX;event.maxY=maxY;
     if (abs(x - startX) > kDragSlopPx || abs(y - startY) > kDragSlopPx) moved = true;
-    if (abs(x - startX) > kLongPressSlopPx || abs(y - startY) > kLongPressSlopPx) longEligible = false;
+    if (moved) longEligible = false;
 
     if (!longFired && longEligible && millis() - startMs >= kLongPressMs) {
       const int16_t mx = x - startX, my = y - startY;

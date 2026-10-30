@@ -9,6 +9,15 @@ const MAX_CAPABILITIES = 128;
 const MAX_PROVIDERS = 50;
 const MAX_MODELS_PER_PROVIDER = 50;
 const MAX_TEXT_LENGTH = 120;
+// Per-model switches. These mirror packages/connector/src/connector.mjs, which in turn mirrors the
+// gateway's own limits (normalizeModelOptionSelections in t3Harness.mjs): a selection carries at most
+// 16 options, an option id is refused over 120 characters and a value over 200.
+const MAX_OPTION_DESCRIPTORS = 16;
+const MAX_OPTION_CHOICES = 32;
+const MAX_OPTION_ID_LENGTH = 120;
+const MAX_OPTION_VALUE_LENGTH = 200;
+const MAX_OPTION_LABEL_LENGTH = 120;
+const MAX_OPTION_DESCRIPTION_LENGTH = 240;
 const T3_HEALTH_VALUES = new Set([
   "unknown", "starting", "ready", "stopped", "auth_failed", "incompatible", "error",
 ]);
@@ -157,6 +166,7 @@ function sanitizeProviderCatalogue(value, occurredAt) {
     if (!id) return null;
     return {
       id,
+      ...(provider.runtimeKind === "direct" ? { runtimeKind: "direct" } : {}),
       label: boundedText(provider.label ?? provider.displayName ?? provider.name) ?? id,
       status: statuses.has(provider.status) ? provider.status : "unknown",
       enabled: provider.enabled === true,
@@ -167,7 +177,17 @@ function sanitizeProviderCatalogue(value, occurredAt) {
           if (typeof model === "string") return { id: boundedText(model), name: boundedText(model) };
           if (!isRecord(model)) return null;
           const modelId = boundedText(model.id ?? model.slug);
-          return modelId ? { id: modelId, name: boundedText(model.label ?? model.name) ?? modelId } : null;
+          if (!modelId) return null;
+          // Without this the connector's descriptors are discarded a second time, here: a model
+          // was rebuilt as {id, name} before buildProviderCatalogue could read them, so in
+          // managed-cloud mode the owner never saw a reasoning control. Emit the nesting that
+          // normalizeModel already reads rather than inventing a third shape.
+          const descriptors = sanitizeModelDescriptors(model);
+          return {
+            id: modelId,
+            name: boundedText(model.label ?? model.name) ?? modelId,
+            ...(descriptors.length ? { capabilities: { optionDescriptors: descriptors } } : {}),
+          };
         }).filter(Boolean)
         : [],
     };
@@ -176,6 +196,71 @@ function sanitizeProviderCatalogue(value, occurredAt) {
     source: "connector-hello",
     updatedAt: new Date(occurredAt).toISOString(),
   });
+}
+
+function sanitizeModelDescriptors(model) {
+  // Raw T3 records nest descriptors under capabilities; a flattened catalogue carries `options`.
+  const raw = model.capabilities?.optionDescriptors ?? model.options;
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const descriptors = [];
+  for (const entry of raw) {
+    if (descriptors.length >= MAX_OPTION_DESCRIPTORS) break;
+    const descriptor = sanitizeOptionDescriptor(entry);
+    if (!descriptor || seen.has(descriptor.id)) continue;
+    seen.add(descriptor.id);
+    descriptors.push(descriptor);
+  }
+  return descriptors;
+}
+
+/**
+ * Project one provider-declared switch, or null when it cannot be offered faithfully.
+ *
+ * This payload arrives over the network, so it is rebuilt field by field rather than forwarded:
+ * status, auth, credential and diagnostic fields have nowhere to ride along. Ids are never clipped.
+ * They round-trip to the provider verbatim as `modelSelection.options`, so a truncated id is not a
+ * shorter label but a different, invalid dispatch; an over-long id drops the descriptor or choice
+ * instead. Labels and descriptions are display text and clip.
+ */
+function sanitizeOptionDescriptor(raw) {
+  if (!isRecord(raw)) return null;
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  if (!id || id.length > MAX_OPTION_ID_LENGTH) return null;
+  const type = raw.type === "boolean" ? "boolean" : "select";
+  const description = clippedText(raw.description, MAX_OPTION_DESCRIPTION_LENGTH);
+  const base = { id, label: clippedText(raw.label, MAX_OPTION_LABEL_LENGTH) ?? id, type, ...(description ? { description } : {}) };
+  if (type === "boolean") {
+    return { ...base, ...(typeof raw.currentValue === "boolean" ? { currentValue: raw.currentValue } : {}) };
+  }
+  const source = raw.options ?? raw.choices;
+  const seen = new Set();
+  const options = [];
+  for (const choice of Array.isArray(source) ? source : []) {
+    if (options.length >= MAX_OPTION_CHOICES) break;
+    const choiceId = typeof choice?.id === "string" ? choice.id.trim() : "";
+    if (!choiceId || choiceId.length > MAX_OPTION_VALUE_LENGTH || seen.has(choiceId)) continue;
+    seen.add(choiceId);
+    const choiceDescription = clippedText(choice.description, MAX_OPTION_DESCRIPTION_LENGTH);
+    options.push({
+      id: choiceId,
+      label: clippedText(choice.label, MAX_OPTION_LABEL_LENGTH) ?? choiceId,
+      // defaultModelOptions relies on the provider's own default marker.
+      ...(choice.isDefault === true ? { isDefault: true } : {}),
+      ...(choiceDescription ? { description: choiceDescription } : {}),
+    });
+  }
+  // A select without choices cannot be offered, and a current value outside the list is not one
+  // the provider would accept back.
+  if (!options.length) return null;
+  const current = typeof raw.currentValue === "string" && seen.has(raw.currentValue) ? raw.currentValue : undefined;
+  return { ...base, ...(current !== undefined ? { currentValue: current } : {}), options };
+}
+
+function clippedText(value, max) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text ? text.slice(0, max) : null;
 }
 
 function eventKey(event) {
