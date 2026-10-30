@@ -17,6 +17,8 @@ test('actual firmware gesture queue bounds work, publishes once, and completes o
 #include <cassert>
 #include <atomic>
 #include <functional>
+// Fixed-width types need an explicit include: libc++ pulls <cstdint> in through <string>, libstdc++ (GCC/Ubuntu CI) does not.
+#include <cstdint>
 #include <string>
 using String = std::string;
 using TaskHandle_t = void*;

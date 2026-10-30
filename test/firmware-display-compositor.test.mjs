@@ -125,7 +125,8 @@ using DisplayBandPainter=void(*)(Adafruit_GFX&,int16_t,void*);
 bool composingBands=false;
 int bands=0;
 bool displayComposeBands(int16_t y,int16_t height,uint16_t,DisplayBandPainter painter,void* context){
- if(composingBands)return false;composingBands=true;
+ if(composingBands)return false;
+ composingBands=true;
  for(int top=std::max<int>(0,y);top<std::min<int>(320,y+height);top+=22){
   std::fill(canvas.pixels,canvas.pixels+240*22,0);painter(sceneGfx,top,context);++bands;
  }

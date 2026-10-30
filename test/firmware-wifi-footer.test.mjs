@@ -24,6 +24,8 @@ test("actual Wi-Fi and phone setup controls survive retained drafts, portal and 
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const code=`
 #include <cassert>
+// Fixed-width types need an explicit include: libc++ pulls <cstdint> in through <string>, libstdc++ (GCC/Ubuntu CI) does not.
+#include <cstdint>
 #include <string>
 #include <vector>
 using String=std::string;

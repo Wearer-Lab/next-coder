@@ -22,6 +22,8 @@ test("actual Hosyond voice hit targets, recovery controls and labels preserve th
   t.after(() => rm(dir, { recursive: true, force: true }));
   const code = `
 #include <cassert>
+// Fixed-width types need an explicit include: libc++ pulls <cstdint> in through <string>, libstdc++ (GCC/Ubuntu CI) does not.
+#include <cstdint>
 #include <string>
 #include <vector>
 using String=std::string;
@@ -99,6 +101,8 @@ test("actual voice recovery routes exact approvals and transfers Sent cursor bef
   const dir=await mkdtemp(join(tmpdir(),"hosyond-voice-cursor-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   const code=`
 #include <cassert>
+// Fixed-width types need an explicit include: libc++ pulls <cstdint> in through <string>, libstdc++ (GCC/Ubuntu CI) does not.
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <functional>

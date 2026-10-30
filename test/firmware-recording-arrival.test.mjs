@@ -33,7 +33,8 @@ void clearForArrival(){arrivals++;} // Actual arrival is metadata only, no glass
 void paintContent(){paints++;assert(recordArmed&&starts==1&&arrivals==1);for(int y=100;y<120;y++)for(int x=20;x<220;x++)pixels[y*kW+x]=99;}
 bool displayComposeScene(int y,int h,int color,void(*paint)(void*),void*arg){
  composes++;assert(y==48&&h==272&&color==kBg&&arrivals==1&&starts==1);
- if(!composeOK)return false;std::fill(pixels+y*kW,pixels+(y+h)*kW,color);paint(arg);return true;
+ if(!composeOK)return false;
+ std::fill(pixels+y*kW,pixels+(y+h)*kW,color);paint(arg);return true;
 }
 ${src.slice(a,b)}
 void reset(){screen=Screen::Send;modal=Modal::None;busy=journey=clipHeld=recordArmed=contentDirty=false;threadOK=micOK=beginOK=captureOK=composeOK=true;starts=paints=arrivals=composes=fills=presentations=begins=0;recordPaintedAt=13;recordOrbAt=14;gateway.ctx={"original-env","original-thread"};std::fill(pixels,pixels+kW*kH,777);}
