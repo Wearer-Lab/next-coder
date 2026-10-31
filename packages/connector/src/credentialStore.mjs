@@ -184,7 +184,16 @@ async function runWindows(executable, env, run, operation, account, secret = "",
   });
   if (result.code !== 0) {
     if (result.code === 1 && !String(result.stderr).trim()) return operation === "read" ? null : undefined;
-    throw credentialError("Windows Credential Manager operation failed.", "CREDENTIAL_STORE_OPERATION");
+    // Name the operation and carry the adapter's own message. Without this the owner, and anyone
+    // debugging for them, gets one sentence that fits every cause: a vault that cannot be reached
+    // from this logon session, a Win32 status that is not ERROR_NOT_FOUND, a decode failure. The
+    // secret only ever travels on stdin and stdout, so stderr is safe to surface; it is bounded
+    // and single-lined here so a stack trace cannot flood a service log.
+    const detail = String(result.stderr ?? "").replace(/\s+/gu, " ").trim().slice(0, 300);
+    throw credentialError(
+      `Windows Credential Manager ${operation} failed (exit ${result.code})${detail ? `: ${detail}` : "."}`,
+      "CREDENTIAL_STORE_OPERATION",
+    );
   }
   if (operation === "delete" || operation === "write") return undefined;
   const encodedValue = stripOneLineEnding(result.stdout);
