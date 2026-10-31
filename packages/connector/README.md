@@ -24,11 +24,14 @@ npx @wearer-haitch/connector connect \
 ```
 
 The connector first reuses an existing loopback T3. On macOS, Linux, and Windows, if none is ready, it starts the repository's
-documented `npx --yes t3 serve` command on `127.0.0.1`, waits up to 60 seconds, and creates/exchanges
+documented `npx --yes t3@<pinned version> serve` command on `127.0.0.1`, waits up to three minutes, and creates/exchanges
 a short-lived T3 pairing token locally. The owned T3 uses a private state directory, not the user's
 project, and is never bound to a LAN interface. `--no-start-t3` disables launch, while `--start-t3`
 makes the intent explicit. `--t3-port`, `--t3-base-dir`, and `--t3-start-timeout-ms` tune this path.
-Starting through `npx` may require registry access when T3 is not already cached.
+Starting through `npx` may require registry access when T3 is not already cached; a cache with no
+completed install earns a further bounded allowance, because a first launch downloads a ~160 MB
+runtime. The readiness bound is generous because a loaded host can take well over a minute to bind a
+healthy, already-installed T3; a launcher that exits is detected immediately and still fails fast.
 
 The connector supports the legacy T3 orchestration protocol and protocol 2 advertised by T3
 v0.1.1. Protocol 2 uses authenticated WebSocket snapshots and dispatch, translates absolute

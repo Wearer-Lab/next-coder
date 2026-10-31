@@ -12,7 +12,7 @@ import { createBoundedFileLogger } from "./fileLogger.mjs";
 import { safeError } from "./redact.mjs";
 import { installService, readServiceLogs, restartService, serviceActive, serviceInstalled, servicePaths, startService, stopService, uninstallService } from "./service.mjs";
 import { createT3Client, discoverT3, exchangePairingToken } from "./t3.mjs";
-import { consumeT3Handoff, createLocalT3PairingToken, DEFAULT_T3_VERSION, ensureLocalT3, inspectOwnedT3, requestT3Handoff, stopOwnedT3 } from "./t3Process.mjs";
+import { consumeT3Handoff, createLocalT3PairingToken, DEFAULT_T3_START_TIMEOUT_MS, DEFAULT_T3_VERSION, ensureLocalT3, inspectOwnedT3, requestT3Handoff, stopOwnedT3 } from "./t3Process.mjs";
 import { applyConnectorUpdate, checkConnectorUpdate } from "./update.mjs";
 
 import { prepareVoiceRuntime, setupVoiceRuntime, inspectVoiceRuntime } from "./voiceRuntime.mjs";
@@ -514,7 +514,7 @@ async function prepareT3Runtime(options, existing, dependencies) {
     baseUrl: requested,
     baseDir: options.t3BaseDir ?? existing?.t3BaseDir,
     autoStart: !options.noStartT3,
-    timeoutMs: options.t3StartTimeoutMs ?? 60_000,
+    timeoutMs: options.t3StartTimeoutMs ?? DEFAULT_T3_START_TIMEOUT_MS,
     explicitT3Version: options.t3Version,
     fetchImpl: dependencies.fetchImpl,
     fs: dependencies.fs,

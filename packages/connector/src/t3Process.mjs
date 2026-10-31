@@ -30,6 +30,17 @@ export const T3_CLI_PLATFORMS = Object.freeze(["darwin-arm64", "linux-arm64", "l
 // that is already installed; a runtime cache with no completed install earns this bounded,
 // additive allowance (never an unbounded wait). Re-downloads after a T3 release are not predicted.
 export const T3_FIRST_RUN_ALLOWANCE_MS = 180_000;
+
+// How long an already-installed T3 gets to start listening before the launch is abandoned.
+// This was 60s, which is not enough on a loaded machine: on a Windows host running ~100 unrelated
+// Node processes, a healthy, cached T3 0.1.5 took 15s, 18s, 31s and 93s to bind across four
+// consecutive runs, so the old bound timed out on a server that was working. It is not a download
+// problem (that is T3_FIRST_RUN_ALLOWANCE_MS above, and this host had a completed install) and not
+// a version-resolution problem (bare `t3` bound in 31.9s against `t3@0.1.5` in 30.4s on the same
+// host). Waiting longer only costs time when T3 is alive but silent: a launcher that exits is
+// already detected within the loop and fails immediately, so a genuinely broken launch still
+// reports fast. Bounded on purpose; an operator who needs more passes --t3-start-timeout-ms.
+export const DEFAULT_T3_START_TIMEOUT_MS = 180_000;
 const GROUP_EXIT_GRACE_MS = 5_000;
 // The T3 Code release this connector starts and pairs against. An unpinned `npx t3` resolves to
 // whatever is newest on the registry at that moment, and the orchestration contract moves between
@@ -86,7 +97,7 @@ export async function ensureLocalT3({
   baseUrl = "http://127.0.0.1:3773",
   baseDir,
   autoStart = true,
-  timeoutMs = 60_000,
+  timeoutMs = DEFAULT_T3_START_TIMEOUT_MS,
   fetchImpl = globalThis.fetch,
   fs = nodeFs,
   spawnImpl = nodeSpawn,
