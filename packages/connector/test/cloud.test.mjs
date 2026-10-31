@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { defaultConnectorLabel, describeHostPlatform, enrollConnector, requestSocketTicket, revokeCloudConnector } from "../src/cloud.mjs";
+import { CONNECTOR_VERSION, defaultConnectorLabel, describeHostPlatform, enrollConnector, requestSocketTicket, revokeCloudConnector } from "../src/cloud.mjs";
 
 test("enrollment never sends local T3 authority to cloud", async () => {
   let request;
@@ -89,4 +90,12 @@ test("a blank explicit label falls back to the host name rather than enrolling u
   };
   await enrollConnector({ server: "https://cloud.example", code: "c", label: "   ", platform: "linux", fetchImpl });
   assert.equal(body.label.trim().length > 0, true);
+});
+
+// The connector reports its version from a source-code constant while npm publishes the
+// manifest's. A release that bumps one and not the other ships a package whose CLI and cloud
+// handshake both understate it, and nothing else in the suite compares the two.
+test("the reported connector version matches the published manifest version", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(CONNECTOR_VERSION, manifest.version);
 });

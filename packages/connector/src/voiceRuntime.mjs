@@ -7,6 +7,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { ensureManagedPython } from "./managedPython.mjs";
 import { DEFAULT_PARAKEET_URL, validateParakeetUrl } from "./localTranscription.mjs";
 
+// Starting the sidecar means launching Python and loading a ~660 MB speech model, on whatever
+// machine the owner happens to have. A budget sized on a fast laptop reports a broken install
+// to someone whose disk is simply slow. The loop already exits immediately when the child
+// fails or exits, so a real fault still surfaces at once and only a slow start waits.
+export const VOICE_STARTUP_TIMEOUT_MS = 300_000;
+
 const MODEL = "nvidia/parakeet-tdt-0.6b-v2";
 const VERSION = "onnx-asr==0.12.0 onnxruntime==1.31.0 numpy==2.5.4";
 const assets = fileURLToPath(new URL("./voice-assets/", import.meta.url));
@@ -145,7 +151,7 @@ export async function prepareVoiceRuntime(options = {}) {
     child.once("error", () => { failed = true; });
     const startedAt = Date.now();
     try {
-    while (Date.now() - startedAt < (options.startupTimeoutMs ?? 120_000)) {
+    while (Date.now() - startedAt < (options.startupTimeoutMs ?? VOICE_STARTUP_TIMEOUT_MS)) {
       signal?.throwIfAborted();
       if (closing) throw error("TRANSCRIPTION_UNAVAILABLE", "The local speech runtime has stopped.");
       if (failed || child.exitCode !== null) break;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   createLocalT3PairingToken,
+  DEFAULT_T3_START_TIMEOUT_MS,
   DEFAULT_T3_VERSION,
   ensureLocalT3,
   findExecutableOnPath,
@@ -850,3 +851,15 @@ function windowsQuote(value) {
   if (value && !/[\s"]/.test(value)) return value;
   return `"${String(value).replace(/(\\*)"/g, "$1$1\\\"").replace(/(\\+)$/g, "$1$1")}"`;
 }
+
+// The CLI used to carry its own `?? 60_000`, so the documented default and the module default were
+// two numbers that could disagree. They are now one constant; this fails if either drifts.
+test("the start-timeout default is one shared, bounded constant the CLI does not restate", async () => {
+  const cli = await readFile(new URL("../src/cli.mjs", import.meta.url), "utf8");
+  assert.match(cli, /timeoutMs: options\.t3StartTimeoutMs \?\? DEFAULT_T3_START_TIMEOUT_MS,/u);
+  assert.doesNotMatch(cli, /timeoutMs: options\.t3StartTimeoutMs \?\? \d/u);
+  // Measured on a loaded Windows host: a healthy cached T3 bound at 15s, 18s, 31s and 93s.
+  assert.ok(DEFAULT_T3_START_TIMEOUT_MS > 93_000, "must clear the slowest observed healthy bind");
+  assert.ok(Number.isFinite(DEFAULT_T3_START_TIMEOUT_MS) && DEFAULT_T3_START_TIMEOUT_MS <= 300_000,
+    "stays bounded and within the --t3-start-timeout-ms ceiling");
+});

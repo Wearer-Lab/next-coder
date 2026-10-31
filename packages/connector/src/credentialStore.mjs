@@ -10,7 +10,16 @@ export const CREDENTIAL_SERVICE = "com.next-coder.connector";
 export const LEGACY_CREDENTIAL_SERVICE = "com.agent-controller.connector";
 export const CREDENTIAL_STORE_VERSION = 1;
 
-const COMMAND_TIMEOUT_MS = 5_000;
+// Every native credential call is one subprocess, and on Windows that subprocess compiles a C#
+// P/Invoke shim with Add-Type before it can touch the vault. That compile dominates the call and is
+// far slower than the `security`/`secret-tool` execs this bound was first sized against: measured in
+// a real interactive session on a loaded Windows host, four consecutive reads took 13418ms, 7715ms,
+// 5867ms and 3850ms, so the old 5s budget failed three of four and the connector reported
+// "Native credential store operation timed out" with a healthy vault and a credential present.
+// This is an upper bound, not a delay: macOS and Linux still return in milliseconds and a genuinely
+// hung helper is still killed. Raising it costs a slow host nothing and stops a correct enrolment
+// from failing closed.
+export const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const MAX_SECRET_BYTES = 2_560;
 
@@ -164,6 +173,12 @@ function fileFallback(reason) {
   return { version: CREDENTIAL_STORE_VERSION, backend: "private-file", native: false, fallbackReason: reason };
 }
 
+// CLIXML on stderr is PowerShell's serialised progress/verbose stream, not an error. Everything
+// from the `#< CLIXML` preamble onwards is dropped; whatever remains is a real diagnostic.
+export function meaningfulStderr(stderr) {
+  return String(stderr ?? "").replace(/#<\s*CLIXML[\s\S]*/u, "").trim();
+}
+
 async function runWindows(executable, env, run, operation, account, secret = "", target = `${CREDENTIAL_SERVICE}/${account}`) {
   const encoded = Buffer.from(WINDOWS_CREDENTIAL_SCRIPT, "utf16le").toString("base64");
   const result = await run(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
@@ -174,8 +189,21 @@ async function runWindows(executable, env, run, operation, account, secret = "",
     allowFailure: operation !== "write",
   });
   if (result.code !== 0) {
-    if (result.code === 1 && !String(result.stderr).trim()) return operation === "read" ? null : undefined;
-    throw credentialError("Windows Credential Manager operation failed.", "CREDENTIAL_STORE_OPERATION");
+    // `exit 1` with nothing on stderr is how the adapter reports ERROR_NOT_FOUND. PowerShell also
+    // serialises its *progress* stream to stderr as CLIXML ("Preparing modules for first use." on a
+    // cold interpreter), which is not a diagnostic and must not turn a missing credential into a
+    // failure. Stripping it is what makes this path deterministic instead of warm/cold dependent.
+    if (result.code === 1 && !meaningfulStderr(result.stderr)) return operation === "read" ? null : undefined;
+    // Name the operation and carry the adapter's own message. Without this the owner, and anyone
+    // debugging for them, gets one sentence that fits every cause: a vault that cannot be reached
+    // from this logon session, a Win32 status that is not ERROR_NOT_FOUND, a decode failure. The
+    // secret only ever travels on stdin and stdout, so stderr is safe to surface; it is bounded
+    // and single-lined here so a stack trace cannot flood a service log.
+    const detail = meaningfulStderr(result.stderr).replace(/\s+/gu, " ").slice(0, 300);
+    throw credentialError(
+      `Windows Credential Manager ${operation} failed (exit ${result.code})${detail ? `: ${detail}` : "."}`,
+      "CREDENTIAL_STORE_OPERATION",
+    );
   }
   if (operation === "delete" || operation === "write") return undefined;
   const encodedValue = stripOneLineEnding(result.stdout);
@@ -216,6 +244,10 @@ function credentialError(message, code) { return Object.assign(new Error(message
 
 const WINDOWS_CREDENTIAL_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+# PowerShell writes progress records to STDERR as CLIXML, and "Preparing modules for first use."
+# appears on a cold interpreter. Downstream, a non-empty stderr turns an ordinary
+# credential-not-found exit into a hard failure, so silence the stream at the source.
+$ProgressPreference = 'SilentlyContinue'
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;

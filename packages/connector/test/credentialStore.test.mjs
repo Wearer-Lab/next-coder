@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { main as realMain } from "../src/cli.mjs";
 import { loadState, removeState, saveRuntimeState, saveState, STATE_VERSION } from "../src/config.mjs";
-import { CREDENTIAL_SERVICE, createCredentialStore, credentialAccounts, LEGACY_CREDENTIAL_SERVICE, runCredentialCommand } from "../src/credentialStore.mjs";
+import { COMMAND_TIMEOUT_MS, CREDENTIAL_SERVICE, meaningfulStderr, createCredentialStore, credentialAccounts, LEGACY_CREDENTIAL_SERVICE, runCredentialCommand } from "../src/credentialStore.mjs";
 
 const sample = {
   version: STATE_VERSION,
@@ -267,3 +267,62 @@ function ok(stdout = "") { return { code: 0, stdout, stderr: "" }; }
 function capture() { let value = ""; return { write(chunk) { value += chunk; }, value() { return value; }, clear() { value = ""; } }; }
 
 function main(args, dependencies = {}) { return realMain(args, { inspectVoiceRuntime: async () => ({ ready: true }), prepareVoiceRuntime: async () => ({ url: "http://127.0.0.1:8977/v1/transcribe", close: async () => {}, ensureReady: async () => {} }), ...dependencies }); }
+
+// Sized against the Windows adapter, whose subprocess compiles a C# P/Invoke shim with Add-Type
+// before it can reach the vault. Measured in a real interactive session on a loaded host, four
+// consecutive reads took 13418ms, 7715ms, 5867ms and 3850ms; at the previous 5s bound three of
+// four failed and the connector reported a timeout against a healthy vault.
+test("the native command budget clears a cold Windows Add-Type compile", () => {
+  assert.ok(COMMAND_TIMEOUT_MS >= 13_418, "must clear the slowest observed healthy credential read");
+  assert.ok(Number.isFinite(COMMAND_TIMEOUT_MS) && COMMAND_TIMEOUT_MS <= 120_000,
+    "stays an upper bound; a hung helper is still killed");
+});
+
+// A cold `powershell.exe` serialises its progress stream to stderr as CLIXML. The adapter reports
+// ERROR_NOT_FOUND as `exit 1` with an empty stderr, so treating that noise as a diagnostic turned
+// an ordinary "this credential is not there" into "Windows Credential Manager operation failed" —
+// but only on a cold interpreter, which is why it presented as an intermittent Windows fault.
+test("PowerShell progress CLIXML on stderr is not a diagnostic", () => {
+  const clixml = '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+    + '<Obj S="progress" RefId="0"><MS><PR N="Record"><AV>Preparing modules for first use.</AV></PR></MS></Obj></Objs>';
+  assert.equal(meaningfulStderr(clixml), "", "progress records carry no diagnostic");
+  assert.equal(meaningfulStderr(`${clixml}\r\n`), "");
+  assert.equal(meaningfulStderr(""), "");
+  assert.equal(meaningfulStderr(undefined), "");
+  // A real message still survives, including one printed before the progress record.
+  assert.match(meaningfulStderr(`CredWrite failed.\r\n${clixml}`), /CredWrite failed\./u);
+  assert.match(meaningfulStderr("Access is denied."), /Access is denied\./u);
+});
+
+// The script must not emit the records in the first place; stripping them is the second line.
+test("the Windows credential script silences the progress stream at the source", async () => {
+  const source = await readFile(new URL("../src/credentialStore.mjs", import.meta.url), "utf8");
+  const script = source.match(/const WINDOWS_CREDENTIAL_SCRIPT = String\.raw`([\s\S]*?)`;/u)?.[1] ?? "";
+  assert.match(script, /\$ProgressPreference\s*=\s*'SilentlyContinue'/u);
+});
+
+// The guard itself, not just the helper: a cold-interpreter delete of a credential that is not
+// there must be tolerated exactly like a warm one. This is the failure an owner actually hit —
+// `connect` aborted with "Windows Credential Manager operation failed" on an intact vault.
+test("a Windows not-found exit is tolerated even when PowerShell logs progress to stderr", async () => {
+  const clixml = '#< CLIXML\r\n<Objs Version="1.1.0.1"><Obj S="progress" RefId="0"><MS><PR N="Record">'
+    + '<AV>Preparing modules for first use.</AV></PR></MS></Obj></Objs>';
+  const seen = [];
+  const run = async (file, args, options = {}) => {
+    seen.push(options.env?.NEXT_CODER_CREDENTIAL_OPERATION);
+    // How the adapter reports ERROR_NOT_FOUND on a cold interpreter.
+    return { code: 1, stdout: "", stderr: clixml };
+  };
+  const store = await createCredentialStore({ platform: "win32", env: { SystemRoot: "C:\\Windows" }, fs: { access: async () => {} }, run });
+  assert.equal(await store.read("account:missing"), null, "a missing credential reads as null, not an error");
+  await store.delete("account:missing");
+  // Each operation is attempted against the current service name and then the legacy one.
+  assert.deepEqual(seen, ["read", "read", "delete", "delete"]);
+
+  // A genuine diagnostic on the same exit code still fails, so the strip is not a blanket pardon.
+  const failing = await createCredentialStore({
+    platform: "win32", env: { SystemRoot: "C:\\Windows" }, fs: { access: async () => {} },
+    run: async () => ({ code: 1, stdout: "", stderr: `Access is denied.\r\n${clixml}` }),
+  });
+  await assert.rejects(() => failing.read("account:denied"), /Access is denied/u);
+});

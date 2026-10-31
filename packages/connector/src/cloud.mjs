@@ -2,7 +2,7 @@ import { hostname as osHostname } from "node:os";
 import { connectorAuthorization, requestJson } from "./http.mjs";
 
 export const PROTOCOL_VERSION = 1;
-export const CONNECTOR_VERSION = "0.1.0";
+export const CONNECTOR_VERSION = "0.1.1";
 
 /**
  * How a computer names itself when the owner did not pass `--label`.

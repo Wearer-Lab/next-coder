@@ -30,7 +30,33 @@ export const T3_CLI_PLATFORMS = Object.freeze(["darwin-arm64", "linux-arm64", "l
 // that is already installed; a runtime cache with no completed install earns this bounded,
 // additive allowance (never an unbounded wait). Re-downloads after a T3 release are not predicted.
 export const T3_FIRST_RUN_ALLOWANCE_MS = 180_000;
+
+// How long an already-installed T3 gets to start listening before the launch is abandoned.
+// This was 60s, which is not enough on a loaded machine: on a Windows host running ~100 unrelated
+// Node processes, a healthy, cached T3 0.1.5 took 15s, 18s, 31s and 93s to bind across four
+// consecutive runs, so the old bound timed out on a server that was working. It is not a download
+// problem (that is T3_FIRST_RUN_ALLOWANCE_MS above, and this host had a completed install) and not
+// a version-resolution problem (bare `t3` bound in 31.9s against `t3@0.1.5` in 30.4s on the same
+// host). Waiting longer only costs time when T3 is alive but silent: a launcher that exits is
+// already detected within the loop and fails immediately, so a genuinely broken launch still
+// reports fast. Bounded on purpose; an operator who needs more passes --t3-start-timeout-ms.
+export const DEFAULT_T3_START_TIMEOUT_MS = 180_000;
 const GROUP_EXIT_GRACE_MS = 5_000;
+
+// Budgets for the subprocesses this module shells out to during onboarding. They are deliberately
+// generous, because every one of them fails CLOSED: a connector that gives up early reports a
+// broken machine to someone whose machine is merely slow or busy, which is the hardest failure for
+// an owner to act on. A real fault still surfaces fast — an exited process, a non-zero status or an
+// explicit error is detected directly and never waits out the budget. The only thing a larger
+// number buys is patience with a loaded host, and the only thing a smaller one buys is a wrong
+// diagnosis. Measured cause: on a loaded Windows host a cold `powershell.exe` with Add-Type took
+// 13.4s where 5s was budgeted. Keep these in step with budgets.test.mjs, which refuses a shorter one.
+export const WINDOWS_INSPECTION_TIMEOUT_MS = 30_000;
+export const WINDOWS_CONTROL_TIMEOUT_MS = 30_000;
+// Pairing shells out to `npx t3 auth pairing create`, which can resolve and start a runtime. It was
+// unbounded, so a wedged launcher hung the connector with no error at all; bounded is strictly
+// better than forever, and this is wide enough to cover a cold npx resolution.
+export const T3_PAIRING_COMMAND_TIMEOUT_MS = 120_000;
 // The T3 Code release this connector starts and pairs against. An unpinned `npx t3` resolves to
 // whatever is newest on the registry at that moment, and the orchestration contract moves between
 // releases (docs/t3-version-audit.md: 0.1.x removed the orchestration HTTP routes, requires
@@ -86,7 +112,7 @@ export async function ensureLocalT3({
   baseUrl = "http://127.0.0.1:3773",
   baseDir,
   autoStart = true,
-  timeoutMs = 60_000,
+  timeoutMs = DEFAULT_T3_START_TIMEOUT_MS,
   fetchImpl = globalThis.fetch,
   fs = nodeFs,
   spawnImpl = nodeSpawn,
@@ -647,32 +673,45 @@ export function parseWindowsCommandLine(commandLine) {
   return values;
 }
 
+// A child-process rejection carries the only thing that distinguishes a tolerable outcome from a
+// real one: an exit status, a spawn errno, or a timeout kill. Discarding it leaves one sentence
+// that fits every cause, which is what made a Windows stop failure unreadable. Bounded and
+// single-lined so a tool's stderr cannot flood a service log.
+function describeSpawnFailure(error) {
+  const parts = [];
+  if (error?.code !== undefined && error?.code !== null) parts.push(`code ${error.code}`);
+  if (error?.killed) parts.push(`killed by ${error.signal ?? "timeout"}`);
+  const stderr = String(error?.stderr ?? "").replace(/\s+/gu, " ").trim().slice(0, 200);
+  if (stderr) parts.push(stderr);
+  return parts.length ? `: ${parts.join("; ")}` : ".";
+}
+
 function sameWindowsPath(left, right) {
   return win32.normalize(String(left)).toLowerCase() === win32.normalize(String(right)).toLowerCase();
 }
 
 async function runInspectionCommand(file, args, { env } = {}) {
   try {
-    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: 5_000, windowsHide: true, shell: false, env });
+    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: WINDOWS_INSPECTION_TIMEOUT_MS, windowsHide: true, shell: false, env });
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
-    throw processError("Windows process ownership inspection failed.", "T3_PROCESS_INSPECTION_FAILED", error);
+    throw processError(`Windows process ownership inspection failed${describeSpawnFailure(error)}`, "T3_PROCESS_INSPECTION_FAILED", error);
   }
 }
 
 async function runControlCommand(file, args, { env, allowNotFound = false } = {}) {
   try {
-    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: 10_000, windowsHide: true, shell: false, env });
+    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: WINDOWS_CONTROL_TIMEOUT_MS, windowsHide: true, shell: false, env });
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     if (allowNotFound && [1, 128].includes(Number(error?.code))) return { code: Number(error.code), stdout: error.stdout ?? "", stderr: error.stderr ?? "" };
-    throw processError("Windows could not stop the exact connector-owned T3 process tree.", "T3_PROCESS_STOP_FAILED", error);
+    throw processError(`Windows could not stop the exact connector-owned T3 process tree${describeSpawnFailure(error)}`, "T3_PROCESS_STOP_FAILED", error);
   }
 }
 
 async function runFile(file, args) {
   try {
-    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 1024 * 1024, windowsHide: true, shell: false });
+    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: T3_PAIRING_COMMAND_TIMEOUT_MS, windowsHide: true, shell: false });
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     throw Object.assign(new Error("The local T3 pairing command failed."), { code: "T3_PAIRING_FAILED", status: error?.code });
