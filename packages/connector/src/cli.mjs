@@ -178,13 +178,27 @@ async function connectCommand(options, dependencies = {}) {
     const fileLogger = options.serviceLog ? createBoundedFileLogger(options.serviceLog, { secrets: [state.secret, state.credentialRotation?.pendingSecret, state.t3AccessToken] }) : null;
     const logger = fileLogger ?? { log: (...items) => write(stdout, `${items.join(" ")}\n`), error: (...items) => write(stderr, `${items.map(formatItem).join(" ")}\n`) };
     write(stdout, "Preparing built-in voice on this machine. First use downloads the local speech model (about 660 MB) and its runtime. Audio processing stays on this machine.\n");
-    voiceRuntime = await (dependencies.prepareVoiceRuntime ?? prepareVoiceRuntime)({ stateDir, fetchImpl, logger, signal: voiceAbort.signal, onProgress: (stage) => logger.log(`Voice setup: ${stage}`) });
-    state = { ...state, voice: { enabled: true, url: voiceRuntime.url } };
+    // Built-in voice is an optional local convenience. The job of `connect` is to put this machine
+    // on the account, and letting voice abort that means a 660 MB model download, a slow sidecar or
+    // a low-memory moment takes the whole connector offline — observed on a loaded Windows host
+    // *after* enrolment and T3 pairing had already succeeded, which is the worst possible time to
+    // fail closed. Record the failure, say so plainly, and carry on: cloud voice then reports its
+    // own explicit TRANSCRIPTION_UNAVAILABLE instead of this being hidden as a dead connector.
+    let voiceFailure = null;
+    try {
+      voiceRuntime = await (dependencies.prepareVoiceRuntime ?? prepareVoiceRuntime)({ stateDir, fetchImpl, logger, signal: voiceAbort.signal, onProgress: (stage) => logger.log(`Voice setup: ${stage}`) });
+    } catch (failure) {
+      // An abort is the owner stopping us, not a voice fault; it still ends the command.
+      if (voiceAbort.signal.aborted) throw failure;
+      voiceFailure = failure;
+      logger.error(`Voice setup did not complete, continuing without built-in voice: ${failure?.message ?? failure}`);
+    }
+    state = { ...state, voice: voiceRuntime ? { enabled: true, url: voiceRuntime.url } : { enabled: false } };
     await saveState(stateDir, state, { credentialStore });
     // Connection health/cursors live in a separate runtime projection so the
     // long-running service can never overwrite an atomic credential-rotation
     // journal written by a concurrent CLI process.
-    const connector = new Connector({ state, t3, fetchImpl, WebSocketImpl, logger, ensureLocalTranscription: (input) => voiceRuntime.ensureReady(input), persistState: async (nextState) => await saveRuntimeState(stateDir, nextState) });
+    const connector = new Connector({ state, t3, fetchImpl, WebSocketImpl, logger, ensureLocalTranscription: (input) => (voiceRuntime ? voiceRuntime.ensureReady(input) : Promise.reject(voiceFailure ?? Object.assign(new Error("Local speech recognition is not available on this machine."), { code: "TRANSCRIPTION_UNAVAILABLE" }))), persistState: async (nextState) => await saveRuntimeState(stateDir, nextState) });
     const stop = () => connector.stop();
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);

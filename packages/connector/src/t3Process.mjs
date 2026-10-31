@@ -42,6 +42,21 @@ export const T3_FIRST_RUN_ALLOWANCE_MS = 180_000;
 // reports fast. Bounded on purpose; an operator who needs more passes --t3-start-timeout-ms.
 export const DEFAULT_T3_START_TIMEOUT_MS = 180_000;
 const GROUP_EXIT_GRACE_MS = 5_000;
+
+// Budgets for the subprocesses this module shells out to during onboarding. They are deliberately
+// generous, because every one of them fails CLOSED: a connector that gives up early reports a
+// broken machine to someone whose machine is merely slow or busy, which is the hardest failure for
+// an owner to act on. A real fault still surfaces fast — an exited process, a non-zero status or an
+// explicit error is detected directly and never waits out the budget. The only thing a larger
+// number buys is patience with a loaded host, and the only thing a smaller one buys is a wrong
+// diagnosis. Measured cause: on a loaded Windows host a cold `powershell.exe` with Add-Type took
+// 13.4s where 5s was budgeted. Keep these in step with budgets.test.mjs, which refuses a shorter one.
+export const WINDOWS_INSPECTION_TIMEOUT_MS = 30_000;
+export const WINDOWS_CONTROL_TIMEOUT_MS = 30_000;
+// Pairing shells out to `npx t3 auth pairing create`, which can resolve and start a runtime. It was
+// unbounded, so a wedged launcher hung the connector with no error at all; bounded is strictly
+// better than forever, and this is wide enough to cover a cold npx resolution.
+export const T3_PAIRING_COMMAND_TIMEOUT_MS = 120_000;
 // The T3 Code release this connector starts and pairs against. An unpinned `npx t3` resolves to
 // whatever is newest on the registry at that moment, and the orchestration contract moves between
 // releases (docs/t3-version-audit.md: 0.1.x removed the orchestration HTTP routes, requires
@@ -664,7 +679,7 @@ function sameWindowsPath(left, right) {
 
 async function runInspectionCommand(file, args, { env } = {}) {
   try {
-    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: 5_000, windowsHide: true, shell: false, env });
+    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: WINDOWS_INSPECTION_TIMEOUT_MS, windowsHide: true, shell: false, env });
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     throw processError("Windows process ownership inspection failed.", "T3_PROCESS_INSPECTION_FAILED", error);
@@ -673,7 +688,7 @@ async function runInspectionCommand(file, args, { env } = {}) {
 
 async function runControlCommand(file, args, { env, allowNotFound = false } = {}) {
   try {
-    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: 10_000, windowsHide: true, shell: false, env });
+    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: WINDOWS_CONTROL_TIMEOUT_MS, windowsHide: true, shell: false, env });
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     if (allowNotFound && [1, 128].includes(Number(error?.code))) return { code: Number(error.code), stdout: error.stdout ?? "", stderr: error.stderr ?? "" };
@@ -683,7 +698,7 @@ async function runControlCommand(file, args, { env, allowNotFound = false } = {}
 
 async function runFile(file, args) {
   try {
-    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 1024 * 1024, windowsHide: true, shell: false });
+    const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: T3_PAIRING_COMMAND_TIMEOUT_MS, windowsHide: true, shell: false });
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     throw Object.assign(new Error("The local T3 pairing command failed."), { code: "T3_PAIRING_FAILED", status: error?.code });

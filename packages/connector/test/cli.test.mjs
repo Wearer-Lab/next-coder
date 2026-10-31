@@ -257,3 +257,35 @@ test("voice setup and status use managed runtime without connector enrollment", 
   assert.equal(parseArgs(["voice","setup"]).voiceAction,"setup");
   assert.throws(()=>parseArgs(["voice","unknown"]),/Voice supports/);
 });
+
+// Built-in voice is optional, so it must not be able to take the connector offline. A loaded
+// Windows host failed here *after* enrolment and T3 pairing had already succeeded, which left a
+// correctly enrolled machine reporting nothing at all to its owner.
+test("a voice failure leaves the connector running with voice disabled", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "connector-cli-voice-fail-"));
+  const output = capture();
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith("/.well-known/t3/environment")) return new Response(JSON.stringify({ version: "0.0.32" }));
+    if (String(url).endsWith("/v1/connectors/enroll")) return new Response(JSON.stringify({ connector: { id: "con" }, environment: { id: "env" }, secret: "standing" }), { status: 201 });
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  let constructed = false;
+  let transcription = null;
+  class MockConnector {
+    constructor(input) {
+      constructed = true;
+      assert.equal(input.state.voice.enabled, false, "voice is recorded as unavailable, not absent");
+      transcription = input.ensureLocalTranscription;
+    }
+    async run() {} stop() {}
+  }
+  const code = await main(["connect", "--server", "http://127.0.0.1:8787", "--code", "enroll-code", "--t3-url", "http://127.0.0.1:3773", "--once"], {
+    stateDir, stdout: output, stderr: output, env: { NEXT_CODER_T3_TOKEN: "local-token" }, fetchImpl, WebSocketImpl: class {}, Connector: MockConnector,
+    prepareVoiceRuntime: async () => { throw Object.assign(new Error("Local speech recognition did not become ready."), { code: "TRANSCRIPTION_UNAVAILABLE" }); },
+  });
+  assert.equal(code, 0, "connect still succeeds");
+  assert.equal(constructed, true, "the connector is still constructed and runs");
+  // The failure is reported rather than swallowed, and asking for transcription still refuses.
+  assert.match(output.value(), /continuing without built-in voice/u);
+  await assert.rejects(() => transcription({}), /did not become ready/u);
+});
