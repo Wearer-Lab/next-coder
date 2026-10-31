@@ -173,6 +173,12 @@ function fileFallback(reason) {
   return { version: CREDENTIAL_STORE_VERSION, backend: "private-file", native: false, fallbackReason: reason };
 }
 
+// CLIXML on stderr is PowerShell's serialised progress/verbose stream, not an error. Everything
+// from the `#< CLIXML` preamble onwards is dropped; whatever remains is a real diagnostic.
+export function meaningfulStderr(stderr) {
+  return String(stderr ?? "").replace(/#<\s*CLIXML[\s\S]*/u, "").trim();
+}
+
 async function runWindows(executable, env, run, operation, account, secret = "", target = `${CREDENTIAL_SERVICE}/${account}`) {
   const encoded = Buffer.from(WINDOWS_CREDENTIAL_SCRIPT, "utf16le").toString("base64");
   const result = await run(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
@@ -183,13 +189,17 @@ async function runWindows(executable, env, run, operation, account, secret = "",
     allowFailure: operation !== "write",
   });
   if (result.code !== 0) {
-    if (result.code === 1 && !String(result.stderr).trim()) return operation === "read" ? null : undefined;
+    // `exit 1` with nothing on stderr is how the adapter reports ERROR_NOT_FOUND. PowerShell also
+    // serialises its *progress* stream to stderr as CLIXML ("Preparing modules for first use." on a
+    // cold interpreter), which is not a diagnostic and must not turn a missing credential into a
+    // failure. Stripping it is what makes this path deterministic instead of warm/cold dependent.
+    if (result.code === 1 && !meaningfulStderr(result.stderr)) return operation === "read" ? null : undefined;
     // Name the operation and carry the adapter's own message. Without this the owner, and anyone
     // debugging for them, gets one sentence that fits every cause: a vault that cannot be reached
     // from this logon session, a Win32 status that is not ERROR_NOT_FOUND, a decode failure. The
     // secret only ever travels on stdin and stdout, so stderr is safe to surface; it is bounded
     // and single-lined here so a stack trace cannot flood a service log.
-    const detail = String(result.stderr ?? "").replace(/\s+/gu, " ").trim().slice(0, 300);
+    const detail = meaningfulStderr(result.stderr).replace(/\s+/gu, " ").slice(0, 300);
     throw credentialError(
       `Windows Credential Manager ${operation} failed (exit ${result.code})${detail ? `: ${detail}` : "."}`,
       "CREDENTIAL_STORE_OPERATION",
@@ -234,6 +244,10 @@ function credentialError(message, code) { return Object.assign(new Error(message
 
 const WINDOWS_CREDENTIAL_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+# PowerShell writes progress records to STDERR as CLIXML, and "Preparing modules for first use."
+# appears on a cold interpreter. Downstream, a non-empty stderr turns an ordinary
+# credential-not-found exit into a hard failure, so silence the stream at the source.
+$ProgressPreference = 'SilentlyContinue'
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
