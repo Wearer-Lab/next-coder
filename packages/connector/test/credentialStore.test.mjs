@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { main as realMain } from "../src/cli.mjs";
 import { loadState, removeState, saveRuntimeState, saveState, STATE_VERSION } from "../src/config.mjs";
-import { CREDENTIAL_SERVICE, createCredentialStore, credentialAccounts, LEGACY_CREDENTIAL_SERVICE, runCredentialCommand } from "../src/credentialStore.mjs";
+import { COMMAND_TIMEOUT_MS, CREDENTIAL_SERVICE, createCredentialStore, credentialAccounts, LEGACY_CREDENTIAL_SERVICE, runCredentialCommand } from "../src/credentialStore.mjs";
 
 const sample = {
   version: STATE_VERSION,
@@ -267,3 +267,13 @@ function ok(stdout = "") { return { code: 0, stdout, stderr: "" }; }
 function capture() { let value = ""; return { write(chunk) { value += chunk; }, value() { return value; }, clear() { value = ""; } }; }
 
 function main(args, dependencies = {}) { return realMain(args, { inspectVoiceRuntime: async () => ({ ready: true }), prepareVoiceRuntime: async () => ({ url: "http://127.0.0.1:8977/v1/transcribe", close: async () => {}, ensureReady: async () => {} }), ...dependencies }); }
+
+// Sized against the Windows adapter, whose subprocess compiles a C# P/Invoke shim with Add-Type
+// before it can reach the vault. Measured in a real interactive session on a loaded host, four
+// consecutive reads took 13418ms, 7715ms, 5867ms and 3850ms; at the previous 5s bound three of
+// four failed and the connector reported a timeout against a healthy vault.
+test("the native command budget clears a cold Windows Add-Type compile", () => {
+  assert.ok(COMMAND_TIMEOUT_MS >= 13_418, "must clear the slowest observed healthy credential read");
+  assert.ok(Number.isFinite(COMMAND_TIMEOUT_MS) && COMMAND_TIMEOUT_MS <= 120_000,
+    "stays an upper bound; a hung helper is still killed");
+});

@@ -10,7 +10,16 @@ export const CREDENTIAL_SERVICE = "com.next-coder.connector";
 export const LEGACY_CREDENTIAL_SERVICE = "com.agent-controller.connector";
 export const CREDENTIAL_STORE_VERSION = 1;
 
-const COMMAND_TIMEOUT_MS = 5_000;
+// Every native credential call is one subprocess, and on Windows that subprocess compiles a C#
+// P/Invoke shim with Add-Type before it can touch the vault. That compile dominates the call and is
+// far slower than the `security`/`secret-tool` execs this bound was first sized against: measured in
+// a real interactive session on a loaded Windows host, four consecutive reads took 13418ms, 7715ms,
+// 5867ms and 3850ms, so the old 5s budget failed three of four and the connector reported
+// "Native credential store operation timed out" with a healthy vault and a credential present.
+// This is an upper bound, not a delay: macOS and Linux still return in milliseconds and a genuinely
+// hung helper is still killed. Raising it costs a slow host nothing and stops a correct enrolment
+// from failing closed.
+export const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const MAX_SECRET_BYTES = 2_560;
 
