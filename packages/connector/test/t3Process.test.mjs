@@ -670,6 +670,9 @@ test("a cold runtime cache earns a bounded additive readiness allowance; a warm 
     }).then(() => null, (reason) => reason);
     assert.equal(error?.code, "T3_START_TIMEOUT");
     assert.match(error.message, new RegExp(`within ${expected}ms`, "u"));
+    // The hint has to reproduce the launch, so it names the release requested, never `t3@undefined`.
+    assert.match(error.message, new RegExp(`\`npx --yes t3@${DEFAULT_T3_VERSION.replace(/\./gu, "\\.")} serve\``, "u"));
+    assert.doesNotMatch(error.message, /t3@undefined/u);
     assert.ok(clock >= expected && clock < expected + 1_000, `virtual clock ${clock} should stop right after ${expected}`);
     assert.deepEqual(kills, [{ pgid: 9100, signal: "SIGTERM" }]);
   }

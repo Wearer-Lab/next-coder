@@ -237,7 +237,7 @@ export async function ensureLocalT3({
     await sleep(250);
   }
   await stopOwnedT3({ stateDir, fs, inspectProcess, killGroup, sleep, platform, env, groupAlive, expectedMetadata: ownedMetadata });
-  throw Object.assign(new Error(`T3 did not become ready within ${readyTimeoutMs}ms. ${launcherFailureHint(firstRun)}`), { code: "T3_START_TIMEOUT" });
+  throw Object.assign(new Error(`T3 did not become ready within ${readyTimeoutMs}ms. ${launcherFailureHint(firstRun, t3Version)}`), { code: "T3_START_TIMEOUT" });
 }
 
 export async function createLocalT3PairingToken({

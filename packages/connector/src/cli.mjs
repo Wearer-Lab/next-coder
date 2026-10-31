@@ -101,7 +101,7 @@ async function connectCommand(options, dependencies = {}) {
     const { agentConfig, ...t3State } = existing;
     existing = t3State;
   }
-  if (existing && options.code && !options.replace) throw usage("This machine is already enrolled. Use connect without --code, or use --replace to enroll a replacement credential.");
+  if (existing && options.code && !options.replace) throw usage("This machine is already enrolled. Use connect without --code to reconnect, or keep --code CODE and add --replace (a flag, it takes no value) to enroll a replacement credential.");
   if (options.agentsFile || existing?.agentConfig) {
     if (options.t3Url || options.startT3) throw usage("Direct agent configuration cannot be combined with T3 launch options.");
     return await connectDirect(options, existing, dependencies);
