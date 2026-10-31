@@ -34,7 +34,7 @@ Placeholders are written in capitals (`REPLACE_WITH_...`, `<40-character-commit>
 real values. Set these two shell variables once; every `gh` command below uses them:
 
 ```bash
-REPO='spyhack225/next-coder'   # adjust if you forked or renamed
+REPO='Wearer-Lab/next-coder'   # adjust if you forked or renamed
 BRANCH='main'                        # the repository default branch
 ```
 
@@ -295,7 +295,7 @@ and only production promotion waits.
 Create an environment (repeat for each of the four names):
 
 ```bash
-REPO="spyhack225/next-coder"
+REPO="Wearer-Lab/next-coder"
 ME_ID="$(gh api user --jq .id)"
 
 # Staging and npm-release: you are the reviewer, and you may approve your own dispatch.
@@ -336,9 +336,9 @@ untick **Allow administrators to bypass configured protection rules** in the env
 instead — do not leave it on.
 
 **Already done on 2026-09-09.** `staging-bootstrap`, `staging` and `npm-release` exist on
-`spyhack225/next-coder` with the settings above: one required reviewer (the repository owner),
+`Wearer-Lab/next-coder` with the settings above: one required reviewer (the repository owner),
 prevent-self-review off, default-branch-only deployments, and no administrator bypass. Verify with
-`gh api repos/spyhack225/next-coder/environments --jq '.environments[].name'`. Their **secrets
+`gh api repos/Wearer-Lab/next-coder/environments --jq '.environments[].name'`. Their **secrets
 are not set**, which is the remaining work in 4.1 through 4.3. `production` is deliberately absent
 until a second reviewer exists.
 

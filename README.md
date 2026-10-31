@@ -1,6 +1,6 @@
 # Next Coder
 
-[![Hermetic CI](https://github.com/spyhack225/next-coder/actions/workflows/ci.yml/badge.svg)](https://github.com/spyhack225/next-coder/actions/workflows/ci.yml)
+[![Hermetic CI](https://github.com/Wearer-Lab/next-coder/actions/workflows/ci.yml/badge.svg)](https://github.com/Wearer-Lab/next-coder/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Next Coder is a cloud control plane between remote controller hardware, a phone/web console,

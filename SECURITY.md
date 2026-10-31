@@ -8,7 +8,7 @@ in it can reach a user's development environment, so please report them privatel
 
 Use GitHub's private vulnerability reporting for this repository:
 
-<https://github.com/spyhack225/next-coder/security/advisories/new>
+<https://github.com/Wearer-Lab/next-coder/security/advisories/new>
 
 Do not open a public issue or pull request for a security problem. Include the affected surface
 (gateway, console, connector CLI, Cloudflare Worker/Container, Convex functions, or firmware), a

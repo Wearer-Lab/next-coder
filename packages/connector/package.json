@@ -1,16 +1,16 @@
 {
   "name": "@wearer-haitch/connector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Outbound bridge between local T3 Code, Codex, Claude or ACP agents and Next Coder",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/spyhack225/next-coder.git",
+    "url": "git+https://github.com/Wearer-Lab/next-coder.git",
     "directory": "packages/connector"
   },
-  "homepage": "https://github.com/spyhack225/next-coder#readme",
+  "homepage": "https://github.com/Wearer-Lab/next-coder#readme",
   "bugs": {
-    "url": "https://github.com/spyhack225/next-coder/issues"
+    "url": "https://github.com/Wearer-Lab/next-coder/issues"
   },
   "type": "module",
   "bin": {

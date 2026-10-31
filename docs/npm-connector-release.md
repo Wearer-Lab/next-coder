@@ -24,7 +24,7 @@ Before the first release:
    ratify Apache-2.0 as the deliberate choice before the repository is made public; automation
    selected a defensible default, not a legal decision.
 2. **Done on 2026-09-08.** `packages/connector/package.json` carries `repository` metadata whose
-   `url` names `https://github.com/spyhack225/next-coder` with `directory`
+   `url` names `https://github.com/Wearer-Lab/next-coder` with `directory`
    `packages/connector`, plus matching `homepage` and `bugs`. The workflow derives the expected URL
    from `GITHUB_SERVER_URL` and `GITHUB_REPOSITORY` and compares; it never rewrites package metadata
    after checkout. If the package is ever published from a different repository, update the manifest

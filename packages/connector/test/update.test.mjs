@@ -4,6 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { CONNECTOR_VERSION } from "../src/cloud.mjs";
 import { beginServiceRuntimeUpdate, installService, servicePaths } from "../src/service.mjs";
 import { applyConnectorUpdate, checkConnectorUpdate } from "../src/update.mjs";
 
@@ -104,8 +105,8 @@ test("restart failure rolls back the prior runtime and restores running state", 
     findExecutable: async () => "/npm",
     run: packageRunner("0.2.0"),
   }), (error) => error.rolledBack === true && /restart failed/.test(error.message));
-  assert.equal((JSON.parse(await fs.readFile(join(paths.runtimeRoot, "package.json"), "utf8"))).version, "0.1.0");
-  assert.equal((JSON.parse(await fs.readFile(paths.manifestPath, "utf8"))).packageVersion, "0.1.0");
+  assert.equal((JSON.parse(await fs.readFile(join(paths.runtimeRoot, "package.json"), "utf8"))).version, CONNECTOR_VERSION);
+  assert.equal((JSON.parse(await fs.readFile(paths.manifestPath, "utf8"))).packageVersion, CONNECTOR_VERSION);
   assert.equal(control.active, true);
   assert.ok(control.calls.some(({ args }) => args.includes("stop")));
   assert.ok(control.calls.some(({ args }) => args.includes("start")));
@@ -131,7 +132,7 @@ test("health timeout rolls back after checking service, T3, and fresh cloud evid
     run: packageRunner("0.2.0"),
   }), (error) => error.code === "UPDATE_HEALTH_TIMEOUT" && error.rolledBack === true);
   assert.ok(t3Checks > 0);
-  assert.equal((JSON.parse(await fs.readFile(join(paths.runtimeRoot, "package.json"), "utf8"))).version, "0.1.0");
+  assert.equal((JSON.parse(await fs.readFile(join(paths.runtimeRoot, "package.json"), "utf8"))).version, CONNECTOR_VERSION);
   assert.equal(control.active, true);
 });
 
@@ -257,7 +258,7 @@ test("an interrupted swap is conservatively rolled back before another update", 
   control.active = false;
   await assert.rejects(applyConnectorUpdate({ ...options, restartService: false, findExecutable: async () => "/npm", run: packageRunner("0.2.0") }), { code: "UPDATE_RESTART_REQUIRED" });
   const paths = servicePaths(options.service);
-  assert.equal((JSON.parse(await fs.readFile(join(paths.runtimeRoot, "package.json"), "utf8"))).version, "0.1.0");
+  assert.equal((JSON.parse(await fs.readFile(join(paths.runtimeRoot, "package.json"), "utf8"))).version, CONNECTOR_VERSION);
   assert.equal(control.active, true);
   await assert.rejects(fs.access(paths.updateJournalPath), { code: "ENOENT" });
 });
