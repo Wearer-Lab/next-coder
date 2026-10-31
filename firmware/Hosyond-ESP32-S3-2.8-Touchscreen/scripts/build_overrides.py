@@ -2,6 +2,36 @@
 
 import os
 
+# macOS writes an AppleDouble sidecar ("._name") for every file it creates on a non-native
+# filesystem, and this checkout lives on an external NTFS volume. PlatformIO globs *.c/*.cpp, so
+# those sidecars get compiled as source and the build dies with "stray '\5' in program" and
+# "unknown type name 'Mac'" from a file nobody wrote. They reappear whenever anything writes to the
+# tree, so deleting them once is not enough: sweep the board and the shared library before every
+# build. Cheap, and it only ever removes files whose name begins with "._".
+def _remove_appledouble_sidecars():
+    # PlatformIO exec()s this script, so `__file__` is not defined; the project directory comes
+    # from the SCons environment, with the working directory as a fallback.
+    try:
+        board = env.subst("$PROJECT_DIR")  # type: ignore[name-defined]
+    except Exception:
+        board = os.getcwd()
+    roots = [board]
+    shared = os.path.normpath(os.path.join(board, "..", "shared"))
+    if os.path.isdir(shared):
+        roots.append(shared)
+    for root in roots:
+        for directory, _subdirs, files in os.walk(root):
+            for name in files:
+                if name.startswith("._"):
+                    try:
+                        os.remove(os.path.join(directory, name))
+                    except OSError:
+                        pass
+
+
+_remove_appledouble_sidecars()
+
+
 Import("env")  # type: ignore[name-defined]  # PlatformIO/SCons global.
 
 

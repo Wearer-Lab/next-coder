@@ -1,0 +1,33 @@
+# The container image build context is the repository root
+# (cloudflare-control-plane/wrangler.jsonc sets image_build_context: ".."),
+# but the Dockerfile copies only `src/` and the container-runtime package files.
+# Everything below is either unused by the image or actively breaks the build.
+
+# macOS AppleDouble sidecars. The repository lives on a filesystem without
+# native extended attributes, so macOS writes metadata into `._*` companion
+# files. BuildKit's context sender calls xattr() on every entry it walks and
+# the driver refuses that call on a sidecar, which failed the whole build with
+# `error from sender: failed to xattr .../._.gitignore: operation not permitted`.
+**/._*
+**/.DS_Store
+
+# Version control, dependencies and build output: not copied by the Dockerfile.
+.git
+.gitignore
+**/node_modules
+dist
+frontend/dist
+.wrangler
+**/.wrangler
+
+# Firmware build trees are large and irrelevant to the gateway image.
+**/.pio
+firmware/**/build
+
+# Local state, logs and scratch data must never enter an image layer.
+*.log
+coverage
+data
+*.local
+.env
+.env.*
