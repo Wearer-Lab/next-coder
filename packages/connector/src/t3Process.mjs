@@ -673,6 +673,19 @@ export function parseWindowsCommandLine(commandLine) {
   return values;
 }
 
+// A child-process rejection carries the only thing that distinguishes a tolerable outcome from a
+// real one: an exit status, a spawn errno, or a timeout kill. Discarding it leaves one sentence
+// that fits every cause, which is what made a Windows stop failure unreadable. Bounded and
+// single-lined so a tool's stderr cannot flood a service log.
+function describeSpawnFailure(error) {
+  const parts = [];
+  if (error?.code !== undefined && error?.code !== null) parts.push(`code ${error.code}`);
+  if (error?.killed) parts.push(`killed by ${error.signal ?? "timeout"}`);
+  const stderr = String(error?.stderr ?? "").replace(/\s+/gu, " ").trim().slice(0, 200);
+  if (stderr) parts.push(stderr);
+  return parts.length ? `: ${parts.join("; ")}` : ".";
+}
+
 function sameWindowsPath(left, right) {
   return win32.normalize(String(left)).toLowerCase() === win32.normalize(String(right)).toLowerCase();
 }
@@ -682,7 +695,7 @@ async function runInspectionCommand(file, args, { env } = {}) {
     const result = await execFileAsync(file, args, { encoding: "utf8", maxBuffer: 64 * 1024, timeout: WINDOWS_INSPECTION_TIMEOUT_MS, windowsHide: true, shell: false, env });
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
-    throw processError("Windows process ownership inspection failed.", "T3_PROCESS_INSPECTION_FAILED", error);
+    throw processError(`Windows process ownership inspection failed${describeSpawnFailure(error)}`, "T3_PROCESS_INSPECTION_FAILED", error);
   }
 }
 
@@ -692,7 +705,7 @@ async function runControlCommand(file, args, { env, allowNotFound = false } = {}
     return { code: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     if (allowNotFound && [1, 128].includes(Number(error?.code))) return { code: Number(error.code), stdout: error.stdout ?? "", stderr: error.stderr ?? "" };
-    throw processError("Windows could not stop the exact connector-owned T3 process tree.", "T3_PROCESS_STOP_FAILED", error);
+    throw processError(`Windows could not stop the exact connector-owned T3 process tree${describeSpawnFailure(error)}`, "T3_PROCESS_STOP_FAILED", error);
   }
 }
 
